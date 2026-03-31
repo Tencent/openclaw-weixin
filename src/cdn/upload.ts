@@ -21,6 +21,8 @@ export type UploadedFileInfo = {
   fileSize: number;
   /** Ciphertext file size in bytes (AES-128-ECB with PKCS7 padding); use for ImageItem.hd_size / mid_size */
   fileSizeCiphertext: number;
+  /** Plaintext file MD5 hex string; required by WeChat client for file integrity verification */
+  fileMd5: string;
 };
 
 /**
@@ -107,6 +109,7 @@ async function uploadMediaToCdn(params: {
     aeskey: aeskey.toString("hex"),
     fileSize: rawsize,
     fileSizeCiphertext: filesize,
+    fileMd5: rawfilemd5,
   };
 }
 

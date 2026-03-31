@@ -254,6 +254,7 @@ export async function sendFileMessageWeixin(params: {
         encrypt_type: 1,
       },
       file_name: fileName,
+      md5: uploaded.fileMd5,
       len: String(uploaded.fileSize),
     },
   };
