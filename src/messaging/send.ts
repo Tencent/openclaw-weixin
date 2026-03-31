@@ -234,6 +234,40 @@ export async function sendVideoMessageWeixin(params: {
  * FileItem: media (CDN ref), file_name, len (plaintext bytes as string).
  * Includes an optional text caption sent as a separate TEXT item first.
  */
+export async function sendVoiceMessageWeixin(params: {
+  to: string;
+  text: string;
+  uploaded: UploadedFileInfo;
+  opts: WeixinApiOptions & { contextToken?: string };
+}): Promise<{ messageId: string }> {
+  const { to, text, uploaded, opts } = params;
+  if (!opts.contextToken) {
+    logger.warn(`sendVoiceMessageWeixin: contextToken missing for to=${to}, sending without context`);
+  }
+  const voiceMeta = uploaded.voiceMeta;
+  const voiceItem: MessageItem = {
+    type: MessageItemType.VOICE,
+    voice_item: {
+      media: {
+        encrypt_query_param: uploaded.downloadEncryptedQueryParam,
+        aes_key: Buffer.from(uploaded.aeskey).toString("base64"),
+        encrypt_type: 1,
+      },
+      encode_type: voiceMeta?.encode_type ?? 7,
+      ...(voiceMeta?.bits_per_sample == null ? {} : { bits_per_sample: voiceMeta.bits_per_sample }),
+      ...(voiceMeta?.sample_rate == null ? {} : { sample_rate: voiceMeta.sample_rate }),
+      ...(voiceMeta?.playtime == null ? {} : { playtime: voiceMeta.playtime }),
+    },
+  };
+
+  return sendMediaItems({ to, text, mediaItem: voiceItem, opts, label: "sendVoiceMessageWeixin" });
+}
+
+/**
+ * Send a file attachment downstream using a previously uploaded file.
+ * FileItem: media (CDN ref), file_name, len (plaintext bytes as string).
+ * Includes an optional text caption sent as a separate TEXT item first.
+ */
 export async function sendFileMessageWeixin(params: {
   to: string;
   text: string;
