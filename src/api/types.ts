@@ -48,6 +48,13 @@ export interface GetUploadUrlResp {
   upload_full_url?: string;
 }
 
+export interface UploadVoiceMetadata {
+  encode_type?: number;
+  bits_per_sample?: number;
+  sample_rate?: number;
+  playtime?: number;
+}
+
 export const MessageType = {
   NONE: 0,
   USER: 1,
