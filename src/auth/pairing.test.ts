@@ -16,7 +16,7 @@ const mockWithFileLock = vi.hoisted(() =>
   vi.fn(async (_path: string, _opts: unknown, fn: () => Promise<unknown>) => fn()),
 );
 
-vi.mock("openclaw/plugin-sdk", () => ({
+vi.mock("openclaw/plugin-sdk/infra-runtime", () => ({
   withFileLock: mockWithFileLock,
 }));
 
@@ -60,6 +60,35 @@ describe("resolveFrameworkAllowFromPath", () => {
     const result = resolveFrameworkAllowFromPath("abc@im.bot");
     // Only [\\/:*?"<>|] and ".." are replaced; @ and dots are preserved
     expect(result).toContain("openclaw-weixin-abc@im.bot-allowFrom.json");
+  });
+});
+
+describe("readFrameworkAllowFromList", () => {
+  it("returns empty array when file does not exist", async () => {
+    const { readFrameworkAllowFromList } = await loadModule();
+    expect(readFrameworkAllowFromList("missing-account")).toEqual([]);
+  });
+
+  it("returns filtered allowFrom list from valid file", async () => {
+    const { readFrameworkAllowFromList, resolveFrameworkAllowFromPath } = await loadModule();
+    const filePath = resolveFrameworkAllowFromPath("read-ok");
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(
+      filePath,
+      JSON.stringify({ version: 1, allowFrom: ["user-a", "", "  ", 123, "user-b"] }),
+      "utf-8",
+    );
+
+    expect(readFrameworkAllowFromList("read-ok")).toEqual(["user-a", "user-b"]);
+  });
+
+  it("returns empty array when file is unreadable or invalid", async () => {
+    const { readFrameworkAllowFromList, resolveFrameworkAllowFromPath } = await loadModule();
+    const filePath = resolveFrameworkAllowFromPath("read-bad");
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, "{not-json", "utf-8");
+
+    expect(readFrameworkAllowFromList("read-bad")).toEqual([]);
   });
 });
 
