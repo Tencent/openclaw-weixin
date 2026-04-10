@@ -3,15 +3,25 @@ import type { PluginRuntime } from "openclaw/plugin-sdk/core";
 import { logger } from "./util/logger.js";
 
 let pluginRuntime: PluginRuntime | null = null;
+let runtimeInitialized = false;
 
 export type PluginChannelRuntime = PluginRuntime["channel"];
 
 /**
  * Sets the global Weixin runtime (called from plugin register).
+ *
+ * The first successful call is logged at `info` level.  Subsequent
+ * re-entrant calls (caused by the host re-invoking `register()`) are
+ * logged at `debug` to keep log output clean.
  */
 export function setWeixinRuntime(next: PluginRuntime): void {
   pluginRuntime = next;
-  logger.info(`[runtime] setWeixinRuntime called, runtime set successfully`);
+  if (runtimeInitialized) {
+    logger.debug(`[runtime] setWeixinRuntime called (re-entrant), runtime updated`);
+  } else {
+    runtimeInitialized = true;
+    logger.info(`[runtime] setWeixinRuntime called, runtime set successfully`);
+  }
 }
 
 /**

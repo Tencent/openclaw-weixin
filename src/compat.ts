@@ -51,9 +51,16 @@ export function isHostVersionSupported(hostVersion: string): boolean {
   return compareVersions(host, min) >= 0;
 }
 
+/** Tracks host versions that have already passed the compatibility check. */
+const checkedHostVersions = new Set<string>();
+
 /**
  * Fail-fast guard.  Call at the very start of `register()` to prevent the
  * plugin from loading on an incompatible host.
+ *
+ * On the first successful check the result is logged at `info` level.
+ * Subsequent re-entrant calls for the same version are logged at `debug`
+ * to avoid log spam when the host invokes `register()` multiple times.
  *
  * @throws {Error} with a human-readable message when the host is out of range.
  */
@@ -65,7 +72,12 @@ export function assertHostCompatibility(hostVersion: string | undefined): void {
     return;
   }
   if (isHostVersionSupported(hostVersion)) {
-    logger.info(`[compat] Host OpenClaw ${hostVersion} >= ${SUPPORTED_HOST_MIN}, OK.`);
+    if (checkedHostVersions.has(hostVersion)) {
+      logger.debug(`[compat] Host OpenClaw ${hostVersion} >= ${SUPPORTED_HOST_MIN}, OK (already verified).`);
+    } else {
+      checkedHostVersions.add(hostVersion);
+      logger.info(`[compat] Host OpenClaw ${hostVersion} >= ${SUPPORTED_HOST_MIN}, OK.`);
+    }
     return;
   }
   throw new Error(
