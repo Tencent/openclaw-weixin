@@ -16,7 +16,14 @@ const mockWithFileLock = vi.hoisted(() =>
   vi.fn(async (_path: string, _opts: unknown, fn: () => Promise<unknown>) => fn()),
 );
 
+// Mock both the legacy root barrel and the subpath that pairing.ts actually
+// imports from. Starting with openclaw 2026.4.x the infra-runtime subpath is
+// a distinct module graph node, so mocking only the root barrel no longer
+// intercepts `import { withFileLock } from "openclaw/plugin-sdk/infra-runtime"`.
 vi.mock("openclaw/plugin-sdk", () => ({
+  withFileLock: mockWithFileLock,
+}));
+vi.mock("openclaw/plugin-sdk/infra-runtime", () => ({
   withFileLock: mockWithFileLock,
 }));
 
