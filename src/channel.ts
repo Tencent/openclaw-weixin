@@ -28,6 +28,7 @@ import type { WeixinQrStartResult, WeixinQrWaitResult } from "./auth/login-qr.js
 // command-auth chain during plugin registration, which can re-enter plugin/provider registry
 // resolution before the account actually starts.
 import { sendWeixinMediaFile } from "./messaging/send-media.js";
+import { createWeixinThreadBindingManager } from "./thread-bindings.js";
 import { sendMessageWeixin, StreamingMarkdownFilter } from "./messaging/send.js";
 import { downloadRemoteImageToTemp } from "./cdn/upload.js";
 
@@ -166,6 +167,26 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
       // Weixin user IDs always end with @im.wechat; treat as direct IDs, skip directory lookup.
       looksLikeId: (raw) => raw.endsWith("@im.wechat"),
     },
+  },
+  // Expose ACP / subagent thread binding support. WeChat is 1:1 direct chat
+  // today (no group / forum topic semantics), so we only offer the `current`
+  // placement and treat the inbound conversationId (the sender's WeChat id)
+  // as the canonical conversation ref with no parent. The actual binding
+  // lifetime is managed by createWeixinThreadBindingManager; the framework
+  // calls the hook below to dedupe to that per-account manager.
+  conversationBindings: {
+    supportsCurrentConversationBinding: true,
+    defaultTopLevelPlacement: "current",
+    resolveConversationRef: ({ conversationId }) => {
+      const trimmed = conversationId?.trim() ?? "";
+      return trimmed ? { conversationId: trimmed } : null;
+    },
+    createManager: ({ accountId }) =>
+      createWeixinThreadBindingManager({
+        accountId: accountId ?? undefined,
+        persist: false,
+        enableSweeper: false,
+      }),
   },
   agentPrompt: {
     messageToolHints: () => [
@@ -365,6 +386,16 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
       const aLog = logger.withAccount(account.accountId);
       aLog.debug(`about to call monitorWeixinProvider`);
       restoreContextTokens(account.accountId);
+      // Eagerly initialise the ACP thread binding manager for this account so
+      // it loads the persistent store and starts its idle sweeper before any
+      // inbound traffic arrives. Subsequent framework-driven calls to
+      // createManager() (via conversationBindings below) will be deduped and
+      // return this same instance.
+      try {
+        createWeixinThreadBindingManager({ accountId: account.accountId });
+      } catch (err) {
+        aLog.warn(`thread binding manager init failed: ${String(err)}`);
+      }
       aLog.info(`starting weixin webhook`);
 
       ctx.setStatus?.({
