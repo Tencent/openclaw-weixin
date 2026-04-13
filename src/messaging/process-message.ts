@@ -31,8 +31,13 @@ import { sendWeixinMediaFile } from "./send-media.js";
 import { StreamingMarkdownFilter } from "./markdown-filter.js";
 import { sendMessageWeixin } from "./send.js";
 import { handleSlashCommand } from "./slash-commands.js";
+import { chunkMarkdownTextWithMode, type ChunkMode } from "openclaw/plugin-sdk/reply-runtime";
 
 const MEDIA_OUTBOUND_TEMP_DIR = path.join(resolvePreferredOpenClawTmpDir(), "weixin/media/outbound-temp");
+
+// Matches DEFAULT_CHUNK_LIMIT in openclaw core (src/auto-reply/chunk.ts).
+// Can be replaced with a SDK-exported constant if one is added in the future.
+const DEFAULT_TEXT_CHUNK_LIMIT = 4000;
 
 /** Dependencies for processOneMessage, injected by the monitor loop. */
 export type ProcessMessageDeps = {
@@ -369,13 +374,20 @@ export async function processOneMessage(
             });
             logger.info(`outbound: media sent OK to=${ctx.To}`);
           } else {
-            logger.debug(`outbound: sending text message to=${ctx.To}`);
-            await sendMessageWeixin({ to: ctx.To, text, opts: {
-              baseUrl: deps.baseUrl,
-              token: deps.token,
-              contextToken,
-            }});
-            logger.info(`outbound: text sent OK to=${ctx.To}`);
+            const channelConfig = (deps.config.channels as Record<string, unknown> | undefined)?.["openclaw-weixin"] as { chunkMode?: ChunkMode; textChunkLimit?: number } | undefined;
+            const chunkMode: ChunkMode = channelConfig?.chunkMode ?? "length";
+            const textChunkLimit = channelConfig?.textChunkLimit ?? DEFAULT_TEXT_CHUNK_LIMIT;
+            const chunks = chunkMarkdownTextWithMode(text, textChunkLimit, chunkMode);
+            logger.debug(`outbound: sending text message to=${ctx.To} chunks=${chunks.length} chunkMode=${chunkMode}`);
+            for (const chunk of chunks) {
+              if (!chunk.trim()) continue;
+              await sendMessageWeixin({ to: ctx.To, text: chunk, opts: {
+                baseUrl: deps.baseUrl,
+                token: deps.token,
+                contextToken,
+              }});
+            }
+            logger.info(`outbound: text sent OK to=${ctx.To} chunks=${chunks.length}`);
           }
         } catch (err) {
           logger.error(
