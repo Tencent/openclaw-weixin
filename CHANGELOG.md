@@ -4,6 +4,14 @@
 
 This project follows the [Keep a Changelog](https://keepachangelog.com/) format.
 
+## [2.1.9] - 2026-04-14
+
+### Added
+
+- **Send voice messages:** `sendVoiceMessageWeixin()` sends voice (SILK/MP3/OGG) via CDN + MessageItemType.VOICE. Automatically routed by `sendWeixinMediaFile()` for any `audio/*` MIME type.
+- **Upload voice to CDN:** `uploadVoiceToWeixin()` uploads audio files with `media_type=4` (VOICE).
+
+
 ## [2.1.7] - 2026-04-07
 
 ### Fixed

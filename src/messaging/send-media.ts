@@ -2,13 +2,14 @@ import path from "node:path";
 import type { WeixinApiOptions } from "../api/api.js";
 import { logger } from "../util/logger.js";
 import { getMimeFromFilename } from "../media/mime.js";
-import { sendFileMessageWeixin, sendImageMessageWeixin, sendVideoMessageWeixin } from "./send.js";
-import { uploadFileAttachmentToWeixin, uploadFileToWeixin, uploadVideoToWeixin } from "../cdn/upload.js";
+import { sendFileMessageWeixin, sendImageMessageWeixin, sendVideoMessageWeixin, sendVoiceMessageWeixin } from "./send.js";
+import { uploadFileAttachmentToWeixin, uploadFileToWeixin, uploadVideoToWeixin, uploadVoiceToWeixin } from "../cdn/upload.js";
 
 /**
  * Upload a local file and send it as a weixin message, routing by MIME type:
  *   video/*  → uploadVideoToWeixin        + sendVideoMessageWeixin
  *   image/*  → uploadFileToWeixin         + sendImageMessageWeixin
+ *   audio.*  → uploadVoiceToWeixin        + sendVoiceMessageWeixin (SILK/MP3/OGG)
  *   else     → uploadFileAttachmentToWeixin + sendFileMessageWeixin
  *
  * Used by both the auto-reply deliver path (monitor.ts) and the outbound
@@ -51,6 +52,21 @@ export async function sendWeixinMediaFile(params: {
       `[weixin] sendWeixinMediaFile: image upload done filekey=${uploaded.filekey} size=${uploaded.fileSize}`,
     );
     return sendImageMessageWeixin({ to, text, uploaded, opts });
+  }
+
+  if (mime.startsWith("audio/")) {
+    logger.info(`[weixin] sendWeixinMediaFile: uploading voice audio filePath=${filePath} to=${to}`);
+    const uploaded = await uploadVoiceToWeixin({
+      filePath,
+      toUserId: to,
+      opts: uploadOpts,
+      cdnBaseUrl,
+    });
+    logger.info(
+      `[weixin] sendWeixinMediaFile: voice upload done filekey=${uploaded.filekey} size=${uploaded.fileSize}`,
+    );
+    const encodeType = mime.includes("mp3") ? 7 : mime.includes("ogg") ? 8 : 6;
+    return sendVoiceMessageWeixin({ to, text, uploaded, encodeType, opts });
   }
 
   // File attachment: pdf, doc, zip, etc.

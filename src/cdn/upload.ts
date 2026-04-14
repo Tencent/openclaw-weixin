@@ -155,3 +155,20 @@ export async function uploadFileAttachmentToWeixin(params: {
     label: "uploadFileAttachmentToWeixin",
   });
 }
+
+/**
+ * Upload a local voice/audio file to the Weixin CDN.
+ * Uses media_type=VOICE (4); SILK, AMR, MP3, OGG are supported.
+ */
+export async function uploadVoiceToWeixin(params: {
+  filePath: string;
+  toUserId: string;
+  opts: WeixinApiOptions;
+  cdnBaseUrl: string;
+}): Promise<UploadedFileInfo> {
+  return uploadMediaToCdn({
+    ...params,
+    mediaType: UploadMediaType.VOICE,
+    label: "uploadVoiceToWeixin",
+  });
+}

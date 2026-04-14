@@ -239,3 +239,43 @@ export async function sendFileMessageWeixin(params: {
 
   return sendMediaItems({ to, text, mediaItem: fileItem, opts, label: "sendFileMessageWeixin" });
 }
+
+/**
+ * Send a voice message downstream using a previously uploaded audio file.
+ * VoiceItem: media (CDN ref), encode_type, sample_rate, playtime (ms).
+ * Supported encode_type: 6=SILK, 5=AMR, 7=MP3, 8=OGG-SPEEX.
+ * Includes an optional text caption sent as a separate TEXT item first.
+ */
+export async function sendVoiceMessageWeixin(params: {
+  to: string;
+  text: string;
+  uploaded: import("../cdn/upload.js").UploadedFileInfo;
+  playtimeMs?: number;
+  encodeType?: number;
+  opts: import("../api/api.js").WeixinApiOptions & { contextToken?: string };
+}): Promise<{ messageId: string }> {
+  const { to, text, uploaded, playtimeMs, encodeType, opts } = params;
+  if (!opts.contextToken) {
+    logger.warn(`sendVoiceMessageWeixin: contextToken missing for to=${to}, sending without context`);
+  }
+  logger.info(
+    `sendVoiceMessageWeixin: to=${to} filekey=${uploaded.filekey} fileSize=${uploaded.fileSize} playtimeMs=${playtimeMs ?? "auto"}`,
+  );
+
+  const voiceItem: MessageItem = {
+    type: MessageItemType.VOICE,
+    voice_item: {
+      media: {
+        encrypt_query_param: uploaded.downloadEncryptedQueryParam,
+        aes_key: Buffer.from(uploaded.aeskey).toString("base64"),
+        encrypt_type: 1,
+      },
+      encode_type: encodeType ?? 6,
+      bits_per_sample: 16,
+      sample_rate: 24000,
+      playtime: playtimeMs ?? Math.round((uploaded.fileSize / 24000) * 1000),
+    },
+  };
+
+  return sendMediaItems({ to, text, mediaItem: voiceItem, opts, label: "sendVoiceMessageWeixin" });
+}
