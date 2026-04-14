@@ -264,3 +264,200 @@ describe("getContextTokenFromMsgContext", () => {
     expect(getContextTokenFromMsgContext(ctx)).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Voice messages with quoted context (#48)
+// ---------------------------------------------------------------------------
+
+describe("voice messages with quoted context (#48)", () => {
+  it("includes quoted text title when voice message replies to a text (#48)", () => {
+    // Bug: voice messages with ref_msg silently dropped the quoted context.
+    // A user quotes/replies to a text message with a voice reply — the agent
+    // should see the quoted message as context, just like text replies do.
+    const msg: WeixinMessage = {
+      from_user_id: "u",
+      item_list: [
+        {
+          type: MessageItemType.VOICE,
+          voice_item: { text: "yes please do that" },
+          ref_msg: { title: "Can you schedule a meeting tomorrow?" },
+        },
+      ],
+    };
+    const ctx = weixinMessageToMsgContext(msg, "acc");
+    expect(ctx.Body).toBe("[引用: Can you schedule a meeting tomorrow?]\nyes please do that");
+  });
+
+  it("includes quoted text content when voice message replies to a text", () => {
+    const msg: WeixinMessage = {
+      from_user_id: "u",
+      item_list: [
+        {
+          type: MessageItemType.VOICE,
+          voice_item: { text: "agreed" },
+          ref_msg: {
+            message_item: {
+              type: MessageItemType.TEXT,
+              text_item: { text: "Let's meet at 3pm" },
+            },
+          },
+        },
+      ],
+    };
+    const ctx = weixinMessageToMsgContext(msg, "acc");
+    expect(ctx.Body).toBe("[引用: Let's meet at 3pm]\nagreed");
+  });
+
+  it("includes both title and message_item when voice replies with both present", () => {
+    const msg: WeixinMessage = {
+      from_user_id: "u",
+      item_list: [
+        {
+          type: MessageItemType.VOICE,
+          voice_item: { text: "sounds good" },
+          ref_msg: {
+            title: "Alice",
+            message_item: {
+              type: MessageItemType.TEXT,
+              text_item: { text: "Want to join the standup?" },
+            },
+          },
+        },
+      ],
+    };
+    const ctx = weixinMessageToMsgContext(msg, "acc");
+    expect(ctx.Body).toBe("[引用: Alice | Want to join the standup?]\nsounds good");
+  });
+
+  it("omits quoted context when voice replies to a media item (image/video/file)", () => {
+    // Quoting a media item: we can't include the media content as text context,
+    // so we just return the transcribed voice text (same as text replying to media).
+    const msg: WeixinMessage = {
+      from_user_id: "u",
+      item_list: [
+        {
+          type: MessageItemType.VOICE,
+          voice_item: { text: "nice photo" },
+          ref_msg: {
+            message_item: { type: MessageItemType.IMAGE },
+          },
+        },
+      ],
+    };
+    const ctx = weixinMessageToMsgContext(msg, "acc");
+    expect(ctx.Body).toBe("nice photo");
+  });
+
+  it("returns transcribed text without quote context when ref_msg is empty", () => {
+    const msg: WeixinMessage = {
+      from_user_id: "u",
+      item_list: [
+        {
+          type: MessageItemType.VOICE,
+          voice_item: { text: "hello there" },
+          ref_msg: {},
+        },
+      ],
+    };
+    const ctx = weixinMessageToMsgContext(msg, "acc");
+    expect(ctx.Body).toBe("hello there");
+  });
+
+  it("returns transcribed text with no ref_msg (standalone voice, unchanged)", () => {
+    const msg: WeixinMessage = {
+      from_user_id: "u",
+      item_list: [
+        {
+          type: MessageItemType.VOICE,
+          voice_item: { text: "schedule meeting at 3pm" },
+        },
+      ],
+    };
+    const ctx = weixinMessageToMsgContext(msg, "acc");
+    expect(ctx.Body).toBe("schedule meeting at 3pm");
+  });
+
+  it("returns empty body when voice has no transcription and no ref_msg", () => {
+    const msg: WeixinMessage = {
+      from_user_id: "u",
+      item_list: [
+        {
+          type: MessageItemType.VOICE,
+          // no voice_item.text — untranscribed voice
+        },
+      ],
+    };
+    const ctx = weixinMessageToMsgContext(msg, "acc");
+    expect(ctx.Body).toBe("");
+  });
+
+  it("returns empty body when untranscribed voice has ref_msg (no text to show)", () => {
+    // If voice has no transcription, we have nothing to prepend quote to.
+    // Body stays empty regardless of ref_msg.
+    const msg: WeixinMessage = {
+      from_user_id: "u",
+      item_list: [
+        {
+          type: MessageItemType.VOICE,
+          voice_item: { text: undefined },
+          ref_msg: { title: "Some quoted message" },
+        },
+      ],
+    };
+    const ctx = weixinMessageToMsgContext(msg, "acc");
+    expect(ctx.Body).toBe("");
+  });
+});
+
+  it("omits quoted context when voice replies to another voice message", () => {
+    // Quoting audio with audio: the quoted voice has no text in the ref context,
+    // so we just return the current transcription.
+    const msg: WeixinMessage = {
+      from_user_id: "u",
+      item_list: [
+        {
+          type: MessageItemType.VOICE,
+          voice_item: { text: "yes exactly what I said" },
+          ref_msg: {
+            message_item: { type: MessageItemType.VOICE },
+          },
+        },
+      ],
+    };
+    const ctx = weixinMessageToMsgContext(msg, "acc");
+    expect(ctx.Body).toBe("yes exactly what I said");
+  });
+
+  it("omits quoted context when voice replies to a video message", () => {
+    const msg: WeixinMessage = {
+      from_user_id: "u",
+      item_list: [
+        {
+          type: MessageItemType.VOICE,
+          voice_item: { text: "love this video" },
+          ref_msg: {
+            message_item: { type: MessageItemType.VIDEO },
+          },
+        },
+      ],
+    };
+    const ctx = weixinMessageToMsgContext(msg, "acc");
+    expect(ctx.Body).toBe("love this video");
+  });
+
+  it("omits quoted context when voice replies to a file", () => {
+    const msg: WeixinMessage = {
+      from_user_id: "u",
+      item_list: [
+        {
+          type: MessageItemType.VOICE,
+          voice_item: { text: "got the document" },
+          ref_msg: {
+            message_item: { type: MessageItemType.FILE },
+          },
+        },
+      ],
+    };
+    const ctx = weixinMessageToMsgContext(msg, "acc");
+    expect(ctx.Body).toBe("got the document");
+  });

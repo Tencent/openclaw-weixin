@@ -188,9 +188,24 @@ function bodyFromItemList(itemList?: MessageItem[]): string {
       if (!parts.length) return text;
       return `[引用: ${parts.join(" | ")}]\n${text}`;
     }
-    // 语音转文字：如果语音消息有 text 字段，直接使用文字内容
+    // Voice message: if the voice has been transcribed, include the text.
+    // If the voice replies to a non-media message (ref_msg present), prepend
+    // quoted context — same as text replies do. (#48)
     if (item.type === MessageItemType.VOICE && item.voice_item?.text) {
-      return item.voice_item.text;
+      const voiceText = item.voice_item.text;
+      const ref = item.ref_msg;
+      if (!ref) return voiceText;
+      // Quoted media has no text to include — just return the voice transcription.
+      if (ref.message_item && isMediaItem(ref.message_item)) return voiceText;
+      // Build quoted context from ref_msg title and/or message_item text.
+      const parts: string[] = [];
+      if (ref.title) parts.push(ref.title);
+      if (ref.message_item) {
+        const refBody = bodyFromItemList([ref.message_item]);
+        if (refBody) parts.push(refBody);
+      }
+      if (!parts.length) return voiceText;
+      return `[引用: ${parts.join(" | ")}]\n${voiceText}`;
     }
   }
   return "";
