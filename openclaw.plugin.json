@@ -1,0 +1,12 @@
+{
+  "id": "openclaw-weixin",
+  "version": "2.1.7",
+  "channels": [
+    "openclaw-weixin"
+  ],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
