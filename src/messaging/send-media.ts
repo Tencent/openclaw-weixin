@@ -9,7 +9,7 @@ import { uploadFileAttachmentToWeixin, uploadFileToWeixin, uploadVideoToWeixin, 
  * Upload a local file and send it as a weixin message, routing by MIME type:
  *   video/*  → uploadVideoToWeixin        + sendVideoMessageWeixin
  *   image/*  → uploadFileToWeixin         + sendImageMessageWeixin
- *   audio/*  → uploadVoiceToWeixin        + sendVoiceMessageWeixin (SILK/MP3/OGG)
+ *   audio.*  → uploadVoiceToWeixin        + sendVoiceMessageWeixin (SILK/MP3/OGG)
  *   else     → uploadFileAttachmentToWeixin + sendFileMessageWeixin
  *
  * Used by both the auto-reply deliver path (monitor.ts) and the outbound
@@ -65,7 +65,6 @@ export async function sendWeixinMediaFile(params: {
     logger.info(
       `[weixin] sendWeixinMediaFile: voice upload done filekey=${uploaded.filekey} size=${uploaded.fileSize}`,
     );
-    // encodeType: 6=SILK, 7=MP3, 8=OGG; default to SILK
     const encodeType = mime.includes("mp3") ? 7 : mime.includes("ogg") ? 8 : 6;
     return sendVoiceMessageWeixin({ to, text, uploaded, encodeType, opts });
   }

@@ -248,14 +248,11 @@ export async function sendFileMessageWeixin(params: {
  */
 export async function sendVoiceMessageWeixin(params: {
   to: string;
-  /** Optional caption/preview text sent as a separate TEXT item before the voice. */
   text: string;
-  uploaded: UploadedFileInfo;
-  /** Voice duration in milliseconds (optional, auto-derived from file size if omitted). */
+  uploaded: import("../cdn/upload.js").UploadedFileInfo;
   playtimeMs?: number;
-  /** Voice encoding type. Defaults to 6 (SILK) if not set and extension matches. */
   encodeType?: number;
-  opts: WeixinApiOptions & { contextToken?: string };
+  opts: import("../api/api.js").WeixinApiOptions & { contextToken?: string };
 }): Promise<{ messageId: string }> {
   const { to, text, uploaded, playtimeMs, encodeType, opts } = params;
   if (!opts.contextToken) {
@@ -273,7 +270,7 @@ export async function sendVoiceMessageWeixin(params: {
         aes_key: Buffer.from(uploaded.aeskey).toString("base64"),
         encrypt_type: 1,
       },
-      encode_type: encodeType ?? 6, // default: SILK
+      encode_type: encodeType ?? 6,
       bits_per_sample: 16,
       sample_rate: 24000,
       playtime: playtimeMs ?? Math.round((uploaded.fileSize / 24000) * 1000),
