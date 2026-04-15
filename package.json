@@ -5,11 +5,10 @@
   "license": "MIT",
   "author": "Tencent",
   "type": "module",
+  "main": "./dist/index.js",
   "files": [
-    "src/",
-    "!src/**/*.test.ts",
-    "!src/**/node_modules/",
-    "index.ts",
+    "dist/",
+    "!dist/**/*.map",
     "openclaw.plugin.json",
     "README.md",
     "README.zh_CN.md",
@@ -38,7 +37,7 @@
   },
   "openclaw": {
     "extensions": [
-      "./index.ts"
+      "./dist/index.js"
     ],
     "channel": {
       "id": "openclaw-weixin",
