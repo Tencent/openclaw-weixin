@@ -72,6 +72,41 @@ By default, DMs can share one session bucket. For **multiple logged-in WeChat ac
 openclaw config set session.dmScope per-account-channel-peer
 ```
 
+## Agent Binding
+
+You can bind a WeChat account to a specific Agent, so messages are routed to the designated Agent:
+
+### Binding Command
+
+After successful login, the account ID will be displayed. Use the following command to bind:
+
+```bash
+openclaw agents bind --agent <agentId> --bind openclaw-weixin:<accountId>
+```
+
+### Example
+
+```bash
+# Login to WeChat (accountId will be shown after success)
+openclaw channels login --channel openclaw-weixin
+
+# Bind to a specific agent
+openclaw agents bind --agent my-agent --bind openclaw-weixin:68af40bbb612-im-bot
+
+# Restart gateway to apply changes
+openclaw gateway restart
+```
+
+### View Current Bindings
+
+```bash
+openclaw config get bindings
+```
+
+### Unbind
+
+To remove a binding, manually edit `~/.openclaw/openclaw.json` to remove the corresponding bindings entry, or use `openclaw agents unbind`.
+
 ## Backend API Protocol
 
 This plugin communicates with the backend gateway via HTTP JSON API. Developers integrating with their own backend need to implement the following interfaces.

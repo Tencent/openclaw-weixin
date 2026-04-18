@@ -71,6 +71,41 @@ openclaw channels login --channel openclaw-weixin
 openclaw config set session.dmScope per-account-channel-peer
 ```
 
+## Agent 绑定
+
+可以为微信账号绑定特定的 Agent，实现微信消息路由到指定的 Agent：
+
+### 绑定命令
+
+登录成功后会显示账号 ID，然后使用以下命令绑定：
+
+```bash
+openclaw agents bind --agent <agentId> --bind openclaw-weixin:<accountId>
+```
+
+### 示例
+
+```bash
+# 登录微信（登录成功后会显示 accountId）
+openclaw channels login --channel openclaw-weixin
+
+# 绑定到指定 agent
+openclaw agents bind --agent my-agent --bind openclaw-weixin:68af40bbb612-im-bot
+
+# 重启 gateway 使配置生效
+openclaw gateway restart
+```
+
+### 查看当前绑定
+
+```bash
+openclaw config get bindings
+```
+
+### 解绑
+
+如果需要解除绑定，可以手动编辑 `~/.openclaw/openclaw.json`，移除对应的 bindings 条目，或使用 `openclaw agents unbind` 命令。
+
 ## 后端 API 协议
 
 本插件通过 HTTP JSON API 与后端网关通信。二次开发者若需对接自有后端，需实现以下接口。

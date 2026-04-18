@@ -142,6 +142,7 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
     docsLabel: "openclaw-weixin",
     blurb: "getUpdates long-poll upstream, sendMessage downstream; token auth.",
     order: 75,
+    forceAccountBinding: true,
   },
   configSchema: {
     schema: {
@@ -183,7 +184,7 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
     isConfigured: (account) => account.configured,
     describeAccount: (account) => ({
       accountId: account.accountId,
-      name: account.name,
+      name: account.name ?? account.userId ?? undefined,
       enabled: account.enabled,
       configured: account.configured,
     }),
@@ -451,7 +452,9 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
 
       return {
         connected: result.connected,
-        message: result.message,
+        message: result.connected
+          ? `✅ 与微信连接成功！账号ID: ${result.accountId}，可使用 openclaw agents bind --agent <agentId> --bind openclaw-weixin:${result.accountId} 绑定到 Agent`
+          : result.message,
         accountId: result.accountId,
       } as { connected: boolean; message: string };
     },

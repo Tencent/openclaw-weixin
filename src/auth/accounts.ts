@@ -330,6 +330,8 @@ export type ResolvedWeixinAccount = {
   /** true when a token has been obtained via QR login. */
   configured: boolean;
   name?: string;
+  /** Weixin user ID from QR login (e.g. "xxxx@im.wechat"). */
+  userId?: string;
 };
 
 type WeixinAccountConfig = {
@@ -376,5 +378,6 @@ export function resolveWeixinAccount(
     enabled: accountCfg.enabled !== false,
     configured: Boolean(token),
     name: accountCfg.name?.trim() || undefined,
+    userId: accountData?.userId,
   };
 }
