@@ -166,6 +166,11 @@ export async function apiGetFetch(params: {
 /**
  * Common fetch wrapper: POST JSON to a Weixin API endpoint with timeout + abort.
  * Returns the raw response text on success; throws on HTTP error or timeout.
+ *
+ * If `signal` is provided, the request aborts when either the internal timeout
+ * fires OR the caller's signal aborts. This allows long-poll callers (e.g. the
+ * gateway's stopChannel path) to cancel an in-flight getUpdates immediately
+ * instead of waiting up to 35s for the internal timer.
  */
 async function apiPostFetch(params: {
   baseUrl: string;
@@ -174,20 +179,29 @@ async function apiPostFetch(params: {
   token?: string;
   timeoutMs: number;
   label: string;
+  signal?: AbortSignal;
 }): Promise<string> {
   const base = ensureTrailingSlash(params.baseUrl);
   const url = new URL(params.endpoint, base);
   const hdrs = buildHeaders({ token: params.token, body: params.body });
   logger.debug(`POST ${redactUrl(url.toString())} body=${redactBody(params.body)}`);
 
+  // Fail fast if the caller's signal is already aborted.
+  if (params.signal?.aborted) {
+    throw Object.assign(new Error("aborted"), { name: "AbortError" });
+  }
+
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), params.timeoutMs);
+  const fetchSignal = params.signal
+    ? AbortSignal.any([controller.signal, params.signal])
+    : controller.signal;
   try {
     const res = await fetch(url.toString(), {
       method: "POST",
       headers: hdrs,
       body: params.body,
-      signal: controller.signal,
+      signal: fetchSignal,
     });
     clearTimeout(t);
     const rawText = await res.text();
@@ -213,6 +227,12 @@ export async function getUpdates(
     baseUrl: string;
     token?: string;
     timeoutMs?: number;
+    /**
+     * Outer abort signal from the caller (e.g. monitor loop's stop signal).
+     * When aborted, the in-flight fetch is cancelled immediately so callers
+     * awaiting loop shutdown don't block up to `timeoutMs`.
+     */
+    signal?: AbortSignal;
   },
 ): Promise<GetUpdatesResp> {
   const timeout = params.timeoutMs ?? DEFAULT_LONG_POLL_TIMEOUT_MS;
@@ -227,10 +247,15 @@ export async function getUpdates(
       token: params.token,
       timeoutMs: timeout,
       label: "getUpdates",
+      signal: params.signal,
     });
     const resp: GetUpdatesResp = JSON.parse(rawText);
     return resp;
   } catch (err) {
+    // Caller-signal abort: propagate so the monitor loop exits promptly.
+    if (params.signal?.aborted) {
+      throw err;
+    }
     // Long-poll timeout is normal; return empty response so caller can retry
     if (err instanceof Error && err.name === "AbortError") {
       logger.debug(`getUpdates: client-side timeout after ${timeout}ms, returning empty response`);
