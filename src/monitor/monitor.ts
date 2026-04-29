@@ -3,6 +3,7 @@ import type { PluginRuntime } from "openclaw/plugin-sdk/core";
 
 import { getUpdates } from "../api/api.js";
 import { WeixinConfigManager } from "../api/config-cache.js";
+import type { WeixinMessage } from "../api/types.js";
 import { SESSION_EXPIRED_ERRCODE, pauseSession, getRemainingPauseMs } from "../api/session-guard.js";
 import { processOneMessage } from "../messaging/process-message.js";
 import { getWeixinRuntime, waitForWeixinRuntime } from "../runtime.js";
@@ -15,6 +16,7 @@ const DEFAULT_LONG_POLL_TIMEOUT_MS = 35_000;
 const MAX_CONSECUTIVE_FAILURES = 3;
 const BACKOFF_DELAY_MS = 30_000;
 const RETRY_DELAY_MS = 2_000;
+const MAX_IN_FLIGHT_MESSAGES = 32;
 
 export type MonitorWeixinOpts = {
   baseUrl: string;
@@ -32,7 +34,7 @@ export type MonitorWeixinOpts = {
 };
 
 /**
- * Long-poll loop: getUpdates -> normalize -> recordInboundSession -> dispatchReplyFromConfig.
+ * Long-poll loop: getUpdates -> dispatch inbound messages without blocking the next poll.
  * Runs until abort.
  */
 export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<void> {
@@ -84,6 +86,42 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
 
   let nextTimeoutMs = longPollTimeoutMs ?? DEFAULT_LONG_POLL_TIMEOUT_MS;
   let consecutiveFailures = 0;
+  const inFlightMessages = new Set<Promise<void>>();
+
+  const waitForInFlightSlot = async () => {
+    while (inFlightMessages.size >= MAX_IN_FLIGHT_MESSAGES) {
+      await Promise.race(inFlightMessages).catch(() => {});
+    }
+  };
+
+  const processMessageInBackground = (full: WeixinMessage) => {
+    const task = (async () => {
+      const fromUserId = full.from_user_id ?? "";
+      const cachedConfig = await configManager.getForUser(fromUserId, full.context_token);
+
+      await processOneMessage(full, {
+        accountId,
+        config,
+        channelRuntime,
+        baseUrl,
+        cdnBaseUrl,
+        token,
+        typingTicket: cachedConfig.typingTicket,
+        log: opts.runtime?.log ?? (() => {}),
+        errLog,
+      });
+    })();
+
+    inFlightMessages.add(task);
+    void task.catch((err) => {
+      errLog(`weixin message processing failed: ${String(err)}`);
+      aLog.error(
+        `processOneMessage failed: from=${full.from_user_id ?? ""} msgId=${full.message_id ?? ""} err=${String(err)} stack=${(err as Error).stack ?? ""}`,
+      );
+    }).finally(() => {
+      inFlightMessages.delete(task);
+    });
+  };
 
   while (!abortSignal?.aborted) {
     try {
@@ -165,20 +203,8 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
         // allowFrom filtering is delegated to processOneMessage via the framework
         // authorization pipeline (resolveSenderCommandAuthorizationWithRuntime).
 
-        const fromUserId = full.from_user_id ?? "";
-        const cachedConfig = await configManager.getForUser(fromUserId, full.context_token);
-
-        await processOneMessage(full, {
-          accountId,
-          config,
-          channelRuntime,
-          baseUrl,
-          cdnBaseUrl,
-          token,
-          typingTicket: cachedConfig.typingTicket,
-          log: opts.runtime?.log ?? (() => {}),
-          errLog,
-        });
+        await waitForInFlightSlot();
+        processMessageInBackground(full);
       }
     } catch (err) {
       if (abortSignal?.aborted) {
@@ -204,7 +230,11 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
       }
     }
   }
-  aLog.info(`Monitor ended`);
+  if (inFlightMessages.size > 0) {
+    aLog.info(`Monitor ended with ${inFlightMessages.size} message task(s) still running`);
+  } else {
+    aLog.info(`Monitor ended`);
+  }
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
