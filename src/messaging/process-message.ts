@@ -34,6 +34,19 @@ import { handleSlashCommand } from "./slash-commands.js";
 
 const MEDIA_OUTBOUND_TEMP_DIR = path.join(resolvePreferredOpenClawTmpDir(), "weixin/media/outbound-temp");
 
+type WeixinChannelBlockStreamingConfig = {
+  blockStreaming?: boolean;
+  accounts?: Record<string, { blockStreaming?: boolean }>;
+};
+
+export function resolveWeixinBlockStreamingEnabled(
+  cfg: import("openclaw/plugin-sdk/core").OpenClawConfig,
+  accountId: string,
+): boolean {
+  const section = cfg.channels?.["openclaw-weixin"] as WeixinChannelBlockStreamingConfig | undefined;
+  return section?.accounts?.[accountId]?.blockStreaming ?? section?.blockStreaming ?? false;
+}
+
 /** Dependencies for processOneMessage, injected by the monitor loop. */
 export type ProcessMessageDeps = {
   accountId: string;
@@ -419,7 +432,10 @@ export async function processOneMessage(
           ctx: finalized,
           cfg: deps.config,
           dispatcher,
-          replyOptions: { ...replyOptions, disableBlockStreaming: true },
+          replyOptions: {
+            ...replyOptions,
+            disableBlockStreaming: !resolveWeixinBlockStreamingEnabled(deps.config, deps.accountId),
+          },
         }),
     });
     logger.debug(`dispatchReplyFromConfig: done agentId=${route.agentId ?? "(none)"}`);
