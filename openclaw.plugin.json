@@ -8,5 +8,69 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {}
+  },
+  "channelConfigs": {
+    "openclaw-weixin": {
+      "label": "openclaw-weixin",
+      "description": "getUpdates long-poll upstream, sendMessage downstream; token auth.",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "baseUrl": {
+            "type": "string",
+            "default": "https://ilinkai.weixin.qq.com"
+          },
+          "cdnBaseUrl": {
+            "type": "string",
+            "default": "https://novac2c.cdn.weixin.qq.com/c2c"
+          },
+          "routeTag": {
+            "type": "number"
+          },
+          "blockStreaming": {
+            "type": "boolean"
+          },
+          "channelConfigUpdatedAt": {
+            "type": "string"
+          },
+          "accounts": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "baseUrl": {
+                  "type": "string",
+                  "default": "https://ilinkai.weixin.qq.com"
+                },
+                "cdnBaseUrl": {
+                  "type": "string",
+                  "default": "https://novac2c.cdn.weixin.qq.com/c2c"
+                },
+                "routeTag": {
+                  "type": "number"
+                },
+                "blockStreaming": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
   }
 }
