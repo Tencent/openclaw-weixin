@@ -1,9 +1,39 @@
 {
   "id": "openclaw-weixin",
-  "version": "2.1.7",
+  "version": "2.3.1",
   "channels": [
     "openclaw-weixin"
   ],
+  "channelConfigs": {
+    "openclaw-weixin": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "name": { "type": "string" },
+          "baseUrl": { "type": "string" },
+          "cdnBaseUrl": { "type": "string" },
+          "routeTag": { "type": "number" },
+          "accounts": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "name": { "type": "string" },
+                "baseUrl": { "type": "string" },
+                "cdnBaseUrl": { "type": "string" },
+                "routeTag": { "type": "number" }
+              }
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "label": "Weixin",
+      "description": "Weixin channel (getUpdates long-poll + sendMessage)"
+    }
+  },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
