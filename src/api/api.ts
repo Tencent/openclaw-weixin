@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { loadConfigRouteTag } from "../auth/accounts.js";
+import { loadConfigBotAgent, loadConfigRouteTag } from "../auth/accounts.js";
 import { logger } from "../util/logger.js";
 import { redactBody, redactUrl } from "../util/redact.js";
 
@@ -13,6 +13,8 @@ import type {
   GetUploadUrlResp,
   GetUpdatesReq,
   GetUpdatesResp,
+  NotifyStopResp,
+  NotifyStartResp,
   SendMessageReq,
   SendTypingReq,
   GetConfigResp,
@@ -68,9 +70,105 @@ function buildClientVersion(version: string): number {
 
 const ILINK_APP_CLIENT_VERSION: number = buildClientVersion(pkg.version ?? "0.0.0");
 
+/**
+ * Default `bot_agent` value used when the upstream app does not declare one.
+ * Mirrors the role of HTTP `User-Agent`'s implicit "no UA" fallback.
+ */
+const DEFAULT_BOT_AGENT = "OpenClaw";
+
+/** Maximum length (bytes) of the sanitized `bot_agent` string. */
+const BOT_AGENT_MAX_LEN = 256;
+
+/**
+ * Sanitize a user-supplied `botAgent` config value into a wire-safe string.
+ *
+ * Grammar (UA-style):
+ *   bot_agent = product *( SP product )
+ *   product   = name "/" version [ SP "(" comment ")" ]
+ *   name      = 1*32( ALPHA / DIGIT / "_" / "." / "-" )
+ *   version   = 1*32( ALPHA / DIGIT / "_" / "." / "+" / "-" )
+ *   comment   = 1*64( printable ASCII minus "(" ")" )
+ *
+ * Tokens that fail to parse are dropped silently (no partial tokens kept).
+ * Returns `DEFAULT_BOT_AGENT` when the input is empty / all tokens dropped /
+ * the result exceeds the length cap after truncation.
+ */
+export function sanitizeBotAgent(raw: string | undefined): string {
+  if (!raw || typeof raw !== "string") return DEFAULT_BOT_AGENT;
+  const trimmed = raw.trim();
+  if (!trimmed) return DEFAULT_BOT_AGENT;
+
+  const productRe = /^[A-Za-z0-9_.\-]{1,32}\/[A-Za-z0-9_.+\-]{1,32}$/;
+  const commentCharRe = /^[\x20-\x27\x2A-\x7E]{1,64}$/;
+
+  // Tokenize on whitespace, but keep `(comment)` glued to the preceding product.
+  // Strategy: split by spaces, then re-attach any token that starts with "(".
+  const rawTokens = trimmed.split(/\s+/);
+  const tokens: string[] = [];
+  for (let i = 0; i < rawTokens.length; i += 1) {
+    const tok = rawTokens[i];
+    if (tok.startsWith("(") && !tok.endsWith(")")) {
+      // Multi-word comment; greedily collect until we find the closing ")".
+      let acc = tok;
+      while (i + 1 < rawTokens.length && !acc.endsWith(")")) {
+        i += 1;
+        acc += " " + rawTokens[i];
+      }
+      tokens.push(acc);
+    } else {
+      tokens.push(tok);
+    }
+  }
+
+  const accepted: string[] = [];
+  let pendingProduct: string | null = null;
+  for (const tok of tokens) {
+    if (tok.startsWith("(") && tok.endsWith(")")) {
+      const inner = tok.slice(1, -1);
+      if (pendingProduct && commentCharRe.test(inner)) {
+        accepted.push(`${pendingProduct} (${inner})`);
+        pendingProduct = null;
+      } else {
+        if (pendingProduct) {
+          accepted.push(pendingProduct);
+          pendingProduct = null;
+        }
+      }
+      continue;
+    }
+    if (pendingProduct) {
+      accepted.push(pendingProduct);
+      pendingProduct = null;
+    }
+    if (productRe.test(tok)) {
+      pendingProduct = tok;
+    }
+  }
+  if (pendingProduct) accepted.push(pendingProduct);
+
+  if (accepted.length === 0) return DEFAULT_BOT_AGENT;
+
+  const joined = accepted.join(" ");
+  if (Buffer.byteLength(joined, "utf-8") <= BOT_AGENT_MAX_LEN) return joined;
+
+  // Truncate by dropping trailing tokens until under the cap.
+  const truncated: string[] = [];
+  let len = 0;
+  for (const t of accepted) {
+    const add = (truncated.length === 0 ? 0 : 1) + Buffer.byteLength(t, "utf-8");
+    if (len + add > BOT_AGENT_MAX_LEN) break;
+    truncated.push(t);
+    len += add;
+  }
+  return truncated.length > 0 ? truncated.join(" ") : DEFAULT_BOT_AGENT;
+}
+
 /** Build the `base_info` payload included in every API request. */
 export function buildBaseInfo(): BaseInfo {
-  return { channel_version: CHANNEL_VERSION };
+  return {
+    channel_version: CHANNEL_VERSION,
+    bot_agent: sanitizeBotAgent(loadConfigBotAgent()),
+  };
 }
 
 /** Default timeout for long-poll getUpdates requests. */
@@ -84,10 +182,13 @@ function ensureTrailingSlash(url: string): string {
   return url.endsWith("/") ? url : `${url}/`;
 }
 
-/** X-WECHAT-UIN header: random uint32 -> decimal string -> base64. */
-function randomWechatUin(): string {
+/** X-WECHAT-UIN header: random uint32 -> decimal string -> base64. Cached for the process. */
+let cachedUin: string | undefined;
+function getWechatUin(): string {
+  if (cachedUin) return cachedUin;
   const uint32 = crypto.randomBytes(4).readUInt32BE(0);
-  return Buffer.from(String(uint32), "utf-8").toString("base64");
+  cachedUin = Buffer.from(String(uint32), "utf-8").toString("base64");
+  return cachedUin;
 }
 
 /** Build headers shared by both GET and POST requests. */
@@ -95,6 +196,7 @@ function buildCommonHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
     "iLink-App-Id": ILINK_APP_ID,
     "iLink-App-ClientVersion": String(ILINK_APP_CLIENT_VERSION),
+    "X-WECHAT-UIN": getWechatUin(),
   };
   const routeTag = loadConfigRouteTag();
   if (routeTag) {
@@ -108,7 +210,6 @@ function buildHeaders(opts: { token?: string; body: string }): Record<string, st
     "Content-Type": "application/json",
     AuthorizationType: "ilink_bot_token",
     "Content-Length": String(Buffer.byteLength(opts.body, "utf-8")),
-    "X-WECHAT-UIN": randomWechatUin(),
     ...buildCommonHeaders(),
   };
   if (opts.token?.trim()) {
@@ -164,15 +265,17 @@ export async function apiGetFetch(params: {
 }
 
 /**
- * Common fetch wrapper: POST JSON to a Weixin API endpoint with timeout + abort.
+ * Common fetch wrapper: POST JSON to a Weixin API endpoint.
+ * When `timeoutMs` is provided, the request is aborted after that many milliseconds.
+ * When omitted, no client-side timeout is applied (relies on OS/TCP stack).
  * Returns the raw response text on success; throws on HTTP error or timeout.
  */
-async function apiPostFetch(params: {
+export async function apiPostFetch(params: {
   baseUrl: string;
   endpoint: string;
   body: string;
   token?: string;
-  timeoutMs: number;
+  timeoutMs?: number;
   label: string;
 }): Promise<string> {
   const base = ensureTrailingSlash(params.baseUrl);
@@ -180,16 +283,20 @@ async function apiPostFetch(params: {
   const hdrs = buildHeaders({ token: params.token, body: params.body });
   logger.debug(`POST ${redactUrl(url.toString())} body=${redactBody(params.body)}`);
 
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), params.timeoutMs);
+  const controller =
+    params.timeoutMs !== undefined ? new AbortController() : undefined;
+  const t =
+    controller != null && params.timeoutMs !== undefined
+      ? setTimeout(() => controller.abort(), params.timeoutMs)
+      : undefined;
   try {
     const res = await fetch(url.toString(), {
       method: "POST",
       headers: hdrs,
       body: params.body,
-      signal: controller.signal,
+      ...(controller ? { signal: controller.signal } : {}),
     });
-    clearTimeout(t);
+    if (t !== undefined) clearTimeout(t);
     const rawText = await res.text();
     logger.debug(`${params.label} status=${res.status} raw=${redactBody(rawText)}`);
     if (!res.ok) {
@@ -197,7 +304,7 @@ async function apiPostFetch(params: {
     }
     return rawText;
   } catch (err) {
-    clearTimeout(t);
+    if (t !== undefined) clearTimeout(t);
     throw err;
   }
 }
@@ -315,4 +422,36 @@ export async function sendTyping(
     timeoutMs: params.timeoutMs ?? DEFAULT_CONFIG_TIMEOUT_MS,
     label: "sendTyping",
   });
+}
+
+/**
+ * Notify Weixin that this channel client is stopping (gateway shutdown / channel stop).
+ * Uses a standalone timeout (not the gateway abort signal) so the request can finish
+ * after OpenClaw has already aborted the long-poll.
+ */
+export async function notifyStop(params: WeixinApiOptions): Promise<NotifyStopResp> {
+  const rawText = await apiPostFetch({
+    baseUrl: params.baseUrl,
+    endpoint: "ilink/bot/msg/notifystop",
+    body: JSON.stringify({ base_info: buildBaseInfo() }),
+    token: params.token,
+    timeoutMs: params.timeoutMs ?? DEFAULT_CONFIG_TIMEOUT_MS,
+    label: "notifyStop",
+  });
+  return JSON.parse(rawText) as NotifyStopResp;
+}
+
+/**
+ * Notify Weixin that this channel client is starting (gateway startup / channel start).
+ */
+export async function notifyStart(params: WeixinApiOptions): Promise<NotifyStartResp> {
+  const rawText = await apiPostFetch({
+    baseUrl: params.baseUrl,
+    endpoint: "ilink/bot/msg/notifystart",
+    body: JSON.stringify({ base_info: buildBaseInfo() }),
+    token: params.token,
+    timeoutMs: params.timeoutMs ?? DEFAULT_CONFIG_TIMEOUT_MS,
+    label: "notifyStart",
+  });
+  return JSON.parse(rawText) as NotifyStartResp;
 }
