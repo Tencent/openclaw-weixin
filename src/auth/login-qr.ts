@@ -90,6 +90,22 @@ async function pollQRStatus(apiBaseUrl: string, qrcode: string): Promise<StatusR
   }
 }
 
+/**
+ * 在终端展示二维码及备用链接。
+ * 供 CLI 登录流程和 MCP Tool 登录流程共同复用。
+ */
+export async function displayQRCode(qrcodeUrl: string): Promise<void> {
+  try {
+    const qrterm = await import("qrcode-terminal");
+    qrterm.default.generate(qrcodeUrl, { small: true });
+    process.stdout.write(`若二维码未能显示或无法使用，你可以访问以下链接以继续：\n`);
+    process.stdout.write(`${qrcodeUrl}\n`);
+  } catch {
+    process.stdout.write(`若二维码未能显示或无法使用，你可以访问以下链接以继续：\n`);
+    process.stdout.write(`${qrcodeUrl}\n`);
+  }
+}
+
 export type WeixinQrStartResult = {
   qrcodeUrl?: string;
   message: string;
