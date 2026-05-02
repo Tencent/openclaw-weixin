@@ -71,6 +71,42 @@ openclaw channels login --channel openclaw-weixin
 openclaw config set session.dmScope per-account-channel-peer
 ```
 
+## 自定义 BotAgent（可选）
+
+每条出站请求会带一个自我声明的 `bot_agent` 字段——类似 HTTP `User-Agent`——用于
+后台日志归因和监控聚合。**默认值为 `OpenClaw`**。声明自己的应用名能让你的流量
+在后台日志中更容易识别。
+
+在 `openclaw.json` 中加一行即可：
+
+```json
+{
+  "channels": {
+    "openclaw-weixin": {
+      "botAgent": "MyBot/1.2.0"
+    }
+  }
+}
+```
+
+**格式规范**（UA 风格）：
+
+- 一个或多个 `Name/Version` token，空格分隔
+- 每个 token 可选地跟一个 ` (comment)`
+- 仅允许 ASCII 字符；总长 ≤ 256 字节
+- 不合规的 token 在清洗时静默丢弃；如果最终为空，回退到 `OpenClaw`
+
+可直接使用的示例：
+
+- `MyBot/1.2.0`
+- `MyBot/1.2.0 (region=cn;env=prod)`
+- `MyBot/1.2.0 LangChain/0.3.5`
+- `MyBot/1.2.0-rc.1+build.5`
+
+**注意**：`bot_agent` 仅用于观测，**不参与鉴权或路由**。当前本插件实例下所有
+已注册的 agent 共享同一个 `botAgent` 声明；如有需要按 agent 单独标识的场景，
+可在后续版本扩展配置。
+
 ## 后端 API 协议
 
 本插件通过 HTTP JSON API 与后端网关通信。二次开发者若需对接自有后端，需实现以下接口。

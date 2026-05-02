@@ -331,11 +331,10 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
 
       if (!startResult.qrcodeUrl) {
         logger.warn(
-          `auth.login: failed to get QR code accountId=${account.accountId} responseMessage=${startResult.message}`,
+          `auth.login: failed to get QR code accountId=${account.accountId} message=${startResult.message}`,
         );
-        const errMsg = `获取二维码失败：服务器未返回有效的登录链接。原始消息: ${startResult.message}`;
-        log(errMsg);
-        throw new Error(errMsg);
+        log(startResult.message);
+        throw new Error(startResult.message);
       }
 
       log(`\n用手机微信扫描以下二维码，以继续连接：\n`);
@@ -343,7 +342,6 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
         await displayQRCode(startResult.qrcodeUrl!);
       } catch (qrErr) {
         logger.error(`auth.login: displayQRCode failed: ${String(qrErr)}`);
-        // Fallback to just logging the URL if displayQRCode fails
         log(`若二维码未能显示，请访问：${startResult.qrcodeUrl}\n`);
       }
 

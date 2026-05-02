@@ -4,6 +4,22 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/) 格式。
 
+## [2.1.9] - 2026-04-20
+
+### 新增
+
+- **外发 hook 支持：** 为所有外发路径（`sendText`、`sendMedia`、`process-message` 中的入站回复 `deliver`）接入 `message_sending`（发送前拦截/修改）和 `message_sent`（发送后通知）hook。hook 逻辑抽取至共享模块 `src/messaging/outbound-hooks.ts`。
+
+### 变更
+
+- **清理：** 移除 `sendWeixinOutbound` 签名中未使用的 `mediaUrl` 参数。
+
+## [2.1.8] - 2026-04-07
+
+### 变更
+
+- **Markdown 过滤器：** `StreamingMarkdownFilter` 放开了更多 Markdown 格式的保留。
+
 ## [2.1.7] - 2026-04-07
 
 ### 修复

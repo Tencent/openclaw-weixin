@@ -182,13 +182,10 @@ function ensureTrailingSlash(url: string): string {
   return url.endsWith("/") ? url : `${url}/`;
 }
 
-/** X-WECHAT-UIN header: random uint32 -> decimal string -> base64. Cached for the process. */
-let cachedUin: string | undefined;
-function getWechatUin(): string {
-  if (cachedUin) return cachedUin;
+/** X-WECHAT-UIN header: random uint32 -> decimal string -> base64. */
+function randomWechatUin(): string {
   const uint32 = crypto.randomBytes(4).readUInt32BE(0);
-  cachedUin = Buffer.from(String(uint32), "utf-8").toString("base64");
-  return cachedUin;
+  return Buffer.from(String(uint32), "utf-8").toString("base64");
 }
 
 /** Build headers shared by both GET and POST requests. */
@@ -196,7 +193,6 @@ function buildCommonHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
     "iLink-App-Id": ILINK_APP_ID,
     "iLink-App-ClientVersion": String(ILINK_APP_CLIENT_VERSION),
-    "X-WECHAT-UIN": getWechatUin(),
   };
   const routeTag = loadConfigRouteTag();
   if (routeTag) {
@@ -210,6 +206,7 @@ function buildHeaders(opts: { token?: string; body: string }): Record<string, st
     "Content-Type": "application/json",
     AuthorizationType: "ilink_bot_token",
     "Content-Length": String(Buffer.byteLength(opts.body, "utf-8")),
+    "X-WECHAT-UIN": randomWechatUin(),
     ...buildCommonHeaders(),
   };
   if (opts.token?.trim()) {

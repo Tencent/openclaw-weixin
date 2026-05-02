@@ -4,6 +4,22 @@
 
 This project follows the [Keep a Changelog](https://keepachangelog.com/) format.
 
+## [2.1.9] - 2026-04-20
+
+### Added
+
+- **Outbound hook support:** Add `message_sending` (pre-send interception/modification) and `message_sent` (post-send notification) hook integration for all outbound paths — `sendText`, `sendMedia`, and the inbound-reply `deliver` in `process-message`. Hook logic is extracted into a shared `src/messaging/outbound-hooks.ts` module.
+
+### Changed
+
+- **Cleanup:** Remove unused `mediaUrl` parameter from `sendWeixinOutbound` signature.
+
+## [2.1.8] - 2026-04-07
+
+### Changed
+
+- **Markdown filter:** `StreamingMarkdownFilter` now preserves more Markdown constructs in outbound text.
+
 ## [2.1.7] - 2026-04-07
 
 ### Fixed
