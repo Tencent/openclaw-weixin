@@ -13,7 +13,7 @@ import type { WeixinMessage } from "../api/types.js";
 import { MessageItemType, TypingStatus } from "../api/types.js";
 import { loadWeixinAccount } from "../auth/accounts.js";
 import { readFrameworkAllowFromList } from "../auth/pairing.js";
-import { downloadRemoteImageToTemp } from "../cdn/upload.js";
+import { downloadRemoteImageToTemp, resolveSafeLocalPath } from "../cdn/upload.js";
 import { downloadMediaFromItem } from "../media/media-download.js";
 import { logger } from "../util/logger.js";
 import { redactBody, redactToken } from "../util/redact.js";
@@ -347,14 +347,7 @@ export async function processOneMessage(
           if (mediaUrl) {
             let filePath: string;
             if (!mediaUrl.includes("://") || mediaUrl.startsWith("file://")) {
-              if (mediaUrl.startsWith("file://")) {
-                filePath = new URL(mediaUrl).pathname;
-              } else if (!path.isAbsolute(mediaUrl)) {
-                filePath = path.resolve(mediaUrl);
-                logger.debug(`outbound: resolved relative path ${mediaUrl} -> ${filePath}`);
-              } else {
-                filePath = mediaUrl;
-              }
+              filePath = resolveSafeLocalPath(mediaUrl);
               logger.debug(`outbound: local file path resolved filePath=${filePath}`);
             } else if (mediaUrl.startsWith("http://") || mediaUrl.startsWith("https://")) {
               logger.debug(`outbound: downloading remote mediaUrl=${mediaUrl.slice(0, 80)}...`);

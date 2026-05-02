@@ -32,7 +32,7 @@ import type { WeixinQrStartResult, WeixinQrWaitResult } from "./auth/login-qr.js
 import { applyWeixinMessageSendingHook, emitWeixinMessageSent } from "./messaging/outbound-hooks.js";
 import { sendWeixinMediaFile } from "./messaging/send-media.js";
 import { sendMessageWeixin, StreamingMarkdownFilter } from "./messaging/send.js";
-import { downloadRemoteImageToTemp } from "./cdn/upload.js";
+import { downloadRemoteImageToTemp, resolveSafeLocalPath } from "./cdn/upload.js";
 
 /** Returns true when mediaUrl refers to a local filesystem path (absolute or relative). */
 function isLocalFilePath(mediaUrl: string): boolean {
@@ -46,12 +46,9 @@ function isRemoteUrl(mediaUrl: string): boolean {
 
 const MEDIA_OUTBOUND_TEMP_DIR = path.join(resolvePreferredOpenClawTmpDir(), "weixin/media/outbound-temp");
 
-/** Resolve any local path scheme to an absolute filesystem path. */
+/** Resolve local path scheme to absolute, blocking traversal outside allowed dirs. */
 function resolveLocalPath(mediaUrl: string): string {
-  if (mediaUrl.startsWith("file://")) return new URL(mediaUrl).pathname;
-  // Resolve any relative path (./foo, ../foo, .openclaw/foo, foo/bar) against cwd
-  if (!path.isAbsolute(mediaUrl)) return path.resolve(mediaUrl);
-  return mediaUrl;
+  return resolveSafeLocalPath(mediaUrl);
 }
 
 /**

@@ -1,5 +1,11 @@
 /**
  * Shared AES-128-ECB crypto utilities for CDN upload and download.
+ *
+ * NOTE: ECB mode is mandated by the Weixin CDN protocol (encrypt_type: 1).
+ * ECB does not hide data patterns — identical plaintext blocks produce
+ * identical ciphertext blocks. This is an inherent protocol limitation,
+ * not a plugin design choice. Input data should not be assumed to have
+ * semantic confidentiality at the block level.
  */
 import { createCipheriv, createDecipheriv } from "node:crypto";
 

@@ -27,11 +27,13 @@ function contextTokenKey(accountId: string, userId: string): string {
 // ---------------------------------------------------------------------------
 
 function resolveContextTokenFilePath(accountId: string): string {
+  // Sanitize: block path traversal characters
+  const safe = accountId.replace(/[\\/:*?"<>|.]/g, "_");
   return path.join(
     resolveStateDir(),
     "openclaw-weixin",
     "accounts",
-    `${accountId}.context-tokens.json`,
+    `${safe}.context-tokens.json`,
   );
 }
 

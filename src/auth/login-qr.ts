@@ -61,19 +61,18 @@ function purgeExpiredLogins(): void {
   }
 }
 
-/** 获取本地已登录账号的 bot token 列表，最多返回最新的 10 个。 */
+/** 获取本地已登录账号的 bot token 列表，最多返回最新的 1 个。减少令牌泄露面。 */
 function getLocalBotTokenList(): string[] {
   const accountIds = listIndexedWeixinAccountIds();
-  const tokens: string[] = [];
-  // 从最新注册的账号开始取（列表末尾为最新）
-  for (let i = accountIds.length - 1; i >= 0 && tokens.length < 10; i--) {
+  // 只发送最近一个 token 用于服务器端识别已有绑定
+  for (let i = accountIds.length - 1; i >= 0; i--) {
     const data = loadWeixinAccount(accountIds[i]);
     const token = data?.token?.trim();
     if (token) {
-      tokens.push(token);
+      return [token];
     }
   }
-  return tokens;
+  return [];
 }
 
 async function fetchQRCode(apiBaseUrl: string, botType: string): Promise<QRCodeResponse> {
@@ -89,18 +88,32 @@ async function fetchQRCode(apiBaseUrl: string, botType: string): Promise<QRCodeR
   return JSON.parse(rawText) as QRCodeResponse;
 }
 
+/** Maximum verify code length (characters). */
+const MAX_VERIFY_CODE_LEN = 20;
+/** Stdin read timeout (ms). */
+const STDIN_READ_TIMEOUT_MS = 120_000;
+
 /** 从 stdin 读取一行用户输入，输出提示语后等待回车确认，返回 trim 后的字符串。 */
 async function readVerifyCodeFromStdin(prompt: string): Promise<string> {
   process.stdout.write(prompt);
   return new Promise((resolve) => {
     let input = "";
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      process.stdin.removeListener("data", onData);
+      process.stdin.pause();
+      resolve("");
+    }, STDIN_READ_TIMEOUT_MS);
     const onData = (chunk: Buffer | string) => {
+      if (timedOut) return;
       const str = chunk.toString();
       input += str;
-      if (input.includes("\n")) {
+      if (input.includes("\n") || input.length > MAX_VERIFY_CODE_LEN) {
+        clearTimeout(timer);
         process.stdin.removeListener("data", onData);
         process.stdin.pause();
-        resolve(input.trim());
+        resolve(input.slice(0, MAX_VERIFY_CODE_LEN).trim());
       }
     };
     process.stdin.resume();

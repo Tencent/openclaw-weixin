@@ -23,19 +23,95 @@ export type UploadedFileInfo = {
   fileSizeCiphertext: number;
 };
 
+/** Maximum outbound remote media download size (50 MB). */
+const MAX_REMOTE_DOWNLOAD_BYTES = 50 * 1024 * 1024;
+
+/** Allowed roots for local-file outbound media. */
+export const ALLOWED_MEDIA_ROOTS = ["/tmp/", "/var/tmp/", "/dev/shm/"];
+
+/**
+ * Resolve a local media path safely, blocking directory traversal outside
+ * allowed roots or process-relative paths.
+ */
+export function resolveSafeLocalPath(raw: string): string {
+  let candidate: string;
+  if (raw.startsWith("file://")) {
+    const u = new URL(raw);
+    if (u.hostname && u.hostname !== "localhost") {
+      throw new Error(`local media path: remote file:// host not allowed (${u.hostname})`);
+    }
+    candidate = u.pathname;
+  } else if (!path.isAbsolute(raw)) {
+    candidate = path.resolve(process.cwd(), raw);
+  } else {
+    candidate = raw;
+  }
+  // Resolve symlinks and normalize
+  try {
+    candidate = path.resolve(candidate);
+  } catch {
+    throw new Error(`local media path: failed to resolve`);
+  }
+  // Require the resolved path to be under an allowed root or inside cwd
+  const cwd = process.cwd();
+  const allowed = ALLOWED_MEDIA_ROOTS.some((r) => candidate.startsWith(r)) ||
+    candidate.startsWith(cwd + path.sep);
+  if (!allowed) {
+    throw new Error(`local media path: outside allowed directories`);
+  }
+  return candidate;
+}
+
+/** Block SSRF: private / loopback / link-local / metadata IP ranges. */
+function isBlockedHostname(hostname: string): boolean {
+  const h = hostname.toLowerCase();
+  if (h === "localhost" || h === "127.0.0.1" || h === "[::1]" || h === "0.0.0.0" || h === "[::]") return true;
+  // AWS / GCP / Azure / Alibaba Cloud metadata endpoints
+  if (h === "169.254.169.254" || h === "100.100.100.200") return true;
+  if (h.endsWith(".local") || h.endsWith(".internal")) return true;
+  // RFC 1918 + CGNAT + link-local
+  if (h.startsWith("10.") || h.startsWith("192.168.")) return true;
+  if (h.startsWith("172.")) { const b = parseInt(h.split(".")[1], 10); if (b >= 16 && b <= 31) return true; }
+  if (h.startsWith("169.254.") || h.startsWith("100.") || h.startsWith("127.")) return true;
+  if (h.startsWith("fc") || h.startsWith("fd")) return true; // ULAs
+  return false;
+}
+
 /**
  * Download a remote media URL (image, video, file) to a local temp file in destDir.
  * Returns the local file path; extension is inferred from Content-Type / URL.
+ *
+ * Safety: blocks private/internal IPs (SSRF), enforces size limit, follows at most 1 redirect.
  */
 export async function downloadRemoteImageToTemp(url: string, destDir: string): Promise<string> {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`remote media download: invalid URL`);
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`remote media download: unsupported protocol ${parsed.protocol}`);
+  }
+  if (isBlockedHostname(parsed.hostname)) {
+    throw new Error(`remote media download: host not allowed`);
+  }
+
   logger.debug(`downloadRemoteImageToTemp: fetching url=${url}`);
-  const res = await fetch(url);
+  const res = await fetch(url, { redirect: "error" });
   if (!res.ok) {
     const msg = `remote media download failed: ${res.status} ${res.statusText} url=${url}`;
     logger.error(`downloadRemoteImageToTemp: ${msg}`);
     throw new Error(msg);
   }
+  const contentLen = res.headers.get("content-length");
+  if (contentLen && parseInt(contentLen, 10) > MAX_REMOTE_DOWNLOAD_BYTES) {
+    throw new Error(`remote media download: file too large (${contentLen} > ${MAX_REMOTE_DOWNLOAD_BYTES})`);
+  }
   const buf = Buffer.from(await res.arrayBuffer());
+  if (buf.length > MAX_REMOTE_DOWNLOAD_BYTES) {
+    throw new Error(`remote media download: file too large (${buf.length} > ${MAX_REMOTE_DOWNLOAD_BYTES})`);
+  }
   logger.debug(`downloadRemoteImageToTemp: downloaded ${buf.length} bytes`);
   await fs.mkdir(destDir, { recursive: true });
   const ext = getExtensionFromContentTypeOrUrl(res.headers.get("content-type"), url);
