@@ -25,6 +25,8 @@ export type MonitorWeixinOpts = {
   allowFrom?: string[];
   config: import("openclaw/plugin-sdk/core").OpenClawConfig;
   runtime?: { log?: (msg: string) => void; error?: (msg: string) => void };
+  /** Gateway-injected channel runtime — preferred over waitForWeixinRuntime() global. */
+  channelRuntime?: import("../runtime.js").PluginChannelRuntime;
   abortSignal?: AbortSignal;
   longPollTimeoutMs?: number;
   /** Gateway status callback — called on each successful poll and inbound message. */
@@ -52,13 +54,18 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
 
   aLog.info(`waiting for Weixin runtime...`);
   let channelRuntime: PluginRuntime["channel"];
-  try {
-    const pluginRuntime = await waitForWeixinRuntime();
-    channelRuntime = pluginRuntime.channel;
-    aLog.info(`Weixin runtime acquired, channelRuntime type: ${typeof channelRuntime}`);
-  } catch (err) {
-    aLog.error(`waitForWeixinRuntime() failed: ${String(err)}`);
-    throw err;
+  if (opts.channelRuntime) {
+    channelRuntime = opts.channelRuntime;
+    aLog.info(`Weixin runtime from gateway context, channelRuntime type: ${typeof channelRuntime}`);
+  } else {
+    try {
+      const pluginRuntime = await waitForWeixinRuntime();
+      channelRuntime = pluginRuntime.channel;
+      aLog.info(`Weixin runtime acquired via waitForWeixinRuntime(), channelRuntime type: ${typeof channelRuntime}`);
+    } catch (err) {
+      aLog.error(`waitForWeixinRuntime() failed: ${String(err)}`);
+      throw err;
+    }
   }
 
   log(`weixin monitor started (${baseUrl}, account=${accountId})`);

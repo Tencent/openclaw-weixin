@@ -396,6 +396,7 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
         accountId: account.accountId,
         config: ctx.cfg,
         runtime: ctx.runtime,
+        channelRuntime: ctx.channelRuntime,
         abortSignal: ctx.abortSignal,
         setStatus: ctx.setStatus,
       });
