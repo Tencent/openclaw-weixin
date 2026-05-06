@@ -147,6 +147,25 @@ describe("getConfig", () => {
   });
 });
 
+describe("buildHeaders / fetch headers contract (regression: openclaw#78434)", () => {
+  it("does not pass a manual Content-Length header to fetch", async () => {
+    // Modern undici (Node 24, undici 7.x) rejects user-supplied
+    // Content-Length headers synchronously with InvalidArgumentError
+    // from request.processHeader, surfacing as `TypeError: fetch failed`
+    // and breaking `channels login --channel openclaw-weixin`.
+    mockFetch.mockResolvedValueOnce(mockResponse({ ret: 0 }));
+    await sendMessage({
+      baseUrl: "https://api.example.com/",
+      token: "tok",
+      body: { ilink_user_id: "u", ilink_chat_id: "c", body: { msg: "hi" } },
+    });
+    const [, opts] = mockFetch.mock.calls[0];
+    const sentHeaders = (opts.headers ?? {}) as Record<string, string>;
+    const headerKeys = Object.keys(sentHeaders).map((key) => key.toLowerCase());
+    expect(headerKeys).not.toContain("content-length");
+  });
+});
+
 describe("sendTyping", () => {
   it("succeeds on ok response", async () => {
     mockFetch.mockResolvedValueOnce(mockResponse({ ret: 0 }));

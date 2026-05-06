@@ -104,10 +104,15 @@ function buildCommonHeaders(): Record<string, string> {
 }
 
 function buildHeaders(opts: { token?: string; body: string }): Record<string, string> {
+  // `Content-Length` is a forbidden request header in the WHATWG fetch spec
+  // (https://fetch.spec.whatwg.org/#forbidden-header-name). fetch is required
+  // to set it from the body; modern undici (Node 24, undici 7.x) rejects a
+  // user-supplied value synchronously with `InvalidArgumentError: invalid
+  // content-length header` from `processHeader`, surfacing as `TypeError:
+  // fetch failed` to callers. Older undici versions silently stripped it.
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     AuthorizationType: "ilink_bot_token",
-    "Content-Length": String(Buffer.byteLength(opts.body, "utf-8")),
     "X-WECHAT-UIN": randomWechatUin(),
     ...buildCommonHeaders(),
   };
