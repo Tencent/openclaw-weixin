@@ -1,6 +1,6 @@
 import path from "node:path";
 
-import type { ChannelPlugin, OpenClawConfig } from "openclaw/plugin-sdk/core";
+import type { ChannelPlugin, OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk/core";
 import { normalizeAccountId } from "openclaw/plugin-sdk/account-id";
 import { resolvePreferredOpenClawTmpDir } from "openclaw/plugin-sdk/infra-runtime";
 
@@ -398,6 +398,7 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
         runtime: ctx.runtime,
         abortSignal: ctx.abortSignal,
         setStatus: ctx.setStatus,
+        channelRuntime: ctx.channelRuntime ?? (ctx.runtime as unknown as PluginRuntime["channel"]),
       });
     },
     loginWithQrStart: async ({ accountId, force, timeoutMs, verbose }) => {

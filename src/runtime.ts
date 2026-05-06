@@ -25,7 +25,7 @@ export function getWeixinRuntime(): PluginRuntime {
 }
 
 const WAIT_INTERVAL_MS = 100;
-const DEFAULT_TIMEOUT_MS = 10_000;
+const DEFAULT_TIMEOUT_MS = 30_000;
 
 /**
  * Waits for the Weixin runtime to be initialized (async polling).

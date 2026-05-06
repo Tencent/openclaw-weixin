@@ -86,6 +86,16 @@ describe("getUpdates", () => {
     const [url] = mockFetch.mock.calls[0];
     expect(url).toContain("https://api.example.com/ilink/bot/getupdates");
   });
+
+  it("does not set Content-Length manually", async () => {
+    mockFetch.mockResolvedValueOnce(mockResponse({ ret: 0 }));
+    await getUpdates({
+      baseUrl: "https://api.example.com",
+      get_updates_buf: "old-buf",
+    });
+    const [, opts] = mockFetch.mock.calls[0];
+    expect(opts.headers).not.toHaveProperty("Content-Length");
+  });
 });
 
 describe("getUploadUrl", () => {

@@ -38,7 +38,7 @@ const MEDIA_OUTBOUND_TEMP_DIR = path.join(resolvePreferredOpenClawTmpDir(), "wei
 export type ProcessMessageDeps = {
   accountId: string;
   config: import("openclaw/plugin-sdk/core").OpenClawConfig;
-  channelRuntime: PluginRuntime["channel"];
+  channelRuntime: PluginRuntime["channel"] | null;
   baseUrl: string;
   cdnBaseUrl: string;
   token?: string;
@@ -73,6 +73,7 @@ export async function processOneMessage(
     deps.errLog("processOneMessage: channelRuntime is undefined, skip");
     return;
   }
+  const channelRuntime = deps.channelRuntime;
 
   const receivedAt = Date.now();
   const debug = isDebugMode(deps.accountId);
@@ -143,7 +144,7 @@ export async function processOneMessage(
     const label = refMediaItem ? "ref" : "inbound";
     const downloaded = await downloadMediaFromItem(mediaItem, {
       cdnBaseUrl: deps.cdnBaseUrl,
-      saveMedia: deps.channelRuntime.media.saveMediaBuffer,
+      saveMedia: channelRuntime.media.saveMediaBuffer,
       log: deps.log,
       errLog: deps.errLog,
       label,
@@ -184,7 +185,7 @@ export async function processOneMessage(
         const uid = loadWeixinAccount(deps.accountId)?.userId?.trim();
         return uid ? [uid] : [];
       },
-      runtime: deps.channelRuntime.commands,
+      runtime: channelRuntime.commands,
     });
 
   const directDmOutcome = resolveDirectDmAuthorizationOutcome({
@@ -212,7 +213,7 @@ export async function processOneMessage(
     );
   }
 
-  const route = deps.channelRuntime.routing.resolveAgentRoute({
+  const route = channelRuntime.routing.resolveAgentRoute({
     cfg: deps.config,
     channel: "openclaw-weixin",
     accountId: deps.accountId,
@@ -237,11 +238,11 @@ export async function processOneMessage(
   // the correct session (matching the dmScope from config) instead of falling back
   // to agent:main:main.
   ctx.SessionKey = route.sessionKey;
-  const storePath = deps.channelRuntime.session.resolveStorePath(deps.config.session?.store, {
+  const storePath = channelRuntime.session.resolveStorePath(deps.config.session?.store, {
     agentId: route.agentId,
   });
-  const finalized = deps.channelRuntime.reply.finalizeInboundContext(
-    ctx as Parameters<typeof deps.channelRuntime.reply.finalizeInboundContext>[0],
+  const finalized = channelRuntime.reply.finalizeInboundContext(
+    ctx as Parameters<typeof channelRuntime.reply.finalizeInboundContext>[0],
   );
 
   logger.info(
@@ -249,10 +250,10 @@ export async function processOneMessage(
   );
   logger.debug(`inbound context: ${redactBody(JSON.stringify(finalized))}`);
 
-  await deps.channelRuntime.session.recordInboundSession({
+  await channelRuntime.session.recordInboundSession({
     storePath,
     sessionKey: route.sessionKey,
-    ctx: finalized as Parameters<typeof deps.channelRuntime.session.recordInboundSession>[0]["ctx"],
+    ctx: finalized as Parameters<typeof channelRuntime.session.recordInboundSession>[0]["ctx"],
     updateLastRoute: {
       sessionKey: route.mainSessionKey,
       channel: "openclaw-weixin",
@@ -269,7 +270,7 @@ export async function processOneMessage(
   if (contextToken) {
     setContextToken(deps.accountId, full.from_user_id ?? "", contextToken);
   }
-  const humanDelay = deps.channelRuntime.reply.resolveHumanDelayConfig(deps.config, route.agentId);
+  const humanDelay = channelRuntime.reply.resolveHumanDelayConfig(deps.config, route.agentId);
 
   const hasTypingTicket = Boolean(deps.typingTicket);
   const typingCallbacks = createTypingCallbacks({
@@ -306,7 +307,7 @@ export async function processOneMessage(
   const debugDeliveries: Array<{ textLen: number; media: string; preview: string; ts: number }> = [];
 
   const { dispatcher, replyOptions, markDispatchIdle } =
-    deps.channelRuntime.reply.createReplyDispatcherWithTyping({
+    channelRuntime.reply.createReplyDispatcherWithTyping({
       humanDelay,
       typingCallbacks,
       deliver: async (payload) => {
@@ -412,10 +413,10 @@ export async function processOneMessage(
 
   logger.debug(`dispatchReplyFromConfig: starting agentId=${route.agentId ?? "(none)"}`);
   try {
-    await deps.channelRuntime.reply.withReplyDispatcher({
+    await channelRuntime.reply.withReplyDispatcher({
       dispatcher,
       run: () =>
-        deps.channelRuntime.reply.dispatchReplyFromConfig({
+        channelRuntime.reply.dispatchReplyFromConfig({
           ctx: finalized,
           cfg: deps.config,
           dispatcher,
