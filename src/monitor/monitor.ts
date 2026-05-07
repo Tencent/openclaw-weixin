@@ -5,7 +5,7 @@ import { getUpdates } from "../api/api.js";
 import { WeixinConfigManager } from "../api/config-cache.js";
 import { SESSION_EXPIRED_ERRCODE, pauseSession, getRemainingPauseMs } from "../api/session-guard.js";
 import { processOneMessage } from "../messaging/process-message.js";
-import { getWeixinRuntime, waitForWeixinRuntime } from "../runtime.js";
+import { getWeixinRuntime, resolveWeixinChannelRuntime, type PluginChannelRuntime } from "../runtime.js";
 import { getSyncBufFilePath, loadGetUpdatesBuf, saveGetUpdatesBuf } from "../storage/sync-buf.js";
 import { logger } from "../util/logger.js";
 import type { Logger } from "../util/logger.js";
@@ -25,6 +25,8 @@ export type MonitorWeixinOpts = {
   allowFrom?: string[];
   config: import("openclaw/plugin-sdk/core").OpenClawConfig;
   runtime?: { log?: (msg: string) => void; error?: (msg: string) => void };
+  /** Gateway-injected channel runtime — avoids worker-scope race with register(). */
+  channelRuntime?: PluginChannelRuntime;
   abortSignal?: AbortSignal;
   longPollTimeoutMs?: number;
   /** Gateway status callback — called on each successful poll and inbound message. */
@@ -53,11 +55,12 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
   aLog.info(`waiting for Weixin runtime...`);
   let channelRuntime: PluginRuntime["channel"];
   try {
-    const pluginRuntime = await waitForWeixinRuntime();
-    channelRuntime = pluginRuntime.channel;
+    channelRuntime = await resolveWeixinChannelRuntime({
+      channelRuntime: opts.channelRuntime,
+    });
     aLog.info(`Weixin runtime acquired, channelRuntime type: ${typeof channelRuntime}`);
   } catch (err) {
-    aLog.error(`waitForWeixinRuntime() failed: ${String(err)}`);
+    aLog.error(`resolveWeixinChannelRuntime() failed: ${String(err)}`);
     throw err;
   }
 
