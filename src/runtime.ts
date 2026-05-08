@@ -2,15 +2,40 @@ import type { PluginRuntime } from "openclaw/plugin-sdk/core";
 
 import { logger } from "./util/logger.js";
 
-let pluginRuntime: PluginRuntime | null = null;
-
 export type PluginChannelRuntime = PluginRuntime["channel"];
+
+// Store the runtime on globalThis under a Symbol.for() key so multiple module
+// instances of this file (which can occur when the host plugin loader instantiates
+// the package via different specifiers / cache scopes) all see the same value.
+//
+// Background: openclaw 2026.5.x can load this plugin under more than one ESM cache
+// scope per gateway boot. With a module-local `let pluginRuntime`, register() sets
+// the variable in instance A while channel start-account polls waitForWeixinRuntime()
+// in instance B → polling never resolves → the channel exits every 10s with
+// "Weixin runtime initialization timeout" and auto-restarts forever.
+//
+// A Symbol.for("...") key reuses one slot on globalThis across instances, so the
+// runtime state is shared regardless of how the module was imported.
+const RUNTIME_KEY: unique symbol = Symbol.for(
+  "@tencent-weixin/openclaw-weixin.pluginRuntime",
+) as unknown as typeof RUNTIME_KEY;
+
+type RuntimeSlot = { value: PluginRuntime | null };
+const globalScope = globalThis as unknown as Record<symbol, RuntimeSlot>;
+function getSlot(): RuntimeSlot {
+  let slot = globalScope[RUNTIME_KEY];
+  if (!slot) {
+    slot = { value: null };
+    globalScope[RUNTIME_KEY] = slot;
+  }
+  return slot;
+}
 
 /**
  * Sets the global Weixin runtime (called from plugin register).
  */
 export function setWeixinRuntime(next: PluginRuntime): void {
-  pluginRuntime = next;
+  getSlot().value = next;
   logger.info(`[runtime] setWeixinRuntime called, runtime set successfully`);
 }
 
@@ -18,10 +43,11 @@ export function setWeixinRuntime(next: PluginRuntime): void {
  * Gets the global Weixin runtime (throws if not initialized).
  */
 export function getWeixinRuntime(): PluginRuntime {
-  if (!pluginRuntime) {
+  const value = getSlot().value;
+  if (!value) {
     throw new Error("Weixin runtime not initialized");
   }
-  return pluginRuntime;
+  return value;
 }
 
 const WAIT_INTERVAL_MS = 100;
@@ -34,13 +60,14 @@ export async function waitForWeixinRuntime(
   timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Promise<PluginRuntime> {
   const start = Date.now();
-  while (!pluginRuntime) {
+  const slot = getSlot();
+  while (!slot.value) {
     if (Date.now() - start > timeoutMs) {
       throw new Error("Weixin runtime initialization timeout");
     }
     await new Promise((resolve) => setTimeout(resolve, WAIT_INTERVAL_MS));
   }
-  return pluginRuntime;
+  return slot.value;
 }
 
 /**
@@ -58,9 +85,10 @@ export async function resolveWeixinChannelRuntime(params: {
     logger.debug("[runtime] channelRuntime from gateway context");
     return params.channelRuntime;
   }
-  if (pluginRuntime) {
+  const value = getSlot().value;
+  if (value) {
     logger.debug("[runtime] channelRuntime from register() global");
-    return pluginRuntime.channel;
+    return value.channel;
   }
   logger.warn(
     "[runtime] no channelRuntime on ctx and no global runtime yet; waiting for register()",
