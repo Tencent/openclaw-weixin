@@ -104,10 +104,13 @@ function buildCommonHeaders(): Record<string, string> {
 }
 
 function buildHeaders(opts: { token?: string; body: string }): Record<string, string> {
+  // Do NOT set Content-Length manually. Modern undici (used by Node 22+ and openclaw's
+  // bundled undici) treats it as a forbidden request-header on fetch() and rejects the
+  // request with `UND_ERR_INVALID_ARG: invalid content-length header` before sending.
+  // The runtime computes Content-Length from the body automatically.
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     AuthorizationType: "ilink_bot_token",
-    "Content-Length": String(Buffer.byteLength(opts.body, "utf-8")),
     "X-WECHAT-UIN": randomWechatUin(),
     ...buildCommonHeaders(),
   };
