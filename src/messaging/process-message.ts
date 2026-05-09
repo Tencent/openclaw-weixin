@@ -212,6 +212,14 @@ export async function processOneMessage(
     );
   }
 
+  // Log bindings summary at debug level to help diagnose routing issues (issue #135).
+  // Remove these logs once routing is confirmed working.
+  const bindingSummary = (deps.config.bindings ?? []).map((b) =>
+    JSON.stringify({ channel: b.match?.channel, peer: b.match?.peer, agentId: b.agentId }),
+  );
+  logger.debug(
+    `resolveAgentRoute: channel=openclaw-weixin accountId=${deps.accountId} peer=direct:${ctx.To} bindings=[${bindingSummary.join(", ")}]`,
+  );
   const route = deps.channelRuntime.routing.resolveAgentRoute({
     cfg: deps.config,
     channel: "openclaw-weixin",
@@ -219,7 +227,7 @@ export async function processOneMessage(
     peer: { kind: "direct", id: ctx.To },
   });
   logger.debug(
-    `resolveAgentRoute: agentId=${route.agentId ?? "(none)"} sessionKey=${route.sessionKey ?? "(none)"} mainSessionKey=${route.mainSessionKey ?? "(none)"}`,
+    `resolveAgentRoute result: agentId=${route.agentId ?? "(none)"} sessionKey=${route.sessionKey ?? "(none)"} mainSessionKey=${route.mainSessionKey ?? "(none)"} matchedBy=${route.matchedBy}`,
   );
   if (!route.agentId) {
     logger.error(
