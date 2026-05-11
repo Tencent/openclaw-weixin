@@ -4,6 +4,13 @@
   "channels": [
     "openclaw-weixin"
   ],
+  "channelConfigs": {
+    "openclaw-weixin": {
+      "schema": {
+        "type": "object"
+      }
+    }
+  },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

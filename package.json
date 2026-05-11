@@ -37,6 +37,9 @@
     "vitest": "^3.1.0"
   },
   "openclaw": {
+    "runtimeExtensions": [
+      "./index.ts"
+    ],
     "extensions": [
       "./index.ts"
     ],
