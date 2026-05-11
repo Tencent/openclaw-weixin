@@ -107,7 +107,6 @@ function buildHeaders(opts: { token?: string; body: string }): Record<string, st
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     AuthorizationType: "ilink_bot_token",
-    "Content-Length": String(Buffer.byteLength(opts.body, "utf-8")),
     "X-WECHAT-UIN": randomWechatUin(),
     ...buildCommonHeaders(),
   };
