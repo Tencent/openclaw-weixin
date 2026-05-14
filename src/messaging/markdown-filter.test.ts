@@ -47,33 +47,23 @@ function expectFilter(input: string, expected: string) {
 // ---------------------------------------------------------------------------
 
 describe("markdown filtering (migrated from markdownToPlainText)", () => {
-  it("strips code blocks but keeps content", () => {
+  it("preserves code blocks with markers", () => {
     const input = "before\n```js\nconst x = 1;\n```\nafter";
-    const result = oneShot(input);
-    expect(result).toContain("const x = 1;");
-    expect(result).not.toContain("```");
+    expect(oneShot(input)).toBe(input);
   });
 
   it("removes image markdown", () => {
     expect(oneShot("![alt](url)")).toBe("");
   });
 
-  it("strips bold/italic markers", () => {
+  it("preserves bold and non-CJK italic markers", () => {
     const result = oneShot("**bold** and *italic*");
-    expect(result).toContain("bold");
-    expect(result).toContain("italic");
-    expect(result).not.toContain("*italic*");
+    expect(result).toBe("**bold** and *italic*");
   });
 
-  it("strips table with surrounding text", () => {
+  it("preserves table with surrounding text", () => {
     const input = "结果如下：\n| A | B |\n|---|---|\n| 1 | 2 |\n完毕。";
-    const result = oneShot(input);
-    expect(result).toContain("结果如下：");
-    expect(result).toContain("完毕。");
-    expect(result).not.toContain("|");
-    expect(result).not.toContain("---");
-    expect(result).toContain("A");
-    expect(result).toContain("2");
+    expect(oneShot(input)).toBe(input);
   });
 });
 
@@ -107,71 +97,71 @@ describe("StreamingMarkdownFilter", () => {
     });
   });
 
-  // ---- Code fences ----------------------------------------------------------
+  // ---- Code fences (passed through) ----------------------------------------
 
-  describe("code fences", () => {
-    it("strips fence markers but keeps content (one-shot)", () => {
-      expect(oneShot("```\ncode\n```\n")).toBe("code\n");
+  describe("code fences (passed through)", () => {
+    it("preserves fence markers and content (one-shot)", () => {
+      expect(oneShot("```\ncode\n```\n")).toBe("```\ncode\n```\n");
     });
 
-    it("strips fence with language tag (one-shot)", () => {
-      expect(oneShot("```typescript\nconst x = 1;\n```\n")).toBe("const x = 1;\n");
+    it("preserves fence with language tag (one-shot)", () => {
+      expect(oneShot("```typescript\nconst x = 1;\n```\n")).toBe("```typescript\nconst x = 1;\n```\n");
     });
 
     it("preserves text before and after fence (one-shot)", () => {
-      expect(oneShot("before\n```\ncode\n```\nafter")).toBe("before\ncode\nafter");
+      expect(oneShot("before\n```\ncode\n```\nafter")).toBe("before\n```\ncode\n```\nafter");
     });
 
     it("preserves markdown inside a code fence verbatim (one-shot)", () => {
       expect(oneShot("```\n**bold** *italic* ~~strike~~\n```\n"))
-        .toBe("**bold** *italic* ~~strike~~\n");
+        .toBe("```\n**bold** *italic* ~~strike~~\n```\n");
     });
 
     it("handles multiple fenced blocks (one-shot)", () => {
       expect(oneShot("```\nblock1\n```\ntext\n```\nblock2\n```\n"))
-        .toBe("block1\ntext\nblock2\n");
+        .toBe("```\nblock1\n```\ntext\n```\nblock2\n```\n");
     });
 
     it("code fence at end of input (one-shot)", () => {
-      expect(oneShot("```\ncode\n```")).toBe("code\n");
+      expect(oneShot("```\ncode\n```")).toBe("```\ncode\n```");
     });
 
     it("streaming: newline after ``` becomes content when split", () => {
       const f = new StreamingMarkdownFilter();
       const out = f.feed("```") + f.feed("\ncode\n```\n") + f.flush();
-      expect(out).toBe("\ncode\n");
+      expect(out).toBe("```\ncode\n```\n");
     });
 
     it("streaming: ``` and newline in same chunk works correctly", () => {
       const f = new StreamingMarkdownFilter();
       const out = f.feed("```\n") + f.feed("code\n") + f.feed("```\n") + f.flush();
-      expect(out).toBe("code\n");
+      expect(out).toBe("```\ncode\n```\n");
     });
 
     it("code fence with language tag in single chunk", () => {
       const f = new StreamingMarkdownFilter();
       const out = f.feed("```typescript\n") + f.feed("const x = 1;\n") + f.feed("```\n") + f.flush();
-      expect(out).toBe("const x = 1;\n");
+      expect(out).toBe("```typescript\nconst x = 1;\n```\n");
     });
   });
 
-  // ---- Inline code ----------------------------------------------------------
+  // ---- Inline code (passed through) ----------------------------------------
 
-  describe("inline code", () => {
-    it("strips backticks, keeps content", () => {
-      expectFilter("use `fmt.Println` here", "use fmt.Println here");
+  describe("inline code (passed through)", () => {
+    it("preserves backticks and content", () => {
+      expectFilter("use `fmt.Println` here", "use `fmt.Println` here");
     });
 
-    it("handles inline code at start of body", () => {
-      expectFilter("text\n`code`", "text\ncode");
+    it("preserves inline code at start of body", () => {
+      expectFilter("text\n`code`", "text\n`code`");
     });
 
-    it("unclosed backtick before newline restores the backtick", () => {
+    it("preserves unclosed backtick before newline", () => {
       expectFilter("hello `world\nnext", "hello `world\nnext");
     });
 
-    it("inline code with special chars", () => {
-      expectFilter("run `rm -rf /` carefully", "run rm -rf / carefully");
+    it("preserves inline code with special chars", () => {
+      expectFilter("run `rm -rf /` carefully", "run `rm -rf /` carefully");
     });
   });
 
@@ -203,16 +193,16 @@ describe("StreamingMarkdownFilter", () => {
 
   // ---- Strikethrough --------------------------------------------------------
 
-  describe("strikethrough", () => {
-    it("strips ~~ markers, keeps content", () => {
-      expectFilter("~~deleted~~", "deleted");
+  describe("strikethrough (passed through)", () => {
+    it("preserves ~~ markers and content", () => {
+      expectFilter("~~deleted~~", "~~deleted~~");
     });
 
-    it("strips strikethrough with surrounding text", () => {
-      expectFilter("keep ~~this~~ too", "keep this too");
+    it("preserves strikethrough with surrounding text", () => {
+      expectFilter("keep ~~this~~ too", "keep ~~this~~ too");
     });
 
-    it("unclosed ~~ at EOF restores markers", () => {
+    it("preserves unclosed ~~ at EOF", () => {
       const f = new StreamingMarkdownFilter();
       const result = f.feed("~~unclosed") + f.flush();
       expect(result).toBe("~~unclosed");
@@ -235,15 +225,23 @@ describe("StreamingMarkdownFilter", () => {
     });
   });
 
-  // ---- Italic (* stripped) --------------------------------------------------
+  // ---- Italic (* — CJK-aware) ----------------------------------------------
 
-  describe("italic (* stripped)", () => {
-    it("strips single * markers", () => {
-      expectFilter("*italic*", "italic");
+  describe("italic (* — CJK-aware)", () => {
+    it("preserves * markers for non-CJK content", () => {
+      expectFilter("*italic*", "*italic*");
     });
 
-    it("strips italic with surrounding text", () => {
-      expectFilter("this is *emphasized* text", "this is emphasized text");
+    it("preserves italic with surrounding non-CJK text", () => {
+      expectFilter("this is *emphasized* text", "this is *emphasized* text");
+    });
+
+    it("strips * markers for CJK content", () => {
+      expectFilter("*中文斜体*", "中文斜体");
+    });
+
+    it("strips * markers for mixed CJK content", () => {
+      expectFilter("*hello 你好*", "hello 你好");
     });
 
     it("unclosed italic before newline restores *", () => {
@@ -259,15 +257,19 @@ describe("StreamingMarkdownFilter", () => {
     });
   });
 
-  // ---- Bold-italic (*** stripped) -------------------------------------------
+  // ---- Bold-italic (*** — CJK-aware) ---------------------------------------
 
-  describe("bold-italic (*** stripped)", () => {
-    it("strips *** markers", () => {
-      expectFilter("***bold italic***", "bold italic");
+  describe("bold-italic (*** — CJK-aware)", () => {
+    it("preserves *** markers for non-CJK content", () => {
+      expectFilter("***bold italic***", "***bold italic***");
     });
 
-    it("strips bold-italic with surrounding text", () => {
-      expectFilter("this is ***very strong*** text", "this is very strong text");
+    it("preserves bold-italic with surrounding non-CJK text", () => {
+      expectFilter("this is ***very strong*** text", "this is ***very strong*** text");
+    });
+
+    it("strips *** markers for CJK content", () => {
+      expectFilter("***粗斜体文字***", "粗斜体文字");
     });
 
     it("unclosed *** at EOF restores markers", () => {
@@ -277,23 +279,67 @@ describe("StreamingMarkdownFilter", () => {
     });
   });
 
+  // ---- CJK-aware italic/bold-italic (comprehensive) ------------------------
+
+  describe("CJK-aware italic/bold-italic", () => {
+    it("preserves _italic_ for non-CJK content", () => {
+      expectFilter("_italic_", "_italic_");
+    });
+
+    it("strips _italic_ for CJK content", () => {
+      expectFilter("_中文_", "中文");
+    });
+
+    it("preserves ___bold-italic___ for non-CJK content", () => {
+      expectFilter("___bold italic___", "___bold italic___");
+    });
+
+    it("strips ___bold-italic___ for CJK content", () => {
+      expectFilter("___粗斜体___", "粗斜体");
+    });
+
+    it("handles Japanese text as CJK", () => {
+      expectFilter("*こんにちは*", "こんにちは");
+    });
+
+    it("handles Korean text as CJK", () => {
+      expectFilter("*안녕하세요*", "안녕하세요");
+    });
+
+    it("preserves italic around numbers and punctuation", () => {
+      expectFilter("*123!*", "*123!*");
+    });
+
+    it("strips italic around CJK with numbers", () => {
+      expectFilter("*第1章*", "第1章");
+    });
+
+    it("preserves non-CJK italic in CJK context", () => {
+      expectFilter("中文 *English* 中文", "中文 *English* 中文");
+    });
+
+    it("strips CJK italic in English context", () => {
+      expectFilter("English *中文* English", "English 中文 English");
+    });
+  });
+
   // ---- Blockquotes ----------------------------------------------------------
 
-  describe("blockquotes", () => {
-    it("strips > prefix with space", () => {
-      expectFilter("> quoted text", "quoted text");
+  describe("blockquotes (passed through)", () => {
+    it("preserves > prefix with space", () => {
+      expectFilter("> quoted text", "> quoted text");
     });
 
-    it("strips > prefix without space", () => {
-      expectFilter(">quoted", "quoted");
+    it("preserves > prefix without space", () => {
+      expectFilter(">quoted", ">quoted");
     });
 
-    it("strips multiline blockquote", () => {
-      expectFilter("> line1\n> line2", "line1\nline2");
+    it("preserves multiline blockquote", () => {
+      expectFilter("> line1\n> line2", "> line1\n> line2");
     });
 
-    it("strips blockquote with inline formatting", () => {
-      expectFilter("> **bold** in quote", "**bold** in quote");
+    it("preserves blockquote with inline formatting", () => {
+      expectFilter("> **bold** in quote", "> **bold** in quote");
     });
   });
 
@@ -333,27 +379,27 @@ describe("StreamingMarkdownFilter", () => {
     });
   });
 
-  // ---- Horizontal rules -----------------------------------------------------
+  // ---- Horizontal rules (passed through) ------------------------------------
 
-  describe("horizontal rules", () => {
-    it("strips --- rule", () => {
-      expectFilter("before\n---\nafter", "before\nafter");
+  describe("horizontal rules (passed through)", () => {
+    it("preserves --- rule", () => {
+      expectFilter("before\n---\nafter", "before\n---\nafter");
     });
 
-    it("strips *** rule", () => {
-      expectFilter("before\n***\nafter", "before\nafter");
+    it("preserves *** rule", () => {
+      expectFilter("before\n***\nafter", "before\n***\nafter");
     });
 
-    it("strips ___ rule", () => {
-      expectFilter("before\n___\nafter", "before\nafter");
+    it("preserves ___ rule", () => {
+      expectFilter("before\n___\nafter", "before\n___\nafter");
     });
 
-    it("strips - - - rule (with spaces)", () => {
-      expectFilter("before\n- - -\nafter", "before\nafter");
+    it("preserves - - - rule (with spaces)", () => {
+      expectFilter("before\n- - -\nafter", "before\n- - -\nafter");
     });
 
-    it("strips rule at end of input", () => {
-      expectFilter("text\n---", "text\n");
+    it("preserves rule at end of input", () => {
+      expectFilter("text\n---", "text\n---");
     });
 
     it("does not strip -- (only two dashes)", () => {
@@ -361,83 +407,60 @@ describe("StreamingMarkdownFilter", () => {
     });
   });
 
-  // ---- Tables ---------------------------------------------------------------
+  // ---- Tables (passed through) ----------------------------------------------
 
-  describe("tables", () => {
-    it("strips | delimiters and converts cells to tab-separated text", () => {
+  describe("tables (passed through)", () => {
+    it("preserves | delimiters and table structure", () => {
       const input = "| Header1 | Header2 |\n|---------|---------||\n| Cell1 | Cell2 |";
-      const result = oneShot(input);
-      expect(result).not.toContain("|");
-      expect(result).toContain("Header1");
-      expect(result).toContain("Header2");
-      expect(result).toContain("Cell1");
-      expect(result).toContain("Cell2");
+      expect(oneShot(input)).toBe(input);
     });
 
-    it("removes separator row entirely", () => {
+    it("preserves separator row", () => {
       const input = "| A | B |\n|---|---|\n| 1 | 2 |";
-      const result = oneShot(input);
-      expect(result).not.toContain("---");
-      expect(result).not.toContain("|");
-      expect(result).toContain("A");
-      expect(result).toContain("B");
-      expect(result).toContain("1");
-      expect(result).toContain("2");
+      expect(oneShot(input)).toBe(input);
     });
 
-    it("produces tab-separated cell values", () => {
-      expect(oneShot("| A | B |\n")).toBe("A\tB\n");
+    it("preserves table row as-is", () => {
+      expect(oneShot("| A | B |\n")).toBe("| A | B |\n");
     });
 
-    it("removes separator with colons (alignment markers)", () => {
-      expect(oneShot("|:---|---:|\n")).toBe("");
+    it("preserves separator with colons (alignment markers)", () => {
+      expect(oneShot("|:---|---:|\n")).toBe("|:---|---:|\n");
     });
 
-    it("table with surrounding text", () => {
+    it("preserves table with surrounding text", () => {
       const input = "结果如下：\n| A | B |\n|---|---|\n| 1 | 2 |\n完毕。";
-      const result = oneShot(input);
-      expect(result).toContain("结果如下：");
-      expect(result).toContain("完毕。");
-      expect(result).not.toContain("|");
-      expect(result).not.toContain("---");
-      expect(result).toContain("A");
-      expect(result).toContain("2");
+      expect(oneShot(input)).toBe(input);
     });
 
-    it("table with emoji content", () => {
-      const table = [
+    it("preserves table with emoji content", () => {
+      const input = [
         "| 微信表情 | Emoji |",
         "|----------|-------|",
         "| [微笑] | 😊 |",
         "| [撇嘴] | 😣 |",
       ].join("\n");
-      const result = oneShot(table);
-      expect(result).not.toContain("|");
-      expect(result).not.toContain("---");
-      expect(result).toContain("微信表情");
-      expect(result).toContain("😊");
-      expect(result).toContain("[微笑]");
+      expect(oneShot(input)).toBe(input);
     });
 
-    it("table at EOF without trailing newline", () => {
-      const result = oneShot("| A | B |");
-      expect(result).toBe("A\tB");
+    it("preserves table at EOF without trailing newline", () => {
+      expect(oneShot("| A | B |")).toBe("| A | B |");
     });
 
     it("streaming: table row split across chunks", () => {
       const f = new StreamingMarkdownFilter();
       const out = f.feed("| A |") + f.feed(" B |\n") + f.flush();
-      expect(out).toBe("A\tB\n");
+      expect(out).toBe("| A | B |\n");
     });
 
     it("streaming: separator row split across chunks", () => {
       const f = new StreamingMarkdownFilter();
       const out = f.feed("|---") + f.feed("|---|\n") + f.flush();
-      expect(out).toBe("");
+      expect(out).toBe("|---|---|\n");
     });
 
-    it("| at SOL in non-table context (single |)", () => {
-      expect(oneShot("| just text\n")).toBe("just text\n");
+    it("| at SOL passes through", () => {
+      expect(oneShot("| just text\n")).toBe("| just text\n");
     });
   });
 
@@ -485,26 +508,26 @@ describe("StreamingMarkdownFilter", () => {
     it("heading + bold + inline code", () => {
       expectFilter(
         "## **Title**\nUse `code` here.",
-        "## **Title**\nUse code here.",
+        "## **Title**\nUse `code` here.",
       );
     });
 
     it("blockquote + italic + strikethrough", () => {
       expectFilter(
         "> *italic* and ~~strike~~",
-        "italic and strike",
+        "> *italic* and ~~strike~~",
       );
     });
 
     it("code fence + inline code + image (one-shot)", () => {
       expect(oneShot("```\nfenced\n```\n`inline` ![img](url)"))
-        .toBe("fenced\ninline ");
+        .toBe("```\nfenced\n```\n`inline` ");
     });
 
-    it("mixed bold and bold-italic", () => {
+    it("mixed bold and bold-italic (non-CJK)", () => {
       expectFilter(
         "**bold** then ***bold-italic*** then **bold2**",
-        "**bold** then bold-italic then **bold2**",
+        "**bold** then ***bold-italic*** then **bold2**",
       );
     });
 
@@ -532,26 +555,26 @@ describe("StreamingMarkdownFilter", () => {
       const result = oneShot(input);
       expect(result).toContain("## Summary");
       expect(result).toContain("**important**");
-      expect(result).toContain("emphasized");
-      expect(result).not.toContain("*emphasized*");
+      expect(result).toContain("*emphasized*");
       expect(result).toContain("print('hello')");
-      expect(result).not.toContain("```");
+      expect(result).toContain("```");
       expect(result).toContain("- item 1");
       expect(result).toContain("- nested");
-      expect(result).not.toContain("---");
+      expect(result).toContain("---");
       expect(result).toContain("End.");
+      expect(result).toContain("> This is a quote.");
     });
   });
 
   // ---- Hold-back / buffering ------------------------------------------------
 
   describe("hold-back logic", () => {
-    it("holds trailing * until resolved as italic", () => {
+    it("holds trailing * until resolved as italic (non-CJK)", () => {
       const f = new StreamingMarkdownFilter();
       const r1 = f.feed("hello *");
       expect(r1).toBe("hello ");
       const r2 = f.feed("world* end");
-      expect(r2).toBe("world end");
+      expect(r2).toBe("*world* end");
       expect(f.flush()).toBe("");
     });
 
@@ -573,21 +596,21 @@ describe("StreamingMarkdownFilter", () => {
       expect(f.flush()).toBe("");
     });
 
-    it("holds trailing ** then resolves as *** (bold-italic)", () => {
+    it("holds trailing ** then resolves as *** (bold-italic, non-CJK)", () => {
       const f = new StreamingMarkdownFilter();
       const r1 = f.feed("a **");
       expect(r1).toBe("a ");
       const r2 = f.feed("*bi*** end");
-      expect(r2).toBe("bi end");
+      expect(r2).toBe("***bi*** end");
       expect(f.flush()).toBe("");
     });
 
-    it("holds trailing ~ until resolved", () => {
+    it("~ is not held back (passed through)", () => {
       const f = new StreamingMarkdownFilter();
       const r1 = f.feed("text ~");
-      expect(r1).toBe("text ");
+      expect(r1).toBe("text ~");
       const r2 = f.feed("~strike~~ end");
-      expect(r2).toBe("strike end");
+      expect(r2).toBe("~strike~~ end");
       expect(f.flush()).toBe("");
     });
 
@@ -619,13 +642,13 @@ describe("StreamingMarkdownFilter", () => {
       expect(f.flush()).toBe("*");
     });
 
-    it("flush emits unclosed inline code", () => {
+    it("flush emits unclosed inline code as-is", () => {
       const f = new StreamingMarkdownFilter();
       const r = f.feed("unclosed `code") + f.flush();
       expect(r).toBe("unclosed `code");
     });
 
-    it("flush emits unclosed strikethrough", () => {
+    it("flush emits ~~ as-is (passed through)", () => {
       const f = new StreamingMarkdownFilter();
       const r = f.feed("~~unclosed") + f.flush();
       expect(r).toBe("~~unclosed");
@@ -665,18 +688,20 @@ describe("StreamingMarkdownFilter", () => {
     const cases: [string, string][] = [
       ["plain text", "plain text"],
       ["**bold** text", "**bold** text"],
-      ["*italic* text", "italic text"],
-      ["***bi*** text", "bi text"],
-      ["~~strike~~ text", "strike text"],
-      ["`code` text", "code text"],
+      ["*italic* text", "*italic* text"],
+      ["*中文* text", "中文 text"],
+      ["***bi*** text", "***bi*** text"],
+      ["***中文*** text", "中文 text"],
+      ["~~strike~~ text", "~~strike~~ text"],
+      ["`code` text", "`code` text"],
       ["![img](url)", ""],
-      ["> blockquote", "blockquote"],
+      ["> blockquote", "> blockquote"],
       ["##### H5 heading", "H5 heading"],
       ["## H2 heading", "## H2 heading"],
-      ["before\n---\nafter", "before\nafter"],
+      ["before\n---\nafter", "before\n---\nafter"],
       [
         "Here **bold** and *italic* `code` ~~strike~~ ***bi*** end",
-        "Here **bold** and italic code strike bi end",
+        "Here **bold** and *italic* `code` ~~strike~~ ***bi*** end",
       ],
     ];
 
@@ -688,10 +713,10 @@ describe("StreamingMarkdownFilter", () => {
 
     it("code fence: one-shot vs line-chunked streaming", () => {
       const input = "```\nfenced\n```\nafter";
-      expect(oneShot(input)).toBe("fenced\nafter");
+      expect(oneShot(input)).toBe("```\nfenced\n```\nafter");
       const f = new StreamingMarkdownFilter();
       const out = f.feed("```\n") + f.feed("fenced\n") + f.feed("```\n") + f.feed("after") + f.flush();
-      expect(out).toBe("fenced\nafter");
+      expect(out).toBe("```\nfenced\n```\nafter");
     });
 
     it("indented list: one-shot vs whole-line streaming", () => {
@@ -729,7 +754,7 @@ describe("StreamingMarkdownFilter", () => {
     });
 
     it("nested blockquote (>>)", () => {
-      expectFilter(">> deeply nested", "> deeply nested");
+      expectFilter(">> deeply nested", ">> deeply nested");
     });
 
     it("multiple images on same line", () => {
@@ -740,7 +765,7 @@ describe("StreamingMarkdownFilter", () => {
     });
 
     it("bold inside code fence is not processed (one-shot)", () => {
-      expect(oneShot("```\n**not bold**\n```\n")).toBe("**not bold**\n");
+      expect(oneShot("```\n**not bold**\n```\n")).toBe("```\n**not bold**\n```\n");
     });
 
     it("handles very long input", () => {
@@ -748,15 +773,15 @@ describe("StreamingMarkdownFilter", () => {
       expectFilter(longText, longText);
     });
 
-    it("alternating italic and bold", () => {
+    it("alternating italic and bold (non-CJK)", () => {
       expectFilter(
         "*a* **b** *c* **d**",
-        "a **b** c **d**",
+        "*a* **b** *c* **d**",
       );
     });
 
     it("horizontal rule vs list item at SOL", () => {
-      expectFilter("- - -\n", "");
+      expectFilter("- - -\n", "- - -\n");
       expectFilter("- item", "- item");
     });
   });

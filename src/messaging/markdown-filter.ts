@@ -6,9 +6,22 @@
  * holding back the minimum characters needed for pattern disambiguation
  * (e.g. a trailing `*` that might become `***`).
  *
+ * Constructs passed through (not filtered):
+ * - Code fences (```)
+ * - Inline code (`)
+ * - Tables (|...|)
+ * - Horizontal rules (---, ***, ___)
+ * - Bold (**)
+ * - Italic/bold-italic wrapping non-CJK content
+ *
+ * Constructs filtered (markers stripped, content kept):
+ * - Italic/bold-italic wrapping CJK content
+ * - Headings H5/H6 (#####, ######)
+ * - Images (![alt](url)) — removed entirely
+ *
  * States:
  * - **sol** (start-of-line): checks for line-start patterns (```, >, #####, indent)
- * - **body**: scans for inline patterns (`, ![, ~~, ***) and outputs safe chars
+ * - **body**: scans for inline patterns (![, ~~, ***) and outputs safe chars
  * - **fence**: inside a fenced code block, passes through until closing ```
  * - **inline**: accumulating content inside an inline marker pair
  */
@@ -16,7 +29,7 @@ export class StreamingMarkdownFilter {
   private buf = "";
   private fence = false;
   private sol = true;
-  private inl: { type: "code" | "image" | "strike" | "bold3" | "italic" | "ubold3" | "uitalic" | "table"; acc: string } | null = null;
+  private inl: { type: "image" | "bold3" | "italic" | "ubold3" | "uitalic"; acc: string } | null = null;
 
   feed(delta: string): string {
     this.buf += delta;
@@ -45,26 +58,32 @@ export class StreamingMarkdownFilter {
     }
 
     if (eof && this.inl) {
-      if (this.inl.type === "table") {
-        out += StreamingMarkdownFilter.extractTableRow(this.inl.acc);
-      } else {
-        const markers: Record<string, string> = { code: "`", image: "![", strike: "~~", bold3: "***", italic: "*", ubold3: "___", uitalic: "_" };
-        out += (markers[this.inl.type] ?? "") + this.inl.acc;
-      }
+      const markers: Record<string, string> = { image: "![", bold3: "***", italic: "*", ubold3: "___", uitalic: "_" };
+      out += (markers[this.inl.type] ?? "") + this.inl.acc;
       this.inl = null;
     }
     return out;
   }
 
-  /** Inside a code fence: pass content through, watch for closing ``` at SOL. */
+  /** Inside a code fence: pass content and markers through verbatim. */
   private pumpFence(eof: boolean): string {
     if (this.sol) {
       if (this.buf.length < 3 && !eof) return "";
       if (this.buf.startsWith("```")) {
-        this.fence = false;
         const nl = this.buf.indexOf("\n", 3);
-        this.buf = nl !== -1 ? this.buf.slice(nl + 1) : "";
-        this.sol = true;
+        if (nl !== -1) {
+          this.fence = false;
+          const line = this.buf.slice(0, nl + 1);
+          this.buf = this.buf.slice(nl + 1);
+          this.sol = true;
+          return line;
+        }
+        if (eof) {
+          this.fence = false;
+          const line = this.buf;
+          this.buf = "";
+          return line;
+        }
         return "";
       }
       this.sol = false;
@@ -93,10 +112,18 @@ export class StreamingMarkdownFilter {
     if (b[0] === "`") {
       if (b.length < 3 && !eof) return "";
       if (b.startsWith("```")) {
-        this.fence = true;
         const nl = b.indexOf("\n", 3);
-        this.buf = nl !== -1 ? b.slice(nl + 1) : "";
-        this.sol = true;
+        if (nl !== -1) {
+          this.fence = true;
+          const line = b.slice(0, nl + 1);
+          this.buf = b.slice(nl + 1);
+          this.sol = true;
+          return line;
+        }
+        if (eof) {
+          this.buf = "";
+          return b;
+        }
         return "";
       }
       this.sol = false;
@@ -104,8 +131,6 @@ export class StreamingMarkdownFilter {
     }
 
     if (b[0] === ">") {
-      if (b.length < 2 && !eof) return "";
-      this.buf = b.length >= 2 && b[1] === " " ? b.slice(2) : b.slice(1);
       this.sol = false;
       return "";
     }
@@ -119,13 +144,6 @@ export class StreamingMarkdownFilter {
         this.sol = false;
         return "";
       }
-      this.sol = false;
-      return "";
-    }
-
-    if (b[0] === "|") {
-      this.buf = b.slice(1);
-      this.inl = { type: "table", acc: "" };
       this.sol = false;
       return "";
     }
@@ -145,9 +163,13 @@ export class StreamingMarkdownFilter {
         let count = 0;
         for (let k = 0; k < j; k++) if (b[k] === ch) count++;
         if (count >= 3) {
-          this.buf = j < b.length ? b.slice(j + 1) : "";
-          this.sol = true;
-          return "";
+          if (j < b.length) {
+            this.buf = b.slice(j + 1);
+            this.sol = true;
+            return b.slice(0, j + 1);
+          }
+          this.buf = "";
+          return b;
         }
       }
       this.sol = false;
@@ -170,23 +192,15 @@ export class StreamingMarkdownFilter {
         this.sol = true;
         return out;
       }
-      if (c === "`") {
-        out += this.buf.slice(0, i);
-        this.buf = this.buf.slice(i + 1);
-        this.inl = { type: "code", acc: "" };
-        return out;
-      }
       if (c === "!" && i + 1 < this.buf.length && this.buf[i + 1] === "[") {
         out += this.buf.slice(0, i);
         this.buf = this.buf.slice(i + 2);
         this.inl = { type: "image", acc: "" };
         return out;
       }
-      if (c === "~" && i + 1 < this.buf.length && this.buf[i + 1] === "~") {
-        out += this.buf.slice(0, i);
-        this.buf = this.buf.slice(i + 2);
-        this.inl = { type: "strike", acc: "" };
-        return out;
+      if (c === "~") {
+        i++;
+        continue;
       }
       if (c === "*") {
         if (i + 2 < this.buf.length && this.buf[i + 1] === "*" && this.buf[i + 2] === "*") {
@@ -237,7 +251,6 @@ export class StreamingMarkdownFilter {
       else if (this.buf.endsWith("__")) hold = 2;
       else if (this.buf.endsWith("*")) hold = 1;
       else if (this.buf.endsWith("_")) hold = 1;
-      else if (this.buf.endsWith("~")) hold = 1;
       else if (this.buf.endsWith("!")) hold = 1;
     }
     out += this.buf.slice(0, this.buf.length - hold);
@@ -252,41 +265,14 @@ export class StreamingMarkdownFilter {
     this.buf = "";
 
     switch (this.inl.type) {
-      case "code": {
-        const idx = this.inl.acc.indexOf("`");
-        if (idx !== -1) {
-          const content = this.inl.acc.slice(0, idx);
-          this.buf = this.inl.acc.slice(idx + 1);
-          this.inl = null;
-          return content;
-        }
-        const nl = this.inl.acc.indexOf("\n");
-        if (nl !== -1) {
-          const r = "`" + this.inl.acc.slice(0, nl + 1);
-          this.buf = this.inl.acc.slice(nl + 1);
-          this.inl = null;
-          this.sol = true;
-          return r;
-        }
-        return "";
-      }
-      case "strike": {
-        const idx = this.inl.acc.indexOf("~~");
-        if (idx !== -1) {
-          const content = this.inl.acc.slice(0, idx);
-          this.buf = this.inl.acc.slice(idx + 2);
-          this.inl = null;
-          return content;
-        }
-        return "";
-      }
       case "bold3": {
         const idx = this.inl.acc.indexOf("***");
         if (idx !== -1) {
           const content = this.inl.acc.slice(0, idx);
           this.buf = this.inl.acc.slice(idx + 3);
           this.inl = null;
-          return content;
+          if (StreamingMarkdownFilter.containsCJK(content)) return content;
+          return `***${content}***`;
         }
         return "";
       }
@@ -296,7 +282,8 @@ export class StreamingMarkdownFilter {
           const content = this.inl.acc.slice(0, idx);
           this.buf = this.inl.acc.slice(idx + 3);
           this.inl = null;
-          return content;
+          if (StreamingMarkdownFilter.containsCJK(content)) return content;
+          return `___${content}___`;
         }
         return "";
       }
@@ -317,7 +304,8 @@ export class StreamingMarkdownFilter {
             const content = this.inl.acc.slice(0, j);
             this.buf = this.inl.acc.slice(j + 1);
             this.inl = null;
-            return content;
+            if (StreamingMarkdownFilter.containsCJK(content)) return content;
+            return `*${content}*`;
           }
         }
         return "";
@@ -339,7 +327,8 @@ export class StreamingMarkdownFilter {
             const content = this.inl.acc.slice(0, j);
             this.buf = this.inl.acc.slice(j + 1);
             this.inl = null;
-            return content;
+            if (StreamingMarkdownFilter.containsCJK(content)) return content;
+            return `_${content}_`;
           }
         }
         return "";
@@ -362,30 +351,11 @@ export class StreamingMarkdownFilter {
         }
         return "";
       }
-      case "table": {
-        const nl = this.inl.acc.indexOf("\n");
-        if (nl !== -1) {
-          const line = this.inl.acc.slice(0, nl);
-          this.buf = this.inl.acc.slice(nl + 1);
-          this.inl = null;
-          this.sol = true;
-          const row = StreamingMarkdownFilter.extractTableRow(line);
-          return row ? row + "\n" : "";
-        }
-        return "";
-      }
     }
     return "";
   }
 
-  /** Extract cell contents from a table row, or return "" for separator rows. */
-  private static extractTableRow(line: string): string {
-    if (/^[\s|:\-]+$/.test(line) && line.includes("-")) return "";
-    const parts = line.split("|").map(c => c.trim());
-    const cells = parts.slice(
-      parts[0] === "" ? 1 : 0,
-      parts[parts.length - 1] === "" ? parts.length - 1 : parts.length,
-    );
-    return cells.join("\t");
+  private static containsCJK(text: string): boolean {
+    return /[\u2E80-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF]/.test(text);
   }
 }
