@@ -224,3 +224,25 @@ export interface GetConfigResp {
   /** Base64-encoded typing ticket for sendTyping. */
   typing_ticket?: string;
 }
+
+/** proto: NotifyStopReq — notify server when the channel client is stopping. */
+export interface NotifyStopReq {
+  base_info?: BaseInfo;
+}
+
+/** proto: NotifyStopResp */
+export interface NotifyStopResp {
+  ret?: number;
+  errmsg?: string;
+}
+
+/** proto: NotifyStartReq — notify server when the channel client is starting. */
+export interface NotifyStartReq {
+  base_info?: BaseInfo;
+}
+
+/** proto: NotifyStartResp */
+export interface NotifyStartResp {
+  ret?: number;
+  errmsg?: string;
+}

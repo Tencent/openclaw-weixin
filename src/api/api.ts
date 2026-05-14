@@ -13,6 +13,8 @@ import type {
   GetUploadUrlResp,
   GetUpdatesReq,
   GetUpdatesResp,
+  NotifyStopResp,
+  NotifyStartResp,
   SendMessageReq,
   SendTypingReq,
   GetConfigResp,
@@ -315,4 +317,36 @@ export async function sendTyping(
     timeoutMs: params.timeoutMs ?? DEFAULT_CONFIG_TIMEOUT_MS,
     label: "sendTyping",
   });
+}
+
+/**
+ * Notify Weixin that this channel client is stopping (gateway shutdown / channel stop).
+ * Uses a standalone timeout (not the gateway abort signal) so the request can finish
+ * after OpenClaw has already aborted the long-poll.
+ */
+export async function notifyStop(params: WeixinApiOptions): Promise<NotifyStopResp> {
+  const rawText = await apiPostFetch({
+    baseUrl: params.baseUrl,
+    endpoint: "ilink/bot/msg/notifystop",
+    body: JSON.stringify({ base_info: buildBaseInfo() }),
+    token: params.token,
+    timeoutMs: params.timeoutMs ?? DEFAULT_CONFIG_TIMEOUT_MS,
+    label: "notifyStop",
+  });
+  return JSON.parse(rawText) as NotifyStopResp;
+}
+
+/**
+ * Notify Weixin that this channel client is starting (gateway startup / channel start).
+ */
+export async function notifyStart(params: WeixinApiOptions): Promise<NotifyStartResp> {
+  const rawText = await apiPostFetch({
+    baseUrl: params.baseUrl,
+    endpoint: "ilink/bot/msg/notifystart",
+    body: JSON.stringify({ base_info: buildBaseInfo() }),
+    token: params.token,
+    timeoutMs: params.timeoutMs ?? DEFAULT_CONFIG_TIMEOUT_MS,
+    label: "notifyStart",
+  });
+  return JSON.parse(rawText) as NotifyStartResp;
 }

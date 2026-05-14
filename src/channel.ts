@@ -15,6 +15,7 @@ import {
   DEFAULT_BASE_URL,
 } from "./auth/accounts.js";
 import type { ResolvedWeixinAccount } from "./auth/accounts.js";
+import { notifyStop, notifyStart } from "./api/api.js";
 import { assertSessionActive } from "./api/session-guard.js";
 import { getContextToken, findAccountIdsByContextToken, restoreContextTokens, clearContextTokensForAccount } from "./messaging/inbound.js";
 import { logger } from "./util/logger.js";
@@ -427,6 +428,18 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
 
       ctx.log?.info?.(`[${account.accountId}] starting weixin provider (${DEFAULT_BASE_URL})`);
 
+      try {
+        const resp = await notifyStart({
+          baseUrl: account.baseUrl,
+          token: account.token,
+        });
+        if (resp.ret !== undefined && resp.ret !== 0) {
+          aLog.warn(`notifyStart: ret=${resp.ret} errmsg=${resp.errmsg ?? ""}`);
+        }
+      } catch (err) {
+        aLog.warn(`notifyStart failed during startup (ignored): ${String(err)}`);
+      }
+
       const logPath = aLog.getLogFilePath();
       ctx.log?.info?.(`[${account.accountId}] weixin logs: ${logPath}`);
 
@@ -441,6 +454,25 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
         abortSignal: ctx.abortSignal,
         setStatus: ctx.setStatus,
       });
+    },
+    stopAccount: async (ctx) => {
+      const account = ctx.account;
+      const aLog = logger.withAccount(account.accountId);
+      if (!account.configured || !account.token?.trim()) {
+        aLog.debug(`gateway.stopAccount: skip notifyStop (not configured or no token)`);
+        return;
+      }
+      try {
+        const resp = await notifyStop({
+          baseUrl: account.baseUrl,
+          token: account.token,
+        });
+        if (resp.ret !== undefined && resp.ret !== 0) {
+          aLog.warn(`notifyStop: ret=${resp.ret} errmsg=${resp.errmsg ?? ""}`);
+        }
+      } catch (err) {
+        aLog.warn(`notifyStop failed during shutdown (ignored): ${String(err)}`);
+      }
     },
     loginWithQrStart: async ({ accountId, force, timeoutMs, verbose }) => {
       // For re-login: use saved baseUrl from account data; fall back to default for new accounts.
