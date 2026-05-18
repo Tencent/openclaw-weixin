@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   SESSION_EXPIRED_ERRCODE,
   pauseSession,
+  clearSessionPause,
   isSessionPaused,
   getRemainingPauseMs,
   assertSessionActive,
@@ -93,5 +94,37 @@ describe("session-guard", () => {
 
     vi.advanceTimersByTime(10 * 60 * 1000);
     expect(isSessionPaused("acc1")).toBe(false);
+  });
+
+  it("pauseSession honors a custom durationMs (#155 backoff)", () => {
+    pauseSession("acc1", 5_000);
+    expect(isSessionPaused("acc1")).toBe(true);
+    expect(getRemainingPauseMs("acc1")).toBeLessThanOrEqual(5_000);
+
+    vi.advanceTimersByTime(5_000);
+    expect(isSessionPaused("acc1")).toBe(false);
+  });
+
+  it("clearSessionPause removes an active pause (#155 recovery)", () => {
+    pauseSession("acc1");
+    expect(isSessionPaused("acc1")).toBe(true);
+
+    clearSessionPause("acc1");
+    expect(isSessionPaused("acc1")).toBe(false);
+    expect(getRemainingPauseMs("acc1")).toBe(0);
+    expect(() => assertSessionActive("acc1")).not.toThrow();
+  });
+
+  it("clearSessionPause is a no-op when no pause is set", () => {
+    expect(() => clearSessionPause("acc1")).not.toThrow();
+    expect(isSessionPaused("acc1")).toBe(false);
+  });
+
+  it("clearSessionPause is per-account", () => {
+    pauseSession("acc1");
+    pauseSession("acc2");
+    clearSessionPause("acc1");
+    expect(isSessionPaused("acc1")).toBe(false);
+    expect(isSessionPaused("acc2")).toBe(true);
   });
 });
