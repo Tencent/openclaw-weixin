@@ -154,6 +154,7 @@ async function sendWeixinOutbound(params: {
 
 export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
   id: "openclaw-weixin",
+  gatewayMethods: ["web.login.start", "web.login.wait"],
   meta: {
     id: "openclaw-weixin",
     label: "openclaw-weixin",
