@@ -8,7 +8,7 @@ OpenClaw's WeChat channel plugin, supporting login authorization via QR code sca
 
 | Plugin Version | OpenClaw Version       | npm dist-tag | Status      |
 |---------------|------------------------|--------------|-------------|
-| 2.0.x         | >=2026.3.22            | `latest`     | Active      |
+| 2.1.x         | >=2026.3.22            | `latest`     | Active      |
 | 1.0.x         | >=2026.1.0 <2026.3.22  | `legacy`     | Maintenance |
 
 > The plugin checks the host version at startup and will refuse to load if the
