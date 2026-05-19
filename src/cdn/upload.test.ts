@@ -21,12 +21,37 @@ vi.mock("../api/api.js", () => ({
   getUploadUrl: mockGetUploadUrl,
 }));
 
+// `downloadRemoteImageToTemp` still uses `global fetch` (it downloads media,
+// it does not POST to the Weixin CDN). The CDN upload path (issue #149) now
+// uses `node:https` via `postBufferRaw`, so we mock that instead.
 const { mockFetch } = vi.hoisted(() => ({
   mockFetch: vi.fn(),
 }));
 vi.stubGlobal("fetch", mockFetch);
 
+const { mockPostBufferRaw } = vi.hoisted(() => ({
+  mockPostBufferRaw: vi.fn(),
+}));
+vi.mock("./cdn-transport.js", () => ({
+  postBufferRaw: mockPostBufferRaw,
+}));
+
 import { downloadRemoteImageToTemp, uploadFileToWeixin, uploadVideoToWeixin, uploadFileAttachmentToWeixin } from "./upload.js";
+
+/** Build a `CdnUploadResponse`-shaped object from a header map. */
+function cdnRes(
+  status: number,
+  headers: Record<string, string> = {},
+  bodyText = "",
+): { status: number; getHeader: (n: string) => string | undefined; text: () => Promise<string> } {
+  const lower: Record<string, string> = {};
+  for (const [k, v] of Object.entries(headers)) lower[k.toLowerCase()] = v;
+  return {
+    status,
+    getHeader: (name: string) => lower[name.toLowerCase()],
+    text: async () => bodyText,
+  };
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -73,11 +98,7 @@ describe("uploadFileToWeixin", () => {
       await fs.writeFile(filePath, "fake-image-data");
 
       mockGetUploadUrl.mockResolvedValueOnce({ upload_param: "up-param" });
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        headers: new Headers({ "x-encrypted-param": "dl-param" }),
-      });
+      mockPostBufferRaw.mockResolvedValueOnce(cdnRes(200, { "x-encrypted-param": "dl-param" }));
 
       const result = await uploadFileToWeixin({
         filePath,
@@ -103,11 +124,7 @@ describe("uploadFileToWeixin", () => {
 
       const fullUrl = "http://cdn.example/c2c/upload?encrypted_query_param=x&filekey=y";
       mockGetUploadUrl.mockResolvedValueOnce({ upload_full_url: fullUrl });
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        headers: new Headers({ "x-encrypted-param": "dl-full" }),
-      });
+      mockPostBufferRaw.mockResolvedValueOnce(cdnRes(200, { "x-encrypted-param": "dl-full" }));
 
       const result = await uploadFileToWeixin({
         filePath,
@@ -117,8 +134,8 @@ describe("uploadFileToWeixin", () => {
       });
 
       expect(result.downloadEncryptedQueryParam).toBe("dl-full");
-      expect(mockFetch).toHaveBeenCalledTimes(1);
-      const [calledUrl] = mockFetch.mock.calls[0] as [string, RequestInit];
+      expect(mockPostBufferRaw).toHaveBeenCalledTimes(1);
+      const [calledUrl] = mockPostBufferRaw.mock.calls[0] as [string, Buffer];
       expect(calledUrl).toBe(fullUrl);
     } finally {
       fsSync.rmSync(tmpDir, { recursive: true, force: true });
@@ -154,17 +171,12 @@ describe("uploadFileToWeixin", () => {
 
       mockGetUploadUrl.mockResolvedValueOnce({ upload_param: "up" });
 
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 500,
-        headers: new Headers({ "x-error-message": "server busy" }),
-        text: () => Promise.resolve("server busy"),
-      });
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        headers: new Headers({ "x-encrypted-param": "dl-retry" }),
-      });
+      mockPostBufferRaw.mockResolvedValueOnce(
+        cdnRes(500, { "x-error-message": "server busy" }, "server busy"),
+      );
+      mockPostBufferRaw.mockResolvedValueOnce(
+        cdnRes(200, { "x-encrypted-param": "dl-retry" }),
+      );
 
       const result = await uploadFileToWeixin({
         filePath,
@@ -173,7 +185,7 @@ describe("uploadFileToWeixin", () => {
         cdnBaseUrl: "https://cdn.com",
       });
       expect(result.downloadEncryptedQueryParam).toBe("dl-retry");
-      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(mockPostBufferRaw).toHaveBeenCalledTimes(2);
     } finally {
       fsSync.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -186,12 +198,9 @@ describe("uploadFileToWeixin", () => {
       await fs.writeFile(filePath, "data");
 
       mockGetUploadUrl.mockResolvedValueOnce({ upload_param: "up" });
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 403,
-        headers: new Headers({ "x-error-message": "forbidden" }),
-        text: () => Promise.resolve("forbidden"),
-      });
+      mockPostBufferRaw.mockResolvedValueOnce(
+        cdnRes(403, { "x-error-message": "forbidden" }, "forbidden"),
+      );
 
       await expect(
         uploadFileToWeixin({
@@ -201,7 +210,7 @@ describe("uploadFileToWeixin", () => {
           cdnBaseUrl: "https://cdn.com",
         }),
       ).rejects.toThrow("client error");
-      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockPostBufferRaw).toHaveBeenCalledTimes(1);
     } finally {
       fsSync.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -216,11 +225,7 @@ describe("uploadFileToWeixin", () => {
       mockGetUploadUrl.mockResolvedValueOnce({ upload_param: "up" });
 
       for (let i = 0; i < 3; i++) {
-        mockFetch.mockResolvedValueOnce({
-          ok: true,
-          status: 200,
-          headers: new Headers({}),
-        });
+        mockPostBufferRaw.mockResolvedValueOnce(cdnRes(200, {}));
       }
 
       await expect(
@@ -245,11 +250,7 @@ describe("uploadVideoToWeixin", () => {
       await fs.writeFile(filePath, "fake-video-content");
 
       mockGetUploadUrl.mockResolvedValueOnce({ upload_param: "up-vid" });
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        headers: new Headers({ "x-encrypted-param": "dl-vid" }),
-      });
+      mockPostBufferRaw.mockResolvedValueOnce(cdnRes(200, { "x-encrypted-param": "dl-vid" }));
 
       const result = await uploadVideoToWeixin({
         filePath,
@@ -274,11 +275,7 @@ describe("uploadFileAttachmentToWeixin", () => {
       await fs.writeFile(filePath, "pdf-content");
 
       mockGetUploadUrl.mockResolvedValueOnce({ upload_param: "up" });
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        headers: new Headers({ "x-encrypted-param": "dl" }),
-      });
+      mockPostBufferRaw.mockResolvedValueOnce(cdnRes(200, { "x-encrypted-param": "dl" }));
 
       const result = await uploadFileAttachmentToWeixin({
         filePath,

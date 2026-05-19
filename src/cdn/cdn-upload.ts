@@ -1,5 +1,6 @@
 import { encryptAesEcb } from "./aes-ecb.js";
 import { buildCdnUploadUrl } from "./cdn-url.js";
+import { postBufferRaw } from "./cdn-transport.js";
 import { logger } from "../util/logger.js";
 import { redactUrl } from "../util/redact.js";
 
@@ -10,6 +11,10 @@ const UPLOAD_MAX_RETRIES = 3;
  * Upload one buffer to the Weixin CDN with AES-128-ECB encryption.
  * Returns the download encrypted_query_param from the CDN response.
  * Retries up to UPLOAD_MAX_RETRIES times on server errors; client errors (4xx) abort immediately.
+ *
+ * Uses `node:https` (via `postBufferRaw`) instead of `global fetch` so the
+ * `x-encrypted-param` response header survives in all execution contexts. See
+ * `cdn-transport.ts` for the underlying reason and issue #149 for context.
  */
 export async function uploadBufferToCdn(params: {
   buf: Buffer;
@@ -39,26 +44,22 @@ export async function uploadBufferToCdn(params: {
 
   for (let attempt = 1; attempt <= UPLOAD_MAX_RETRIES; attempt++) {
     try {
-      const res = await fetch(cdnUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/octet-stream" },
-        body: new Uint8Array(ciphertext),
-      });
+      const res = await postBufferRaw(cdnUrl, ciphertext);
       if (res.status >= 400 && res.status < 500) {
-        const errMsg = res.headers.get("x-error-message") ?? (await res.text());
+        const errMsg = res.getHeader("x-error-message") ?? (await res.text());
         logger.error(
           `${label}: CDN client error attempt=${attempt} status=${res.status} errMsg=${errMsg}`,
         );
         throw new Error(`CDN upload client error ${res.status}: ${errMsg}`);
       }
       if (res.status !== 200) {
-        const errMsg = res.headers.get("x-error-message") ?? `status ${res.status}`;
+        const errMsg = res.getHeader("x-error-message") ?? `status ${res.status}`;
         logger.error(
           `${label}: CDN server error attempt=${attempt} status=${res.status} errMsg=${errMsg}`,
         );
         throw new Error(`CDN upload server error: ${errMsg}`);
       }
-      downloadParam = res.headers.get("x-encrypted-param") ?? undefined;
+      downloadParam = res.getHeader("x-encrypted-param");
       if (!downloadParam) {
         logger.error(
           `${label}: CDN response missing x-encrypted-param header attempt=${attempt}`,
