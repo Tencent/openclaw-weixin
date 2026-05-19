@@ -156,10 +156,10 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
   id: "openclaw-weixin",
   meta: {
     id: "openclaw-weixin",
-    label: "openclaw-weixin",
-    selectionLabel: "openclaw-weixin (long-poll)",
+    label: "WeChat",
+    selectionLabel: "WeChat (long-poll)",
     docsPath: "/channels/openclaw-weixin",
-    docsLabel: "openclaw-weixin",
+    docsLabel: "WeChat",
     blurb: "getUpdates long-poll upstream, sendMessage downstream; token auth.",
     order: 75,
   },
