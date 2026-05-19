@@ -49,10 +49,10 @@
     ],
     "channel": {
       "id": "openclaw-weixin",
-      "label": "openclaw-weixin",
-      "selectionLabel": "openclaw-weixin",
+      "label": "WeChat",
+      "selectionLabel": "WeChat",
       "docsPath": "/channels/openclaw-weixin",
-      "docsLabel": "openclaw-weixin",
+      "docsLabel": "WeChat",
       "blurb": "Weixin channel",
       "order": 75
     },
