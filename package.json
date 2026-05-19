@@ -12,6 +12,7 @@
     "index.ts",
     "openclaw.plugin.json",
     "dist/",
+    "dist-cjs/",
     "README.md",
     "README.zh_CN.md",
     "CHANGELOG.md",
@@ -20,7 +21,8 @@
   "scripts": {
     "test": "vitest run --coverage",
     "typecheck": "tsc --noEmit",
-    "build": "tsc",
+    "build": "tsc && npm run build:cjs",
+    "build:cjs": "esbuild index.ts --bundle --platform=node --format=cjs --outfile=dist-cjs/index.cjs --external:openclaw --external:@openclaw --external:qrcode-terminal --external:zod --define:import.meta.url=__importMetaUrl --banner:js=\"const __importMetaUrl = require('url').pathToFileURL(__filename).href;\"",
     "prepublishOnly": "npm run typecheck && npm run build"
   },
   "engines": {
@@ -35,6 +37,7 @@
   },
   "devDependencies": {
     "@vitest/coverage-v8": "^3.1.0",
+    "esbuild": "^0.28.0",
     "openclaw": "2026.3.23",
     "silk-wasm": "^3.7.1",
     "typescript": "^5.8.0",
@@ -45,6 +48,7 @@
       "./index.ts"
     ],
     "runtimeExtensions": [
+      "./dist-cjs/index.cjs",
       "./dist/index.js"
     ],
     "channel": {
