@@ -75,11 +75,21 @@ describe("weixinMessageToMsgContext", () => {
     expect(ctx.Timestamp).toBe(1700000000000);
   });
 
+  it("populates SenderId from from_user_id so OpenClaw core can route per-sender peer state", () => {
+    // Without SenderId, downstream memory plugins (honcho, etc.) collapse all senders
+    // into a single peer because `buildInboundUserContextPrefix` reads `ctx.SenderId`
+    // when emitting the inbound `Conversation info` metadata block. Multi-user setups
+    // depend on this field being populated.
+    const ctx = weixinMessageToMsgContext(baseMsg, "account1");
+    expect(ctx.SenderId).toBe("user123");
+  });
+
   it("handles missing from_user_id", () => {
     const msg: WeixinMessage = { item_list: [] };
     const ctx = weixinMessageToMsgContext(msg, "acc");
     expect(ctx.From).toBe("");
     expect(ctx.To).toBe("");
+    expect(ctx.SenderId).toBe("");
   });
 
   it("handles empty item_list", () => {

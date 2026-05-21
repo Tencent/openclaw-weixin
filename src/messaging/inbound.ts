@@ -147,6 +147,13 @@ export type WeixinMsgContext = {
   Timestamp?: number;
   Provider: "openclaw-weixin";
   ChatType: "direct";
+  /**
+   * The sender's wxid. Read by OpenClaw core's `buildInboundUserContextPrefix` to populate
+   * the `sender_id` field of the inbound `Conversation info` metadata block, which downstream
+   * memory plugins (e.g. honcho) use to route per-sender peer state. Without this, multi-user
+   * scenarios collapse all senders into a single peer.
+   */
+  SenderId?: string;
   /** Set by monitor after resolveAgentRoute so dispatchReplyFromConfig uses the correct session. */
   SessionKey?: string;
   context_token?: string;
@@ -231,6 +238,7 @@ export function weixinMessageToMsgContext(
     OriginatingChannel: "openclaw-weixin",
     OriginatingTo: from_user_id,
     MessageSid: generateMessageSid(),
+    SenderId: from_user_id,
     Timestamp: msg.create_time_ms,
     Provider: "openclaw-weixin",
     ChatType: "direct",
