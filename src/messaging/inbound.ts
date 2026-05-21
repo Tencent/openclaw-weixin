@@ -169,28 +169,31 @@ export function isMediaItem(item: MessageItem): boolean {
   );
 }
 
+/** Prepend quoted context from ref_msg to the message text, if present. */
+function applyRefMsg(text: string, ref: MessageItem["ref_msg"]): string {
+  if (!ref) return text;
+  // Quoted media is passed as MediaPath; only include the current text as body.
+  if (ref.message_item && isMediaItem(ref.message_item)) return text;
+  // Build quoted context from both title and message_item content.
+  const parts: string[] = [];
+  if (ref.title) parts.push(ref.title);
+  if (ref.message_item) {
+    const refBody = bodyFromItemList([ref.message_item]);
+    if (refBody) parts.push(refBody);
+  }
+  if (!parts.length) return text;
+  return `[引用: ${parts.join(" | ")}]\n${text}`;
+}
+
 function bodyFromItemList(itemList?: MessageItem[]): string {
   if (!itemList?.length) return "";
   for (const item of itemList) {
     if (item.type === MessageItemType.TEXT && item.text_item?.text != null) {
-      const text = String(item.text_item.text);
-      const ref = item.ref_msg;
-      if (!ref) return text;
-      // Quoted media is passed as MediaPath; only include the current text as body.
-      if (ref.message_item && isMediaItem(ref.message_item)) return text;
-      // Build quoted context from both title and message_item content.
-      const parts: string[] = [];
-      if (ref.title) parts.push(ref.title);
-      if (ref.message_item) {
-        const refBody = bodyFromItemList([ref.message_item]);
-        if (refBody) parts.push(refBody);
-      }
-      if (!parts.length) return text;
-      return `[引用: ${parts.join(" | ")}]\n${text}`;
+      return applyRefMsg(String(item.text_item.text), item.ref_msg);
     }
     // 语音转文字：如果语音消息有 text 字段，直接使用文字内容
     if (item.type === MessageItemType.VOICE && item.voice_item?.text) {
-      return item.voice_item.text;
+      return applyRefMsg(item.voice_item.text, item.ref_msg);
     }
   }
   return "";
