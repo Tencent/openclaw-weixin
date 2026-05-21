@@ -2,6 +2,7 @@ import path from "node:path";
 
 import type { ChannelPlugin, OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk/core";
 import { normalizeAccountId } from "openclaw/plugin-sdk/account-id";
+import { buildChannelConfigSchema } from "openclaw/plugin-sdk/channel-config-schema";
 import { resolvePreferredOpenClawTmpDir } from "openclaw/plugin-sdk/infra-runtime";
 
 import {
@@ -17,6 +18,7 @@ import {
 import type { ResolvedWeixinAccount } from "./auth/accounts.js";
 import { notifyStop, notifyStart } from "./api/api.js";
 import { assertSessionActive } from "./api/session-guard.js";
+import { WeixinConfigSchema } from "./config/config-schema.js";
 import { getContextToken, findAccountIdsByContextToken, restoreContextTokens, clearContextTokensForAccount } from "./messaging/inbound.js";
 import { logger } from "./util/logger.js";
 import {
@@ -163,13 +165,7 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
     blurb: "getUpdates long-poll upstream, sendMessage downstream; token auth.",
     order: 75,
   },
-  configSchema: {
-    schema: {
-      type: "object",
-      additionalProperties: false,
-      properties: {},
-    },
-  },
+  configSchema: buildChannelConfigSchema(WeixinConfigSchema),
   capabilities: {
     chatTypes: ["direct"],
     media: true,
