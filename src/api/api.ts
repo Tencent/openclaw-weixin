@@ -16,6 +16,7 @@ import type {
   NotifyStopResp,
   NotifyStartResp,
   SendMessageReq,
+  SendMessageResp,
   SendTypingReq,
   GetConfigResp,
 } from "./types.js";
@@ -452,7 +453,7 @@ export async function getUploadUrl(
 export async function sendMessage(
   params: WeixinApiOptions & { body: SendMessageReq },
 ): Promise<void> {
-  await apiPostFetch({
+  const rawText = await apiPostFetch({
     baseUrl: params.baseUrl,
     endpoint: "ilink/bot/sendmessage",
     body: JSON.stringify({ ...params.body, base_info: buildBaseInfo() }),
@@ -460,6 +461,20 @@ export async function sendMessage(
     timeoutMs: params.timeoutMs ?? DEFAULT_API_TIMEOUT_MS,
     label: "sendMessage",
   });
+  try {
+    const resp: SendMessageResp = rawText ? JSON.parse(rawText) : {};
+    if (resp.ret != null && resp.ret !== 0) {
+      throw new Error(
+        `sendMessage API error: ret=${resp.ret} errcode=${resp.errcode ?? "none"} errmsg=${resp.errmsg ?? "none"}`,
+      );
+    }
+  } catch (err) {
+    if (err instanceof SyntaxError) {
+      logger.debug(`sendMessage: non-JSON response body: ${rawText.slice(0, 200)}`);
+      return;
+    }
+    throw err;
+  }
 }
 
 /** Fetch bot config (includes typing_ticket) for a given user. */
