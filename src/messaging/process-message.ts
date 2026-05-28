@@ -310,12 +310,17 @@ export async function processOneMessage(
     deps.channelRuntime.reply.createReplyDispatcherWithTyping({
       humanDelay,
       typingCallbacks,
-      deliver: async (payload) => {
+      deliver: async (payload, deliveryCtx?: { kind?: string }) => {
         const rawText = payload.text ?? "";
+        const isToolResult = deliveryCtx?.kind === "tool";
         let text = (() => {
           const f = new StreamingMarkdownFilter();
           return f.feed(rawText) + f.flush();
         })();
+        // Truncate large tool results to a short preview so they don't flood the chat.
+        if (isToolResult && !payload.isError && text.length > 120) {
+          text = text.slice(0, 120) + "…";
+        }
         const mediaUrl = payload.mediaUrl ?? payload.mediaUrls?.[0];
         logger.debug(`outbound payload: ${redactBody(JSON.stringify(payload))}`);
         logger.info(
