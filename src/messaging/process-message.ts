@@ -379,6 +379,13 @@ export async function processOneMessage(
               text,
               opts: { baseUrl: deps.baseUrl, token: deps.token, contextToken },
               cdnBaseUrl: deps.cdnBaseUrl,
+              // When the filePath was produced by downloading a remote URL,
+              // pass the original URL so dedup keys on it rather than the
+              // ephemeral temp path (issue #74 edge case — reviewer Re-Ch-X).
+              sourceUrl:
+                mediaUrl.startsWith("http://") || mediaUrl.startsWith("https://")
+                  ? mediaUrl
+                  : undefined,
             });
             emitWeixinMessageSent({ to: ctx.To, content: text, success: true, accountId: deps.accountId });
             logger.info(`outbound: media sent OK to=${ctx.To}`);
