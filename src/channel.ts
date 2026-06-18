@@ -210,7 +210,7 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
   },
   outbound: {
     deliveryMode: "direct",
-    textChunkLimit: 4000,
+    textChunkLimit: 50000,
     sendText: async (ctx) => {
       const accountId = ctx.accountId || resolveOutboundAccountId(ctx.cfg, ctx.to);
       const result = await sendWeixinOutbound({

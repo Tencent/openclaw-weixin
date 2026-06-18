@@ -208,7 +208,9 @@ export interface SendMessageReq {
 }
 
 export interface SendMessageResp {
-  // empty
+  ret?: number;
+  errcode?: number;
+  errmsg?: string;
 }
 
 /** Typing status: 1 = typing (default), 2 = cancel typing. */

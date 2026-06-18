@@ -306,16 +306,64 @@ export async function processOneMessage(
   /** Delivery records populated synchronously at deliver() entry, safe to read in finally. */
   const debugDeliveries: Array<{ textLen: number; media: string; preview: string; ts: number }> = [];
 
+  // Buffer tool result echoes so they can be merged into a single message,
+  // avoiding WeChat API rate limiting from rapid-fire individual sends.
+  const toolResultBuffer: string[] = [];
+  let toolResultCount = 0;
+
+  async function flushToolResults(): Promise<void> {
+    if (toolResultBuffer.length === 0) return;
+    const count = toolResultCount;
+    const merged =
+      `⚙ 执行步骤 (${count} 步)：\n${toolResultBuffer.map((t) => `  ${t}`).join("\n")}`;
+    toolResultBuffer.length = 0;
+    toolResultCount = 0;
+    try {
+      await sendMessageWeixin({
+        to: ctx.To,
+        text: merged,
+        opts: { baseUrl: deps.baseUrl, token: deps.token, contextToken },
+      });
+      emitWeixinMessageSent({ to: ctx.To, content: merged, success: true, accountId: deps.accountId });
+      logger.info(`outbound: merged ${count} tool results sent OK to=${ctx.To}`);
+    } catch (err) {
+      emitWeixinMessageSent({ to: ctx.To, content: merged, success: false, error: String(err), accountId: deps.accountId });
+      logger.error(`outbound: merged tool results FAILED to=${ctx.To} err=${String(err)}`);
+    }
+  }
+
   const { dispatcher, replyOptions, markDispatchIdle } =
     deps.channelRuntime.reply.createReplyDispatcherWithTyping({
       humanDelay,
       typingCallbacks,
-      deliver: async (payload) => {
+      deliver: async (payload, deliveryCtx?: { kind?: string }) => {
         const rawText = payload.text ?? "";
+        const isToolResult = deliveryCtx?.kind === "tool";
         let text = (() => {
           const f = new StreamingMarkdownFilter();
           return f.feed(rawText) + f.flush();
         })();
+        // Truncate large tool results to a short preview so they don't flood the chat.
+        if (isToolResult && !payload.isError && text.length > 120) {
+          text = text.slice(0, 120) + "…";
+        }
+
+        // Buffer tool results instead of sending individually.
+        // They will be merged into a single message when a non-tool message
+        // arrives or when the dispatch ends.
+        if (isToolResult) {
+          if (!payload.isError && text.length > 0) {
+            const label = text.length > 100 ? `${text.slice(0, 100)}…` : text;
+            toolResultBuffer.push(label);
+            toolResultCount++;
+            logger.debug(`outbound: buffered tool result #${toolResultCount} to=${ctx.To}`);
+          }
+          return;
+        }
+
+        // Non-tool message: flush buffered tool results first.
+        await flushToolResults();
+
         const mediaUrl = payload.mediaUrl ?? payload.mediaUrls?.[0];
         logger.debug(`outbound payload: ${redactBody(JSON.stringify(payload))}`);
         logger.info(
@@ -397,7 +445,30 @@ export async function processOneMessage(
           logger.error(
             `outbound: FAILED to=${ctx.To} mediaUrl=${mediaUrl ?? "none"} err=${String(err)} stack=${(err as Error).stack ?? ""}`,
           );
-          throw err;
+          // Send an error notice but do NOT re-throw: re-throwing aborts the
+          // entire dispatch, preventing subsequent messages (e.g. the final
+          // AI conclusion) from being delivered.
+          const errMsg = err instanceof Error ? err.message : String(err);
+          let notice: string;
+          if (errMsg.includes("remote media download failed") || errMsg.includes("fetch")) {
+            notice = `⚠️ 媒体文件下载失败，请检查链接是否可访问。`;
+          } else if (
+            errMsg.includes("getUploadUrl") ||
+            errMsg.includes("CDN upload") ||
+            errMsg.includes("upload_param")
+          ) {
+            notice = `⚠️ 媒体文件上传失败，请稍后重试。`;
+          } else {
+            notice = `⚠️ 消息发送失败：${errMsg}`;
+          }
+          void sendWeixinErrorNotice({
+            to: ctx.To,
+            contextToken,
+            message: notice,
+            baseUrl: deps.baseUrl,
+            token: deps.token,
+            errLog: deps.errLog,
+          });
         }
       },
       onError: (err, info) => {
@@ -445,6 +516,13 @@ export async function processOneMessage(
     );
     throw err;
   } finally {
+    // Flush any remaining buffered tool results (e.g. when the last messages
+    // were all tool results without a trailing non-tool conclusion).
+    try {
+      await flushToolResults();
+    } catch (flushErr) {
+      logger.error(`flushToolResults: error err=${String(flushErr)}`);
+    }
     markDispatchIdle();
 
     logger.info(
