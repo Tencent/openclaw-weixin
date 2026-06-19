@@ -17,23 +17,26 @@ describe("WeixinConfigSchema", () => {
     expect(result.cdnBaseUrl).toBe("https://custom.cdn.com");
   });
 
-  it("accepts optional name and enabled fields", () => {
+  it("accepts optional name, enabled, and blockStreaming fields", () => {
     const result = WeixinConfigSchema.parse({
       name: "my-bot",
       enabled: false,
+      blockStreaming: true,
     });
     expect(result.name).toBe("my-bot");
     expect(result.enabled).toBe(false);
+    expect(result.blockStreaming).toBe(true);
   });
 
   it("accepts accounts map", () => {
     const result = WeixinConfigSchema.parse({
       accounts: {
-        "acc1": { name: "Bot 1", enabled: true },
+        "acc1": { name: "Bot 1", enabled: true, blockStreaming: true },
         "acc2": { name: "Bot 2" },
       },
     });
     expect(result.accounts?.acc1?.name).toBe("Bot 1");
+    expect(result.accounts?.acc1?.blockStreaming).toBe(true);
     expect(result.accounts?.acc2?.name).toBe("Bot 2");
   });
 
