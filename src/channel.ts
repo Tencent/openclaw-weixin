@@ -16,7 +16,12 @@ import {
 } from "./auth/accounts.js";
 import type { ResolvedWeixinAccount } from "./auth/accounts.js";
 import { notifyStop, notifyStart } from "./api/api.js";
-import { assertSessionActive } from "./api/session-guard.js";
+// NOTE: outbound REST send paths (`sendMessage`, `sendMedia`, `sendTyping`)
+// intentionally do NOT call `assertSessionActive`. The session-pause state in
+// session-guard.ts is scoped to the long-poll `getUpdates` loop; gating REST
+// outbound traffic on it caused the 60-minute death loop described in #155.
+// If a REST call hits an expired session, the server itself will return an
+// error which the API layer surfaces — it does not need a client-side gate.
 import { getContextToken, findAccountIdsByContextToken, restoreContextTokens, clearContextTokensForAccount } from "./messaging/inbound.js";
 import { logger } from "./util/logger.js";
 import {
@@ -115,7 +120,6 @@ async function sendWeixinOutbound(params: {
 }): Promise<{ channel: string; messageId: string }> {
   const account = resolveWeixinAccount(params.cfg, params.accountId);
   const aLog = logger.withAccount(account.accountId);
-  assertSessionActive(account.accountId);
   if (!account.configured) {
     aLog.error(`sendWeixinOutbound: account not configured`);
     throw new Error("weixin not configured: please run `openclaw channels login --channel openclaw-weixin`");
@@ -226,7 +230,6 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
       const accountId = ctx.accountId || resolveOutboundAccountId(ctx.cfg, ctx.to);
       const account = resolveWeixinAccount(ctx.cfg, accountId);
       const aLog = logger.withAccount(account.accountId);
-      assertSessionActive(account.accountId);
       if (!account.configured) {
         aLog.error(`sendMedia: account not configured`);
         throw new Error(

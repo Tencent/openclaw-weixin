@@ -1,9 +1,14 @@
 import type { ChannelAccountSnapshot } from "openclaw/plugin-sdk/channel-contract";
 import type { PluginRuntime } from "openclaw/plugin-sdk/core";
 
-import { getUpdates } from "../api/api.js";
+import { getUpdates, notifyStart } from "../api/api.js";
 import { WeixinConfigManager } from "../api/config-cache.js";
-import { SESSION_EXPIRED_ERRCODE, pauseSession, getRemainingPauseMs } from "../api/session-guard.js";
+import {
+  SESSION_EXPIRED_ERRCODE,
+  pauseSession,
+  clearSessionPause,
+  getRemainingPauseMs,
+} from "../api/session-guard.js";
 import { processOneMessage } from "../messaging/process-message.js";
 import { getSyncBufFilePath, loadGetUpdatesBuf, saveGetUpdatesBuf } from "../storage/sync-buf.js";
 import { logger } from "../util/logger.js";
@@ -14,6 +19,19 @@ const DEFAULT_LONG_POLL_TIMEOUT_MS = 35_000;
 const MAX_CONSECUTIVE_FAILURES = 3;
 const BACKOFF_DELAY_MS = 30_000;
 const RETRY_DELAY_MS = 2_000;
+
+/**
+ * Recovery tuning for the `errcode: -14` (session expired) branch.
+ *
+ * Strategy: call `notifyStart` to rebuild the server-side session, then
+ * retry `getUpdates` within seconds. On `notifyStart` failure, fall back
+ * to exponential backoff (NOT the original 60-minute wall) so we keep
+ * trying without entering a death loop (#155).
+ */
+const SESSION_RECOVERY_RETRY_DELAY_MS = 5_000;
+const SESSION_RECOVERY_BACKOFF_INITIAL_MS = 5_000;
+const SESSION_RECOVERY_BACKOFF_MAX_MS = 5 * 60_000;
+const NOTIFY_START_TIMEOUT_MS = 10_000;
 
 export type MonitorWeixinOpts = {
   baseUrl: string;
@@ -85,6 +103,7 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
 
   let nextTimeoutMs = longPollTimeoutMs ?? DEFAULT_LONG_POLL_TIMEOUT_MS;
   let consecutiveFailures = 0;
+  let sessionRecoveryBackoffMs = SESSION_RECOVERY_BACKOFF_INITIAL_MS;
 
   while (!abortSignal?.aborted) {
     try {
@@ -119,16 +138,41 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
           resp.errcode === SESSION_EXPIRED_ERRCODE || resp.ret === SESSION_EXPIRED_ERRCODE;
 
         if (isSessionExpired) {
-          pauseSession(accountId);
-          const pauseMs = getRemainingPauseMs(accountId);
-          errLog(
-            `weixin getUpdates: session expired (errcode ${SESSION_EXPIRED_ERRCODE}), pausing bot for ${Math.ceil(pauseMs / 60_000)} min`,
-          );
-          aLog.error(
-            `getUpdates: session expired (errcode=${resp.errcode} ret=${resp.ret}), pausing all requests for ${Math.ceil(pauseMs / 60_000)} min`,
-          );
           consecutiveFailures = 0;
-          await sleep(pauseMs, abortSignal);
+          aLog.warn(
+            `getUpdates: session expired (errcode=${resp.errcode} ret=${resp.ret}), attempting notifyStart recovery`,
+          );
+          // Set a pause window so concurrent inbound paths know we're recovering.
+          // Outbound REST calls are intentionally NOT gated on this (see #155).
+          pauseSession(accountId, sessionRecoveryBackoffMs);
+          try {
+            await notifyStart({
+              baseUrl,
+              token,
+              timeoutMs: NOTIFY_START_TIMEOUT_MS,
+            });
+            clearSessionPause(accountId);
+            sessionRecoveryBackoffMs = SESSION_RECOVERY_BACKOFF_INITIAL_MS;
+            log(`[weixin] session recovered via notifyStart, resuming long-poll`);
+            aLog.info(`getUpdates: session recovered via notifyStart`);
+            await sleep(SESSION_RECOVERY_RETRY_DELAY_MS, abortSignal);
+          } catch (err) {
+            errLog(
+              `weixin notifyStart failed during -14 recovery: ${String(err)}; backing off ${Math.round(sessionRecoveryBackoffMs / 1000)}s`,
+            );
+            aLog.error(
+              `notifyStart failed during session recovery: ${String(err)}, backoff=${sessionRecoveryBackoffMs}ms`,
+            );
+            const waitMs = getRemainingPauseMs(accountId);
+            // Grow backoff for next round, capped — eventually the OpenClaw core
+            // channelHealthMonitor will restart the channel, but we won't sit
+            // idle for 60 minutes between attempts.
+            sessionRecoveryBackoffMs = Math.min(
+              sessionRecoveryBackoffMs * 2,
+              SESSION_RECOVERY_BACKOFF_MAX_MS,
+            );
+            await sleep(waitMs > 0 ? waitMs : SESSION_RECOVERY_RETRY_DELAY_MS, abortSignal);
+          }
           continue;
         }
 
@@ -154,6 +198,7 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
         continue;
       }
       consecutiveFailures = 0;
+      sessionRecoveryBackoffMs = SESSION_RECOVERY_BACKOFF_INITIAL_MS;
       setStatus?.({ accountId, lastEventAt: Date.now() });
       if (resp.get_updates_buf != null && resp.get_updates_buf !== "") {
         saveGetUpdatesBuf(syncFilePath, resp.get_updates_buf);
