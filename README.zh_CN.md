@@ -130,6 +130,24 @@ openclaw config set session.dmScope per-account-channel-peer
 | getConfig | `getconfig` | 获取账号配置（typing ticket 等） |
 | sendTyping | `sendtyping` | 发送/取消输入状态指示 |
 
+### 出站媒体说明
+
+当前出站媒体 helper 按本地文件 MIME 类型路由：
+
+- `video/*` -> 视频消息
+- `image/*` -> 图片消息
+- 其他所有 MIME 类型，包括 `audio/*` -> 文件附件
+
+虽然底层协议包含 `UploadMediaType.VOICE` 和 `MessageItemType.VOICE`，但本包当前没有公开的
+`sendVoice` helper 用于发送微信原生语音气泡。如果需要语音气泡投递，请先向腾讯/iLink 确认所需账号权限、媒体上传类型、编码格式、消息 item 结构和真实客户端展示效果。
+
+发送媒体消息时，调用方应同时检查：
+
+1. 业务响应（`ret` / `errmsg`）
+2. 微信客户端的实际展示效果
+
+HTTP 200 或 `sendmessage` 被接受，并不一定保证媒体消息会按预期客户端形态展示。
+
 ### getUpdates
 
 长轮询接口。服务端在有新消息或超时后返回。

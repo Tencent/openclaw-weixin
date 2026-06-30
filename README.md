@@ -134,6 +134,28 @@ All endpoints use `POST` with JSON request and response bodies. Common request h
 | getConfig | `getconfig` | Get account config (typing ticket, etc.) |
 | sendTyping | `sendtyping` | Send/cancel typing status indicator |
 
+### Outbound media notes
+
+The current outbound media helper routes local files by MIME type:
+
+- `video/*` -> video message
+- `image/*` -> image message
+- all other MIME types, including `audio/*`, -> file attachment
+
+Although the wire protocol includes `UploadMediaType.VOICE` and
+`MessageItemType.VOICE`, this package does not currently expose a public
+`sendVoice` helper for native WeChat voice bubbles. If you need voice-bubble
+delivery, verify the required account permissions, media upload type, codec,
+message item shape, and real client rendering with Tencent/iLink first.
+
+For media sends, callers should check both:
+
+1. the business response (`ret` / `errmsg`), and
+2. the actual WeChat client rendering.
+
+An HTTP 200 or `sendmessage` acceptance does not always guarantee that a media
+item is visible as the intended client-side message type.
+
 ### getUpdates
 
 Long-polling endpoint. The server responds when new messages arrive or on timeout.
