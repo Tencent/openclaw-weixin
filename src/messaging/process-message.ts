@@ -35,6 +35,7 @@ import { StreamingMarkdownFilter } from "./markdown-filter.js";
 import { sendMessageWeixin } from "./send.js";
 import { WeixinReplyProgressSender } from "./reply-progress-sender.js";
 import { handleSlashCommand } from "./slash-commands.js";
+import { stripInboundMetadata } from "./strip-meta.js";
 
 const MEDIA_OUTBOUND_TEMP_DIR = path.join(resolvePreferredOpenClawTmpDir(), "weixin/media/outbound-temp");
 
@@ -332,6 +333,7 @@ export async function processOneMessage(
           const f = new StreamingMarkdownFilter();
           return f.feed(rawText) + f.flush();
         })();
+        text = stripInboundMetadata(text);
         const mediaUrl = payload.mediaUrl ?? payload.mediaUrls?.[0];
         logger.debug(`outbound payload: ${redactBody(JSON.stringify(payload))}`);
         logger.info(
