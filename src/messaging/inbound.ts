@@ -157,6 +157,14 @@ export type WeixinMsgContext = {
   CommandBody?: string;
   /** Whether the sender is authorized to execute slash commands. */
   CommandAuthorized?: boolean;
+  /** Body of the message being replied to (quoted/ref_msg). */
+  ReplyToBody?: string;
+  /** Message ID of the message being replied to (quoted/ref_msg). */
+  ReplyToId?: string;
+  /** Sender label of the message being replied to (quoted/ref_msg title). */
+  ReplyToSender?: string;
+  /** Whether the reply is a quote (true for ref_msg). */
+  ReplyToIsQuote?: boolean;
 };
 
 /** Returns true if the message item is a media type (image, video, file, or voice). */
@@ -169,6 +177,21 @@ export function isMediaItem(item: MessageItem): boolean {
   );
 }
 
+/**
+ * Extract the quoted/reference message content from a TEXT item's ref_msg.
+ * Returns the quoted body text, or undefined if no ref_msg content is extractable.
+ */
+function extractRefBody(ref: NonNullable<MessageItem["ref_msg"]>): string | undefined {
+  if (ref.message_item && isMediaItem(ref.message_item)) return undefined;
+  const parts: string[] = [];
+  if (ref.title) parts.push(ref.title);
+  if (ref.message_item) {
+    const refBody = bodyFromItemList([ref.message_item]);
+    if (refBody) parts.push(refBody);
+  }
+  return parts.length > 0 ? parts.join(" | ") : undefined;
+}
+
 function bodyFromItemList(itemList?: MessageItem[]): string {
   if (!itemList?.length) return "";
   for (const item of itemList) {
@@ -176,17 +199,9 @@ function bodyFromItemList(itemList?: MessageItem[]): string {
       const text = String(item.text_item.text);
       const ref = item.ref_msg;
       if (!ref) return text;
-      // Quoted media is passed as MediaPath; only include the current text as body.
-      if (ref.message_item && isMediaItem(ref.message_item)) return text;
-      // Build quoted context from both title and message_item content.
-      const parts: string[] = [];
-      if (ref.title) parts.push(ref.title);
-      if (ref.message_item) {
-        const refBody = bodyFromItemList([ref.message_item]);
-        if (refBody) parts.push(refBody);
-      }
-      if (!parts.length) return text;
-      return `[引用: ${parts.join(" | ")}]\n${text}`;
+      const refBody = extractRefBody(ref);
+      if (!refBody) return text;
+      return `[引用: ${refBody}]\n${text}`;
     }
     // 语音转文字：如果语音消息有 text 字段，直接使用文字内容
     if (item.type === MessageItemType.VOICE && item.voice_item?.text) {
@@ -210,6 +225,20 @@ export type WeixinInboundMediaOpts = {
   /** Local path to decrypted video file. */
   decryptedVideoPath?: string;
 };
+
+/**
+ * Find the first ref_msg across all TEXT items in the message item list.
+ * Returns the ref_msg field or undefined if none is found.
+ */
+function findRefMsg(itemList?: MessageItem[]): NonNullable<MessageItem["ref_msg"]> | undefined {
+  if (!itemList?.length) return undefined;
+  for (const item of itemList) {
+    if (item.type === MessageItemType.TEXT && item.ref_msg) {
+      return item.ref_msg;
+    }
+  }
+  return undefined;
+}
 
 /**
  * Convert a WeixinMessage from getUpdates to the inbound MsgContext for the core pipeline.
@@ -237,6 +266,20 @@ export function weixinMessageToMsgContext(
   };
   if (msg.context_token) {
     ctx.context_token = msg.context_token;
+  }
+
+  // Populate ReplyTo* fields from ref_msg so the framework includes
+  // the quoted message in inbound_meta (untrusted reply target block).
+  const refMsg = findRefMsg(msg.item_list);
+  if (refMsg) {
+    ctx.ReplyToIsQuote = true;
+    ctx.ReplyToSender = refMsg.title?.trim() || undefined;
+    ctx.ReplyToId = refMsg.message_item?.msg_id || undefined;
+    // ReplyToBody: only the quoted body text, not the sender title
+    // (ReplyToSender already carries the title separately).
+    if (refMsg.message_item && !isMediaItem(refMsg.message_item)) {
+      ctx.ReplyToBody = bodyFromItemList([refMsg.message_item]) || undefined;
+    }
   }
 
   if (opts?.decryptedPicPath) {
