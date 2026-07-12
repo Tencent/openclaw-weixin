@@ -994,7 +994,54 @@ describe("monitorWeixinProvider durable ingress", () => {
     });
 
     expect(started).toContain("/approve plugin:approval deny");
-    expect(queue.listPendingCalls).toBe(1);
+    expect(queue.listPendingCalls).toBeGreaterThanOrEqual(1);
+  });
+
+  it("rediscovers approvals released by another manager", async () => {
+    const queue = new FakeIngressQueue();
+    const { runtime } = createChannelRuntime();
+    const approvalBody = "/approve plugin:approval deny";
+    const releaseOwner = Promise.withResolvers<void>();
+    const startedByPrimary: string[] = [];
+    const startedByOwner: string[] = [];
+    const common = {
+      accountId: "acc-approval-rediscovery",
+      config: {} as never,
+      channelRuntime: runtime as never,
+      openChannelIngressQueue: (() => queue) as never,
+      log: vi.fn(),
+      errLog: vi.fn(),
+      aLog: mockLogger as never,
+    };
+
+    const primaryManager = createDurableIngressManager({
+      ...common,
+      processMessage: async (message) => {
+        startedByPrimary.push(message.item_list?.[0]?.text_item?.text ?? "");
+      },
+    });
+    primaryManager.requestDrain();
+    await waitForCondition(() => queue.listPendingCalls >= 1);
+
+    const ownerManager = createDurableIngressManager({
+      ...common,
+      processMessage: async (message) => {
+        startedByOwner.push(message.item_list?.[0]?.text_item?.text ?? "");
+        await releaseOwner.promise;
+        throw new Error("retry approval");
+      },
+    });
+    const approval = makeMessage("user-a", approvalBody, { message_id: 2_100 });
+    const approvalId = getDurableIngressEventId("acc-approval-rediscovery", approval);
+    await ownerManager.enqueueBatch([approval]);
+    await waitForCondition(() => startedByOwner.includes(approvalBody));
+    releaseOwner.resolve();
+    await waitForCondition(() => queue.releaseCalls.some((call) => call.id === approvalId));
+    await ownerManager.stop();
+
+    primaryManager.requestDrain();
+    await waitForCondition(() => startedByPrimary.includes(approvalBody));
+    await primaryManager.stop();
   });
 
   it("waits only for pre-transfer admission before completing a reload stop", async () => {
@@ -1043,6 +1090,54 @@ describe("monitorWeixinProvider durable ingress", () => {
     ]);
     await waitForCondition(() => started.includes("new-handler"));
     await waitForCondition(() => queue.completed.size === 2);
+    await newManager.stop();
+  });
+
+  it("blocks same-session claims while another live owner still holds that lane", async () => {
+    const queue = new FakeIngressQueue();
+    const { runtime } = createChannelRuntime();
+    const releaseOld = Promise.withResolvers<void>();
+    const oldStarted: string[] = [];
+    const newStarted: string[] = [];
+    const common = {
+      accountId: "acc-reload-overlap",
+      config: {} as never,
+      channelRuntime: runtime as never,
+      openChannelIngressQueue: (() => queue) as never,
+      log: vi.fn(),
+      errLog: vi.fn(),
+      aLog: mockLogger as never,
+    };
+
+    const oldManager = createDurableIngressManager({
+      ...common,
+      processMessage: async (message) => {
+        oldStarted.push(message.item_list?.[0]?.text_item?.text ?? "");
+        await releaseOld.promise;
+      },
+    });
+    await oldManager.enqueueBatch([
+      makeMessage("user-a", "old-overlap", { message_id: 91 }),
+    ]);
+    await waitForCondition(() => oldStarted.length === 1);
+    const stoppingOld = oldManager.stop();
+
+    const newManager = createDurableIngressManager({
+      ...common,
+      processMessage: async (message) => {
+        newStarted.push(message.item_list?.[0]?.text_item?.text ?? "");
+      },
+    });
+    await newManager.enqueueBatch([
+      makeMessage("user-a", "new-overlap", { message_id: 92 }),
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(newStarted).toEqual([]);
+
+    releaseOld.resolve();
+    await stoppingOld;
+    newManager.requestDrain();
+    await waitForCondition(() => newStarted.includes("new-overlap"));
     await newManager.stop();
   });
 

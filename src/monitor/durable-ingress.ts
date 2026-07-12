@@ -317,7 +317,7 @@ class WeixinDurableIngressManager implements DurableIngressManager {
   private replacePersistedClaimLaneKeys(claims: DurableIngressClaim[]): void {
     const laneKeys = new Set<string>();
     for (const claim of claims) {
-      if (isLocalOwnerLive(claim.claim.ownerId)) continue;
+      if (claim.claim.ownerId === this.ownerId) continue;
       const laneKey = claim.laneKey ?? claim.metadata?.laneKey;
       if (laneKey) laneKeys.add(laneKey);
     }
@@ -399,22 +399,26 @@ class WeixinDurableIngressManager implements DurableIngressManager {
     if (
       !this.stopped &&
       this.approvalAdmissions < APPROVAL_ADMISSION_LIMIT &&
-      !blockedLaneKeys.has(PLUGIN_APPROVAL_CONTROL_LANE) &&
-      this.pendingApprovalIds.size > 0
+      !blockedLaneKeys.has(PLUGIN_APPROVAL_CONTROL_LANE)
     ) {
-      const candidateIds = [...this.pendingApprovalIds];
-      const claim = await this.options.queue.claimNext({
-        ownerId: this.ownerId,
-        candidateIds,
-        orderBy: "received",
-      });
-      if (claim) {
-        this.pendingApprovalIds.delete(claim.id);
-        await this.startClaimOrRelease(claim, PLUGIN_APPROVAL_CONTROL_LANE, "approval");
-      } else {
-        for (const id of candidateIds) this.pendingApprovalIds.delete(id);
+      if (this.pendingApprovalIds.size === 0) {
         await this.reloadPendingMetadata();
-        if (this.pendingApprovalIds.size > 0) nextRetryMs = Math.min(nextRetryMs, 250);
+      }
+      if (this.pendingApprovalIds.size > 0) {
+        const candidateIds = [...this.pendingApprovalIds];
+        const claim = await this.options.queue.claimNext({
+          ownerId: this.ownerId,
+          candidateIds,
+          orderBy: "received",
+        });
+        if (claim) {
+          this.pendingApprovalIds.delete(claim.id);
+          await this.startClaimOrRelease(claim, PLUGIN_APPROVAL_CONTROL_LANE, "approval");
+        } else {
+          for (const id of candidateIds) this.pendingApprovalIds.delete(id);
+          await this.reloadPendingMetadata();
+          if (this.pendingApprovalIds.size > 0) nextRetryMs = Math.min(nextRetryMs, 250);
+        }
       }
     }
 
