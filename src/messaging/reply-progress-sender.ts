@@ -10,6 +10,7 @@ export type WeixinReplyProgressSenderDeps = {
   to: string;
   accountId: string;
   opts: WeixinApiOptions & {
+    accountId?: string;
     contextToken?: string;
     runId?: string;
   };
@@ -44,7 +45,7 @@ export class WeixinReplyProgressSender {
     this.runId = deps.runId;
     this.to = deps.to;
     this.accountId = deps.accountId;
-    this.opts = { ...deps.opts, runId: deps.runId };
+    this.opts = { ...deps.opts, accountId: deps.accountId, runId: deps.runId };
   }
 
   get replyOptions() {

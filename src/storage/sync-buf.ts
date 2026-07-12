@@ -72,10 +72,26 @@ export function loadGetUpdatesBuf(filePath: string): string | undefined {
 }
 
 /**
- * Persist get_updates_buf. Creates parent dir if needed.
+ * Persist get_updates_buf atomically. Creates parent dir if needed.
  */
 export function saveGetUpdatesBuf(filePath: string, getUpdatesBuf: string): void {
   const dir = path.dirname(filePath);
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(filePath, JSON.stringify({ get_updates_buf: getUpdatesBuf }, null, 0), "utf-8");
+  const tempPath = path.join(
+    dir,
+    `${path.basename(filePath)}.${process.pid}.${Date.now()}.tmp`,
+  );
+  try {
+    fs.writeFileSync(tempPath, JSON.stringify({ get_updates_buf: getUpdatesBuf }, null, 0), "utf-8");
+    fs.renameSync(tempPath, filePath);
+  } catch (err) {
+    try {
+      if (fs.existsSync(tempPath)) {
+        fs.unlinkSync(tempPath);
+      }
+    } catch {
+      // best-effort cleanup
+    }
+    throw err;
+  }
 }

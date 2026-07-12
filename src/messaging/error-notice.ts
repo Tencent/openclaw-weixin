@@ -8,6 +8,7 @@ import { sendMessageWeixin } from "./send.js";
  */
 export async function sendWeixinErrorNotice(params: {
   to: string;
+  accountId: string;
   contextToken: string | undefined;
   message: string;
   baseUrl: string;
@@ -22,6 +23,7 @@ export async function sendWeixinErrorNotice(params: {
     await sendMessageWeixin({ to: params.to, text: params.message, opts: {
       baseUrl: params.baseUrl,
       token: params.token,
+      accountId: params.accountId,
       contextToken: params.contextToken,
       ...(params.runId ? { runId: params.runId } : {}),
     }});

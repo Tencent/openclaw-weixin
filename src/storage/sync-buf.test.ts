@@ -96,4 +96,26 @@ describe("saveGetUpdatesBuf", () => {
     saveGetUpdatesBuf(fp, "buf");
     expect(fs.existsSync(path.dirname(fp))).toBe(true);
   });
+
+  it("atomically replaces an existing file", async () => {
+    const { saveGetUpdatesBuf, loadGetUpdatesBuf, getSyncBufFilePath } = await loadModule();
+    const fp = getSyncBufFilePath("atomic-acc");
+    saveGetUpdatesBuf(fp, "first");
+    saveGetUpdatesBuf(fp, "second");
+    expect(loadGetUpdatesBuf(fp)).toBe("second");
+    expect(fs.readdirSync(path.dirname(fp)).filter((name) => name.includes(".tmp"))).toEqual([]);
+  });
+
+  it("cleans up the temp file when rename fails", async () => {
+    const { saveGetUpdatesBuf, getSyncBufFilePath } = await loadModule();
+    const fp = getSyncBufFilePath("rename-fail");
+    const renameSpy = vi.spyOn(fs, "renameSync").mockImplementation(() => {
+      throw new Error("rename failed");
+    });
+
+    expect(() => saveGetUpdatesBuf(fp, "buf")).toThrow("rename failed");
+    expect(fs.readdirSync(path.dirname(fp)).filter((name) => name.includes(".tmp"))).toEqual([]);
+
+    renameSpy.mockRestore();
+  });
 });

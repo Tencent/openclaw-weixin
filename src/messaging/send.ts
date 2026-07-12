@@ -7,16 +7,26 @@ import { generateId } from "../util/random.js";
 import type { MessageItem, SendMessageReq } from "../api/types.js";
 import { MessageItemType, MessageState, MessageType } from "../api/types.js";
 import type { UploadedFileInfo } from "../cdn/upload.js";
+import { resolveLatestContextToken } from "./inbound.js";
 
 export { StreamingMarkdownFilter } from "./markdown-filter.js";
 
 type WeixinMessageSendOptions = WeixinApiOptions & {
+  accountId?: string;
   contextToken?: string;
   runId?: string;
 };
 
 function generateClientId(): string {
   return generateId("openclaw-weixin");
+}
+
+function resolveSendContextToken(
+  to: string,
+  opts: WeixinMessageSendOptions,
+): string | undefined {
+  if (!opts.accountId) return opts.contextToken;
+  return resolveLatestContextToken(opts.accountId, to, opts.contextToken);
 }
 
 /** Build a SendMessageReq containing a single text message. */
@@ -72,13 +82,14 @@ export async function sendMessageWeixin(params: {
   opts: WeixinMessageSendOptions;
 }): Promise<{ messageId: string }> {
   const { to, text, opts } = params;
-  if (!opts.contextToken) {
+  const contextToken = resolveSendContextToken(to, opts);
+  if (!contextToken) {
     logger.warn(`sendMessageWeixin: contextToken missing for to=${to}, sending without context`);
   }
   const clientId = generateClientId();
   const req = buildSendMessageReq({
     to,
-    contextToken: opts.contextToken,
+    contextToken,
     runId: opts.runId,
     payload: { text },
     clientId,
@@ -106,7 +117,8 @@ export async function sendMessageItemWeixin(params: {
   label?: string;
 }): Promise<{ messageId: string }> {
   const { to, item, opts } = params;
-  if (!opts.contextToken) {
+  const contextToken = resolveSendContextToken(to, opts);
+  if (!contextToken) {
     logger.warn(`sendMessageItemWeixin: contextToken missing for to=${to}, sending without context`);
   }
   const clientId = params.clientId ?? generateClientId();
@@ -118,7 +130,7 @@ export async function sendMessageItemWeixin(params: {
       message_type: MessageType.BOT,
       message_state: MessageState.FINISH,
       item_list: [item],
-      context_token: opts.contextToken ?? undefined,
+      context_token: contextToken ?? undefined,
       run_id: opts.runId,
     },
   };
@@ -169,7 +181,7 @@ async function sendMediaItems(params: {
         message_type: MessageType.BOT,
         message_state: MessageState.FINISH,
         item_list: [item],
-        context_token: opts.contextToken ?? undefined,
+        context_token: resolveSendContextToken(to, opts) ?? undefined,
         run_id: runId,
       },
     };
@@ -208,7 +220,7 @@ export async function sendImageMessageWeixin(params: {
   opts: WeixinMessageSendOptions;
 }): Promise<{ messageId: string }> {
   const { to, text, uploaded, opts } = params;
-  if (!opts.contextToken) {
+  if (!resolveSendContextToken(to, opts)) {
     logger.warn(`sendImageMessageWeixin: contextToken missing for to=${to}, sending without context`);
   }
   logger.info(
@@ -242,7 +254,7 @@ export async function sendVideoMessageWeixin(params: {
   opts: WeixinMessageSendOptions;
 }): Promise<{ messageId: string }> {
   const { to, text, uploaded, opts } = params;
-  if (!opts.contextToken) {
+  if (!resolveSendContextToken(to, opts)) {
     logger.warn(`sendVideoMessageWeixin: contextToken missing for to=${to}, sending without context`);
   }
 
@@ -274,7 +286,7 @@ export async function sendFileMessageWeixin(params: {
   opts: WeixinMessageSendOptions;
 }): Promise<{ messageId: string }> {
   const { to, text, fileName, uploaded, opts } = params;
-  if (!opts.contextToken) {
+  if (!resolveSendContextToken(to, opts)) {
     logger.warn(`sendFileMessageWeixin: contextToken missing for to=${to}, sending without context`);
   }
   const fileItem: MessageItem = {
