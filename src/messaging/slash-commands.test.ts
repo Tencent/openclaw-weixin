@@ -59,6 +59,7 @@ describe("handleSlashCommand", () => {
     const firstCall = mockSendMessageWeixin.mock.calls[0][0];
     expect(firstCall.to).toBe("user123");
     expect(firstCall.text).toBe("hello");
+    expect(firstCall.opts.accountId).toBe("acc1");
     expect(firstCall.opts.contextToken).toBe("token123");
 
     const secondCall = mockSendMessageWeixin.mock.calls[1][0];
