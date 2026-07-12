@@ -144,7 +144,6 @@ async function sendWeixinOutbound(params: {
     const result = await sendMessageWeixin({ to: params.to, text: filteredText, opts: {
       baseUrl: account.baseUrl,
       token: account.token,
-      accountId: account.accountId,
       contextToken: params.contextToken,
     }});
     emitWeixinMessageSent({ to: params.to, content: filteredText, success: true, accountId: account.accountId });
@@ -280,7 +279,6 @@ export function createWeixinPlugin(params?: {
             opts: {
               baseUrl: account.baseUrl,
               token: account.token,
-              accountId: account.accountId,
               contextToken,
             },
             cdnBaseUrl: account.cdnBaseUrl,

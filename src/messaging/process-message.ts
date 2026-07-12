@@ -24,10 +24,9 @@ import { isDebugMode } from "./debug-mode.js";
 import { sendWeixinErrorNotice } from "./error-notice.js";
 import { applyWeixinMessageSendingHook, emitWeixinMessageSent } from "./outbound-hooks.js";
 import {
-  observeContextToken,
-  resolveLatestContextToken,
   setContextToken,
   weixinMessageToMsgContext,
+  getContextTokenFromMsgContext,
   isMediaItem,
 } from "./inbound.js";
 import type { WeixinInboundMediaOpts } from "./inbound.js";
@@ -48,7 +47,6 @@ export type ProcessMessageDeps = {
   cdnBaseUrl: string;
   token?: string;
   typingTicket?: string;
-  contextTokenObservedAt?: number;
   onAgentRunStart?: (runId: string) => void;
   queuedFollowupLifecycle?: {
     onEnqueued?: () => void;
@@ -91,15 +89,6 @@ export async function processOneMessage(
   const debugTs: Record<string, number> = { received: receivedAt };
 
   const textBody = extractTextBody(full.item_list);
-  const originatingContextToken = full.context_token;
-  if (originatingContextToken) {
-    observeContextToken(
-      deps.accountId,
-      full.from_user_id ?? "",
-      originatingContextToken,
-      deps.contextTokenObservedAt,
-    );
-  }
   if (textBody.startsWith("/")) {
     const slashResult = await handleSlashCommand(textBody, {
       to: full.from_user_id ?? "",
@@ -221,14 +210,6 @@ export async function processOneMessage(
   }
 
   ctx.CommandAuthorized = commandAuthorized;
-  if (originatingContextToken) {
-    setContextToken(
-      deps.accountId,
-      full.from_user_id ?? "",
-      originatingContextToken,
-      deps.contextTokenObservedAt,
-    );
-  }
   logger.debug(
     `authorization: senderId=${senderId} commandAuthorized=${String(commandAuthorized)} senderAllowed=${String(senderAllowedForCommands)}`,
   );
@@ -293,6 +274,10 @@ export async function processOneMessage(
     `recordInboundSession: done storePath=${storePath} sessionKey=${route.sessionKey ?? "(none)"}`,
   );
 
+  const contextToken = getContextTokenFromMsgContext(ctx);
+  if (contextToken) {
+    setContextToken(deps.accountId, full.from_user_id ?? "", contextToken);
+  }
   const runId = randomUUID();
   const replyProgressSender = resolveReplyProgressMessagesEnabled(deps.config)
     ? new WeixinReplyProgressSender({
@@ -302,7 +287,7 @@ export async function processOneMessage(
         opts: {
           baseUrl: deps.baseUrl,
           token: deps.token,
-          contextToken: originatingContextToken,
+          contextToken,
         },
       })
     : undefined;
@@ -358,8 +343,6 @@ export async function processOneMessage(
 
   /** Delivery records populated synchronously at deliver() entry, safe to read in finally. */
   const debugDeliveries: Array<{ textLen: number; media: string; preview: string; ts: number }> = [];
-  const resolveCurrentContextToken = () =>
-    resolveLatestContextToken(deps.accountId, ctx.To, originatingContextToken);
 
   const { dispatcher, replyOptions, markDispatchIdle } =
     deps.channelRuntime.reply.createReplyDispatcherWithTyping({
@@ -372,10 +355,9 @@ export async function processOneMessage(
           return f.feed(rawText) + f.flush();
         })();
         const mediaUrl = payload.mediaUrl ?? payload.mediaUrls?.[0];
-        const currentContextToken = resolveCurrentContextToken();
         logger.debug(`outbound payload: ${redactBody(JSON.stringify(payload))}`);
         logger.info(
-          `outbound: to=${ctx.To} contextToken=${redactToken(currentContextToken)} textLen=${text.length} mediaUrl=${mediaUrl ? "present" : "none"}`,
+          `outbound: to=${ctx.To} contextToken=${redactToken(contextToken)} textLen=${text.length} mediaUrl=${mediaUrl ? "present" : "none"}`,
         );
 
         if (debug) {
@@ -424,8 +406,7 @@ export async function processOneMessage(
               await sendMessageWeixin({ to: ctx.To, text, opts: {
                 baseUrl: deps.baseUrl,
                 token: deps.token,
-                accountId: deps.accountId,
-                contextToken: currentContextToken,
+                contextToken,
                 runId,
               }});
               emitWeixinMessageSent({ to: ctx.To, content: text, success: true, accountId: deps.accountId, runId });
@@ -439,8 +420,7 @@ export async function processOneMessage(
               opts: {
                 baseUrl: deps.baseUrl,
                 token: deps.token,
-                accountId: deps.accountId,
-                contextToken: currentContextToken,
+                contextToken,
                 runId,
               },
               cdnBaseUrl: deps.cdnBaseUrl,
@@ -452,8 +432,7 @@ export async function processOneMessage(
             await sendMessageWeixin({ to: ctx.To, text, opts: {
               baseUrl: deps.baseUrl,
               token: deps.token,
-              accountId: deps.accountId,
-              contextToken: currentContextToken,
+              contextToken,
               runId,
             }});
             emitWeixinMessageSent({ to: ctx.To, content: text, success: true, accountId: deps.accountId, runId });
@@ -484,8 +463,7 @@ export async function processOneMessage(
         }
         void sendWeixinErrorNotice({
           to: ctx.To,
-          accountId: deps.accountId,
-          contextToken: resolveCurrentContextToken(),
+          contextToken,
           message: notice,
           baseUrl: deps.baseUrl,
           token: deps.token,
@@ -526,10 +504,10 @@ export async function processOneMessage(
     }
 
     logger.info(
-      `debug-check: accountId=${deps.accountId} debug=${String(debug)} hasContextToken=${Boolean(originatingContextToken)}`,
+      `debug-check: accountId=${deps.accountId} debug=${String(debug)} hasContextToken=${Boolean(contextToken)}`,
     );
 
-    if (debug && originatingContextToken) {
+    if (debug && contextToken) {
       const dispatchDoneAt = Date.now();
       const eventTs = full.create_time_ms ?? 0;
       const platformDelay = eventTs > 0 ? `${receivedAt - eventTs}ms` : "N/A";
@@ -570,8 +548,7 @@ export async function processOneMessage(
           opts: {
             baseUrl: deps.baseUrl,
             token: deps.token,
-            accountId: deps.accountId,
-            contextToken: resolveCurrentContextToken(),
+            contextToken,
             runId,
           },
         });

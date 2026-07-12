@@ -18,7 +18,7 @@ export async function sendWeixinMediaFile(params: {
   filePath: string;
   to: string;
   text: string;
-  opts: WeixinApiOptions & { accountId?: string; contextToken?: string; runId?: string };
+  opts: WeixinApiOptions & { contextToken?: string; runId?: string };
   cdnBaseUrl: string;
 }): Promise<{ messageId: string }> {
   const { filePath, to, text, opts, cdnBaseUrl } = params;

@@ -5,7 +5,6 @@ import { getUpdates, classifyFetchError } from "../api/api.js";
 import { WeixinConfigManager } from "../api/config-cache.js";
 import { STALE_TOKEN_ERRCODE, pauseSession, getRemainingPauseMs } from "../api/session-guard.js";
 import type { WeixinMessage } from "../api/types.js";
-import { observeContextToken } from "../messaging/inbound.js";
 import { processOneMessage } from "../messaging/process-message.js";
 import { getSyncBufFilePath, loadGetUpdatesBuf, saveGetUpdatesBuf } from "../storage/sync-buf.js";
 import { logger } from "../util/logger.js";
@@ -95,19 +94,6 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
   }
 
   const configManager = new WeixinConfigManager({ baseUrl, token }, log);
-  const observeDurableMessage = (
-    message: WeixinMessage,
-    receivedAt: number,
-  ): void => {
-    if (message.context_token) {
-      observeContextToken(
-        accountId,
-        message.from_user_id ?? "",
-        message.context_token,
-        receivedAt,
-      );
-    }
-  };
   const processInbound = async (
     full: WeixinMessage,
     lifecycle?: DurableIngressLifecycle,
@@ -129,7 +115,6 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
       cdnBaseUrl,
       token,
       typingTicket: cachedConfig.typingTicket,
-      contextTokenObservedAt: lifecycle?.receivedAt,
       onAgentRunStart: lifecycle?.onAgentRunStart,
       queuedFollowupLifecycle: lifecycle?.queuedFollowupLifecycle,
       log,
@@ -157,7 +142,6 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
         log,
         errLog,
         aLog,
-        onDurableMessage: observeDurableMessage,
         processMessage: processInbound,
       });
     } catch (err) {

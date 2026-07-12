@@ -48,8 +48,6 @@ vi.mock("../util/logger.js", () => ({
 import { MessageItemType } from "../api/types.js";
 import {
   clearContextTokensForAccount,
-  getContextToken,
-  setContextToken,
 } from "../messaging/inbound.js";
 import { getSyncBufFilePath } from "../storage/sync-buf.js";
 import {
@@ -330,16 +328,7 @@ describe("monitorWeixinProvider durable ingress", () => {
     vi.useRealTimers();
     stateDir = fs.mkdtempSync(path.join(process.cwd(), ".monitor-test-"));
     process.env.OPENCLAW_STATE_DIR = stateDir;
-    mockProcessOneMessage.mockImplementation(async (message, deps) => {
-      if (message.context_token) {
-        setContextToken(
-          "acc-monitor",
-          message.from_user_id ?? "",
-          message.context_token,
-          deps.contextTokenObservedAt,
-        );
-      }
-    });
+    mockProcessOneMessage.mockImplementation(async () => undefined);
   });
 
   afterEach(() => {
@@ -491,14 +480,6 @@ describe("monitorWeixinProvider durable ingress", () => {
     const started: string[] = [];
 
     mockProcessOneMessage.mockImplementation(async (message, deps) => {
-      if (message.context_token) {
-        setContextToken(
-          "acc-monitor",
-          message.from_user_id ?? "",
-          message.context_token,
-          deps.contextTokenObservedAt,
-        );
-      }
       const body = message.item_list?.[0]?.text_item?.text ?? "";
       started.push(body);
       if (body === "one") {
@@ -563,7 +544,6 @@ describe("monitorWeixinProvider durable ingress", () => {
     expect(started.filter((entry) => entry === "one")).toHaveLength(1);
     expect(started.indexOf("two")).toBeGreaterThan(started.indexOf("one"));
     expect(started.indexOf("two")).toBeLessThan(started.length);
-    expect(getContextToken("acc-monitor", "user-a")).toBe("context-latest");
   });
 
   it("keeps queued followup claims alive until completion while freeing the ordinary lane", async () => {

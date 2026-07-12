@@ -16,38 +16,10 @@ import { resolveStateDir } from "../storage/state-dir.js";
  * be echoed verbatim in every outbound send. The in-memory map is the primary
  * lookup; a disk-backed file per account ensures tokens survive gateway restarts.
  */
-type ContextTokenEntry = {
-  token: string;
-  observedAt: number;
-  authorized: boolean;
-};
-
-const contextTokenStore = new Map<string, ContextTokenEntry>();
+const contextTokenStore = new Map<string, string>();
 
 function contextTokenKey(accountId: string, userId: string): string {
   return `${accountId}:${userId}`;
-}
-
-function mergeContextTokenEntry(key: string, entry: ContextTokenEntry): boolean {
-  const existing = contextTokenStore.get(key);
-  if (existing) {
-    const authorized = existing.authorized || entry.authorized;
-    if (entry.observedAt < existing.observedAt) {
-      if (authorized === existing.authorized) return false;
-      contextTokenStore.set(key, { ...existing, authorized });
-      return true;
-    }
-    if (
-      entry.observedAt === existing.observedAt &&
-      entry.token === existing.token &&
-      authorized === existing.authorized
-    ) {
-      return false;
-    }
-    entry = { ...entry, authorized };
-  }
-  contextTokenStore.set(key, entry);
-  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -66,7 +38,7 @@ function resolveContextTokenFilePath(accountId: string): string {
 /** Persist all context tokens for a given account to disk. */
 function persistContextTokens(accountId: string): void {
   const prefix = `${accountId}:`;
-  const tokens: Record<string, ContextTokenEntry> = {};
+  const tokens: Record<string, string> = {};
   for (const [k, v] of contextTokenStore) {
     if (k.startsWith(prefix)) {
       tokens[k.slice(prefix.length)] = v;
@@ -91,27 +63,12 @@ export function restoreContextTokens(accountId: string): void {
   try {
     if (!fs.existsSync(filePath)) return;
     const raw = fs.readFileSync(filePath, "utf-8");
-    const tokens = JSON.parse(raw) as Record<string, unknown>;
+    const tokens = JSON.parse(raw) as Record<string, string>;
     let count = 0;
-    for (const [userId, value] of Object.entries(tokens)) {
-      const entry =
-        typeof value === "string"
-          ? { token: value, observedAt: 0, authorized: true }
-          : value &&
-              typeof value === "object" &&
-              typeof (value as Partial<ContextTokenEntry>).token === "string" &&
-              typeof (value as Partial<ContextTokenEntry>).observedAt === "number"
-            ? {
-                token: (value as ContextTokenEntry).token,
-                observedAt: (value as ContextTokenEntry).observedAt,
-                authorized:
-                  typeof (value as Partial<ContextTokenEntry>).authorized === "boolean"
-                    ? (value as ContextTokenEntry).authorized
-                    : true,
-              }
-            : undefined;
-      if (entry?.token) {
-        if (mergeContextTokenEntry(contextTokenKey(accountId, userId), entry)) count++;
+    for (const [userId, token] of Object.entries(tokens)) {
+      if (typeof token === "string" && token) {
+        contextTokenStore.set(contextTokenKey(accountId, userId), token);
+        count++;
       }
     }
     logger.info(`restoreContextTokens: restored ${count} tokens for account=${accountId}`);
@@ -137,37 +94,12 @@ export function clearContextTokensForAccount(accountId: string): void {
   logger.info(`clearContextTokensForAccount: cleared tokens for account=${accountId}`);
 }
 
-function updateContextToken(
-  accountId: string,
-  userId: string,
-  token: string,
-  observedAt: number,
-  authorized: boolean,
-): void {
+/** Store a context token for a given account+user pair (memory + disk). */
+export function setContextToken(accountId: string, userId: string, token: string): void {
   const k = contextTokenKey(accountId, userId);
-  if (!mergeContextTokenEntry(k, { token, observedAt, authorized })) return;
   logger.debug(`setContextToken: key=${k}`);
+  contextTokenStore.set(k, token);
   persistContextTokens(accountId);
-}
-
-/** Record the newest received token without making the sender eligible for account inference. */
-export function observeContextToken(
-  accountId: string,
-  userId: string,
-  token: string,
-  observedAt = Date.now(),
-): void {
-  updateContextToken(accountId, userId, token, observedAt, false);
-}
-
-/** Store an authorized context token for a given account+user pair (memory + disk). */
-export function setContextToken(
-  accountId: string,
-  userId: string,
-  token: string,
-  observedAt = Date.now(),
-): void {
-  updateContextToken(accountId, userId, token, observedAt, true);
 }
 
 /** Retrieve the cached context token for a given account+user pair. */
@@ -177,16 +109,7 @@ export function getContextToken(accountId: string, userId: string): string | und
   logger.debug(
     `getContextToken: key=${k} found=${val !== undefined} storeSize=${contextTokenStore.size}`,
   );
-  return val?.token;
-}
-
-/** Resolve the latest known context token, falling back to the originating token. */
-export function resolveLatestContextToken(
-  accountId: string,
-  userId: string,
-  fallback?: string,
-): string | undefined {
-  return getContextToken(accountId, userId) ?? fallback;
+  return val;
 }
 
 /**
@@ -201,9 +124,7 @@ export function findAccountIdsByContextToken(
   accountIds: string[],
   userId: string,
 ): string[] {
-  return accountIds.filter(
-    (id) => contextTokenStore.get(contextTokenKey(id, userId))?.authorized === true,
-  );
+  return accountIds.filter((id) => contextTokenStore.has(contextTokenKey(id, userId)));
 }
 
 // ---------------------------------------------------------------------------

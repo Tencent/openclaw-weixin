@@ -43,7 +43,6 @@ import {
 } from "./send.js";
 import { MessageItemType } from "../api/types.js";
 import type { UploadedFileInfo } from "../cdn/upload.js";
-import { setContextToken } from "./inbound.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -82,24 +81,6 @@ describe("sendMessageWeixin", () => {
     });
     const callArgs = mockSendMessageApi.mock.calls[0][0];
     expect(callArgs.body.msg.run_id).toBe("run-1");
-  });
-
-  it("prefers the latest stored context token when accountId is provided", async () => {
-    mockSendMessageApi.mockResolvedValueOnce(undefined);
-    setContextToken("acc-send", "user1", "ctx-latest");
-
-    await sendMessageWeixin({
-      to: "user1",
-      text: "hello",
-      opts: {
-        baseUrl: "https://api.com",
-        accountId: "acc-send",
-        contextToken: "ctx-origin",
-      },
-    });
-
-    const callArgs = mockSendMessageApi.mock.calls[0][0];
-    expect(callArgs.body.msg.context_token).toBe("ctx-latest");
   });
 
   it("sends message with empty text (no item_list)", async () => {
@@ -211,29 +192,6 @@ describe("sendImageMessageWeixin", () => {
     expect(mockSendMessageApi).toHaveBeenCalledTimes(2);
     expect(mockSendMessageApi.mock.calls[0][0].body.msg.run_id).toBe("run-media");
     expect(mockSendMessageApi.mock.calls[1][0].body.msg.run_id).toBe("run-media");
-  });
-
-  it("refreshes the context token between caption and media sends", async () => {
-    setContextToken("acc-media-refresh", "user1", "ctx-caption");
-    mockSendMessageApi
-      .mockImplementationOnce(async () => {
-        setContextToken("acc-media-refresh", "user1", "ctx-media");
-      })
-      .mockResolvedValueOnce(undefined);
-
-    await sendImageMessageWeixin({
-      to: "user1",
-      text: "caption",
-      uploaded: makeUploadedFileInfo(),
-      opts: {
-        baseUrl: "https://api.com",
-        accountId: "acc-media-refresh",
-        contextToken: "ctx-origin",
-      },
-    });
-
-    expect(mockSendMessageApi.mock.calls[0][0].body.msg.context_token).toBe("ctx-caption");
-    expect(mockSendMessageApi.mock.calls[1][0].body.msg.context_token).toBe("ctx-media");
   });
 
   it("sends image message without caption (single call)", async () => {
