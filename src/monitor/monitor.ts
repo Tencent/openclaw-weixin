@@ -10,18 +10,7 @@ import { getSyncBufFilePath, loadGetUpdatesBuf, saveGetUpdatesBuf } from "../sto
 import { logger } from "../util/logger.js";
 import type { Logger } from "../util/logger.js";
 import { redactBody } from "../util/redact.js";
-import {
-  createDurableIngressManager,
-  type DurableIngressLifecycle,
-  type OpenChannelIngressQueue,
-} from "./durable-ingress.js";
-
-export {
-  DURABLE_RETRY_DELAY_FOR_TESTS_MS,
-  PLUGIN_APPROVAL_CONTROL_LANE,
-  getDurableIngressEventId,
-  resolveDurableIngressLaneKey,
-} from "./durable-ingress.js";
+import { createInboundInbox } from "./inbound-inbox.js";
 
 const DEFAULT_LONG_POLL_TIMEOUT_MS = 35_000;
 const MAX_CONSECUTIVE_FAILURES = 3;
@@ -42,17 +31,14 @@ export type MonitorWeixinOpts = {
    * Required for inbound message processing; provided by `ChannelGatewayContext.channelRuntime`.
    */
   channelRuntime: PluginRuntime["channel"];
-  openChannelIngressQueue?: OpenChannelIngressQueue;
-  resolveOpenChannelIngressQueue?: () => OpenChannelIngressQueue | undefined;
   abortSignal?: AbortSignal;
   longPollTimeoutMs?: number;
-  /** Gateway status callback — called on each successful poll and inbound message. */
+  /** Gateway status callback ? called on each successful poll and inbound message. */
   setStatus?: (next: ChannelAccountSnapshot) => void;
 };
 
 /**
  * Long-poll loop: getUpdates -> durable enqueue -> cursor commit -> asynchronous dispatch.
- * Hosts without the durable queue retain the original blocking serial behavior.
  */
 export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<void> {
   const {
@@ -62,8 +48,6 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
     accountId,
     config,
     channelRuntime,
-    openChannelIngressQueue,
-    resolveOpenChannelIngressQueue,
     abortSignal,
     longPollTimeoutMs,
     setStatus,
@@ -94,19 +78,13 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
   }
 
   const configManager = new WeixinConfigManager({ baseUrl, token }, log);
-  const processInbound = async (
-    full: WeixinMessage,
-    lifecycle?: DurableIngressLifecycle,
-  ): Promise<void> => {
+  const processInbound = async (full: WeixinMessage): Promise<void> => {
     aLog.info(
       `inbound message: from=${full.from_user_id} types=${full.item_list?.map((item) => item.type).join(",") ?? "none"}`,
     );
     const now = Date.now();
     setStatus?.({ accountId, lastEventAt: now, lastInboundAt: now });
-    const cachedConfig = await configManager.getForUser(
-      full.from_user_id ?? "",
-      full.context_token,
-    );
+    const cachedConfig = await configManager.getForUser(full.from_user_id ?? "", full.context_token);
     await processOneMessage(full, {
       accountId,
       config,
@@ -115,45 +93,16 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
       cdnBaseUrl,
       token,
       typingTicket: cachedConfig.typingTicket,
-      onAgentRunStart: lifecycle?.onAgentRunStart,
-      queuedFollowupLifecycle: lifecycle?.queuedFollowupLifecycle,
       log,
       errLog,
     });
   };
-
-  let queueOpener = openChannelIngressQueue;
-  if (!queueOpener && resolveOpenChannelIngressQueue) {
-    try {
-      queueOpener = resolveOpenChannelIngressQueue();
-    } catch (err) {
-      aLog.warn(`Unable to resolve durable ingress queue: ${String(err)}`);
-    }
-  }
-
-  let durableIngress;
-  if (queueOpener) {
-    try {
-      durableIngress = createDurableIngressManager({
-        accountId,
-        config,
-        channelRuntime,
-        openChannelIngressQueue: queueOpener,
-        log,
-        errLog,
-        aLog,
-        processMessage: processInbound,
-      });
-    } catch (err) {
-      aLog.warn(`Unable to open durable ingress queue: ${String(err)}`);
-    }
-  }
-
-  if (!durableIngress) {
-    log(
-      "[weixin] durable ingress queue unavailable; using legacy blocking serial polling",
-    );
-  }
+  const inbox = createInboundInbox({
+    accountId,
+    aLog,
+    processMessage: processInbound,
+  });
+  inbox.scheduleProcessing();
 
   let nextTimeoutMs = longPollTimeoutMs ?? DEFAULT_LONG_POLL_TIMEOUT_MS;
   let consecutiveFailures = 0;
@@ -206,16 +155,9 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
         consecutiveFailures = 0;
         setStatus?.({ accountId, lastEventAt: Date.now() });
         const messages = response.msgs ?? [];
-
-        if (durableIngress) {
-          await durableIngress.enqueueBatch(messages);
-          saveCursor(response.get_updates_buf);
-        } else {
-          saveCursor(response.get_updates_buf);
-          for (const message of messages) {
-            await processInbound(message);
-          }
-        }
+        await inbox.enqueueBatch(messages);
+        saveCursor(response.get_updates_buf);
+        inbox.scheduleProcessing();
       } catch (err) {
         if (abortSignal?.aborted) {
           aLog.info("Monitor stopped (aborted)");
@@ -235,7 +177,7 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
       }
     }
   } finally {
-    await durableIngress?.stop();
+    inbox.stop();
     aLog.info("Monitor ended");
   }
 
