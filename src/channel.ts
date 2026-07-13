@@ -34,8 +34,6 @@ import { sendWeixinMediaFile } from "./messaging/send-media.js";
 import { sendMessageWeixin, StreamingMarkdownFilter } from "./messaging/send.js";
 import { downloadRemoteImageToTemp } from "./cdn/upload.js";
 
-type OpenChannelIngressQueue = PluginRuntime["state"]["openChannelIngressQueue"];
-
 /** Returns true when mediaUrl refers to a local filesystem path (absolute or relative). */
 function isLocalFilePath(mediaUrl: string): boolean {
   // Treat anything without a URL scheme (no "://") as a local path.
@@ -154,21 +152,18 @@ async function sendWeixinOutbound(params: {
   }
 }
 
-export function createWeixinPlugin(params?: {
-  resolveOpenChannelIngressQueue?: () => OpenChannelIngressQueue | undefined;
-}): ChannelPlugin<ResolvedWeixinAccount> {
-  return {
+export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
+  id: "openclaw-weixin",
+  meta: {
     id: "openclaw-weixin",
-    meta: {
-      id: "openclaw-weixin",
-      label: "openclaw-weixin",
-      selectionLabel: "openclaw-weixin (long-poll)",
-      docsPath: "/channels/openclaw-weixin",
-      docsLabel: "openclaw-weixin",
-      blurb: "getUpdates long-poll upstream, sendMessage downstream; token auth.",
-      order: 75,
-    },
-    configSchema: {
+    label: "openclaw-weixin",
+    selectionLabel: "openclaw-weixin (long-poll)",
+    docsPath: "/channels/openclaw-weixin",
+    docsLabel: "openclaw-weixin",
+    blurb: "getUpdates long-poll upstream, sendMessage downstream; token auth.",
+    order: 75,
+  },
+  configSchema: {
     schema: {
       type: "object",
       additionalProperties: false,
@@ -276,11 +271,7 @@ export function createWeixinPlugin(params?: {
             filePath,
             to: ctx.to,
             text,
-            opts: {
-              baseUrl: account.baseUrl,
-              token: account.token,
-              contextToken,
-            },
+            opts: { baseUrl: account.baseUrl, token: account.token, contextToken },
             cdnBaseUrl: account.cdnBaseUrl,
           });
           emitWeixinMessageSent({ to: ctx.to, content: text, success: true, accountId: account.accountId });
@@ -472,7 +463,6 @@ export function createWeixinPlugin(params?: {
         config: ctx.cfg,
         runtime: ctx.runtime,
         channelRuntime: ctx.channelRuntime as unknown as PluginRuntime["channel"],
-        resolveOpenChannelIngressQueue: params?.resolveOpenChannelIngressQueue,
         abortSignal: ctx.abortSignal,
         setStatus: ctx.setStatus,
       });
@@ -550,8 +540,5 @@ export function createWeixinPlugin(params?: {
         accountId: result.accountId,
       } as { connected: boolean; message: string };
     },
-    },
-  };
-}
-
-export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = createWeixinPlugin();
+  },
+};

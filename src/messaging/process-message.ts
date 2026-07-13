@@ -47,17 +47,12 @@ export type ProcessMessageDeps = {
   cdnBaseUrl: string;
   token?: string;
   typingTicket?: string;
-  onAgentRunStart?: (runId: string) => void;
-  queuedFollowupLifecycle?: {
-    onEnqueued?: () => void;
-    onComplete?: () => void;
-  };
   log: (msg: string) => void;
   errLog: (m: string) => void;
 };
 
 /** Extract text body from item_list (for slash command detection). */
-export function extractTextBody(itemList?: import("../api/types.js").MessageItem[]): string {
+function extractTextBody(itemList?: import("../api/types.js").MessageItem[]): string {
   if (!itemList?.length) return "";
   for (const item of itemList) {
     if (item.type === MessageItemType.TEXT && item.text_item?.text != null) {
@@ -291,23 +286,6 @@ export async function processOneMessage(
         },
       })
     : undefined;
-  let queuedFollowup = false;
-  const queuedFollowupLifecycle =
-    replyProgressSender || deps.queuedFollowupLifecycle
-      ? {
-          onEnqueued: () => {
-            queuedFollowup = true;
-            deps.queuedFollowupLifecycle?.onEnqueued?.();
-          },
-          onComplete: () => {
-            try {
-              deps.queuedFollowupLifecycle?.onComplete?.();
-            } finally {
-              void replyProgressSender?.finalize();
-            }
-          },
-        }
-      : undefined;
   const humanDelay = deps.channelRuntime.reply.resolveHumanDelayConfig(deps.config, route.agentId);
 
   const hasTypingTicket = Boolean(deps.typingTicket);
@@ -417,12 +395,7 @@ export async function processOneMessage(
               filePath,
               to: ctx.To,
               text,
-              opts: {
-                baseUrl: deps.baseUrl,
-                token: deps.token,
-                contextToken,
-                runId,
-              },
+              opts: { baseUrl: deps.baseUrl, token: deps.token, contextToken, runId },
               cdnBaseUrl: deps.cdnBaseUrl,
             });
             emitWeixinMessageSent({ to: ctx.To, content: text, success: true, accountId: deps.accountId, runId });
@@ -485,8 +458,6 @@ export async function processOneMessage(
           replyOptions: {
             ...replyOptions,
             ...(replyProgressSender?.replyOptions ?? {}),
-            onAgentRunStart: deps.onAgentRunStart,
-            queuedFollowupLifecycle,
             disableBlockStreaming: true,
           },
         }),
@@ -499,9 +470,7 @@ export async function processOneMessage(
     throw err;
   } finally {
     markDispatchIdle();
-    if (!queuedFollowup) {
-      await replyProgressSender?.finalize();
-    }
+    await replyProgressSender?.finalize();
 
     logger.info(
       `debug-check: accountId=${deps.accountId} debug=${String(debug)} hasContextToken=${Boolean(contextToken)}`,
@@ -545,12 +514,7 @@ export async function processOneMessage(
         await sendMessageWeixin({
           to: ctx.To,
           text: timingText,
-          opts: {
-            baseUrl: deps.baseUrl,
-            token: deps.token,
-            contextToken,
-            runId,
-          },
+          opts: { baseUrl: deps.baseUrl, token: deps.token, contextToken, runId },
         });
         logger.info(`debug-timing: sent OK`);
       } catch (debugErr) {
