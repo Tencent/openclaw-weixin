@@ -7,7 +7,7 @@ import { MessageItemType, type WeixinMessage } from "../api/types.js";
 import { createInboundInbox, resolveInboundInboxDir } from "./inbound-inbox.js";
 
 const TEST_STATE_ROOT = path.join(process.cwd(), ".vitest-state");
-const ACTIVE_RECORDS_SYMBOL = Symbol.for("openclaw-weixin.inbound-inbox.active-records");
+const SHARED_STATE_SYMBOL = Symbol.for("openclaw-weixin.inbound-inbox.shared-state");
 
 let stateDir = "";
 
@@ -22,10 +22,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete process.env.OPENCLAW_STATE_DIR;
-  const activeRecords = (globalThis as Record<PropertyKey, unknown>)[ACTIVE_RECORDS_SYMBOL];
-  if (activeRecords instanceof Set) {
-    activeRecords.clear();
-  }
+  delete (globalThis as Record<PropertyKey, unknown>)[SHARED_STATE_SYMBOL];
   vi.restoreAllMocks();
   fs.rmSync(stateDir, { recursive: true, force: true });
 });
@@ -122,54 +119,70 @@ describe("createInboundInbox", () => {
     }
   });
 
-  it("retains failed records and retries them with backoff", async () => {
+  it("shares retry backoff across overlapping inbox instances", async () => {
+    vi.useFakeTimers();
     const aLog = createLogger();
     let attempts = 0;
-    const attemptTimes: number[] = [];
-    const inbox = createInboundInbox({
+    const processor = vi.fn(async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        throw new Error("retry me");
+      }
+    });
+    const inboxA = createInboundInbox({
       accountId: "acc-retry",
       aLog,
-      retryBaseMs: 10,
-      retryMaxMs: 40,
-      processMessage: vi.fn(async () => {
-        attempts += 1;
-        attemptTimes.push(Date.now());
-        if (attempts <= 2) {
-          throw new Error("retry me");
-        }
-      }),
+      processMessage: processor,
     });
-
-    try {
-      await inbox.enqueueBatch([makeMessage("retry", { message_id: 41 })]);
-      inbox.scheduleProcessing();
-
-      await waitForCondition(() => attempts === 1);
-      expect(listPendingFiles("acc-retry")).toHaveLength(1);
-
-      await waitForCondition(() => attempts === 3);
-      await waitForCondition(() => listDoneFiles("acc-retry").length === 1);
-      expect(attemptTimes[1] - attemptTimes[0]).toBeGreaterThanOrEqual(8);
-      expect(attemptTimes[2] - attemptTimes[1]).toBeGreaterThanOrEqual(18);
-      expect(aLog.error).toHaveBeenCalledWith(expect.stringContaining("Failed to process inbound record"));
-    } finally {
-      inbox.stop();
-    }
-  });
-
-  it("retries finalization without processing the message again", async () => {
-    const aLog = createLogger();
-    const processor = vi.fn(async () => {});
-    const inbox = createInboundInbox({
-      accountId: "acc-finalize",
+    const inboxB = createInboundInbox({
+      accountId: "acc-retry",
       aLog,
-      retryBaseMs: 10,
-      retryMaxMs: 10,
       processMessage: processor,
     });
 
     try {
-      await inbox.enqueueBatch([makeMessage("finalize", { message_id: 45 })]);
+      await inboxA.enqueueBatch([makeMessage("retry", { message_id: 41 })]);
+      inboxA.scheduleProcessing();
+      inboxB.scheduleProcessing();
+      await flushMicrotasks();
+
+      expect(attempts).toBe(1);
+      expect(listPendingFiles("acc-retry")).toHaveLength(1);
+
+      inboxB.scheduleProcessing();
+      await flushMicrotasks();
+      expect(attempts).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(999);
+      expect(attempts).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await flushMicrotasks();
+      expect(attempts).toBe(2);
+      expect(listDoneFiles("acc-retry")).toHaveLength(1);
+      expect(aLog.error).toHaveBeenCalledWith(expect.stringContaining("Failed to process inbound record"));
+    } finally {
+      inboxA.stop();
+      inboxB.stop();
+      vi.useRealTimers();
+    }
+  });
+
+  it("hands finalization retries to a replacement inbox without processing again", async () => {
+    const aLog = createLogger();
+    const processGate = createDeferred();
+    const processor = vi.fn(async () => {
+      await processGate.promise;
+    });
+    const inboxA = createInboundInbox({
+      accountId: "acc-finalize",
+      aLog,
+      processMessage: processor,
+    });
+    let inboxB: ReturnType<typeof createInboundInbox> | undefined;
+
+    try {
+      await inboxA.enqueueBatch([makeMessage("finalize", { message_id: 45 })]);
       const renameSync = fs.renameSync.bind(fs);
       let failedOnce = false;
       vi.spyOn(fs, "renameSync").mockImplementation((oldPath, newPath) => {
@@ -184,13 +197,49 @@ describe("createInboundInbox", () => {
         renameSync(oldPath, newPath);
       });
 
-      inbox.scheduleProcessing();
+      inboxA.scheduleProcessing();
+
+      await waitForCondition(() => processor.mock.calls.length === 1);
+      inboxB = createInboundInbox({
+        accountId: "acc-finalize",
+        aLog,
+        processMessage: processor,
+      });
+      inboxB.scheduleProcessing();
+      inboxA.stop();
+      processGate.resolve();
 
       await waitForCondition(() => listDoneFiles("acc-finalize").length === 1);
       expect(processor).toHaveBeenCalledTimes(1);
       expect(aLog.error).toHaveBeenCalledWith(
         expect.stringContaining("Failed to finalize inbound record"),
       );
+    } finally {
+      processGate.resolve();
+      inboxA.stop();
+      inboxB?.stop();
+    }
+  });
+
+  it("preserves numeric message order when dispatching pending records", async () => {
+    const started: string[] = [];
+    const inbox = createInboundInbox({
+      accountId: "acc-order",
+      aLog: createLogger(),
+      processMessage: vi.fn(async (message: WeixinMessage) => {
+        started.push(getText(message));
+      }),
+    });
+
+    try {
+      await inbox.enqueueBatch([
+        makeMessage("nine", { message_id: 9 }),
+        makeMessage("ten", { message_id: 10 }),
+      ]);
+      inbox.scheduleProcessing();
+
+      await waitForCondition(() => started.length === 2);
+      expect(started).toEqual(["nine", "ten"]);
     } finally {
       inbox.stop();
     }
@@ -268,6 +317,83 @@ describe("createInboundInbox", () => {
       inbox.stop();
     }
   });
+
+  it("shares ordinary and approval limits across overlapping inbox instances", async () => {
+    const gate = createDeferred();
+    const started: string[] = [];
+    const processor = vi.fn(async (message: WeixinMessage) => {
+      started.push(getText(message));
+      await gate.promise;
+    });
+    const inboxA = createInboundInbox({
+      accountId: "acc-shared-capacity",
+      aLog: createLogger(),
+      processMessage: processor,
+    });
+    const inboxB = createInboundInbox({
+      accountId: "acc-shared-capacity",
+      aLog: createLogger(),
+      processMessage: processor,
+    });
+
+    try {
+      await inboxA.enqueueBatch([
+        makeMessage("one", { message_id: 71 }),
+        makeMessage("two", { message_id: 72 }),
+        makeMessage("three", { message_id: 73 }),
+        makeMessage("four", { message_id: 74 }),
+        makeMessage("five", { message_id: 75 }),
+        makeMessage("/approve plugin:first deny", { message_id: 76 }),
+        makeMessage("/approve plugin:second deny", { message_id: 77 }),
+      ]);
+      inboxA.scheduleProcessing();
+      inboxB.scheduleProcessing();
+
+      await waitForCondition(() => started.length === 5);
+      await delay(30);
+      expect(started.filter((text) => !text.startsWith("/approve"))).toHaveLength(4);
+      expect(started.filter((text) => text.startsWith("/approve"))).toHaveLength(1);
+
+      gate.resolve();
+      await waitForCondition(() => listDoneFiles("acc-shared-capacity").length === 7);
+    } finally {
+      gate.resolve();
+      inboxA.stop();
+      inboxB.stop();
+    }
+  });
+
+  it("retains all recent tombstones for replay suppression", async () => {
+    const processed: string[] = [];
+    const inbox = createInboundInbox({
+      accountId: "acc-tombstones",
+      aLog: createLogger(),
+      processMessage: vi.fn(async (message: WeixinMessage) => {
+        processed.push(getText(message));
+      }),
+    });
+    const messages = Array.from({ length: 33 }, (_, index) =>
+      makeMessage(`message-${index}`, { message_id: 100 + index }),
+    );
+
+    try {
+      await inbox.enqueueBatch(messages);
+      inbox.scheduleProcessing();
+      await waitForCondition(
+        () => listDoneFiles("acc-tombstones").length === messages.length,
+        5_000,
+      );
+
+      await inbox.enqueueBatch([messages[0]]);
+      inbox.scheduleProcessing();
+      await delay(30);
+
+      expect(processed).toHaveLength(messages.length);
+      expect(listDoneFiles("acc-tombstones")).toHaveLength(messages.length);
+    } finally {
+      inbox.stop();
+    }
+  });
 });
 
 function makeMessage(text: string, overrides: Partial<WeixinMessage> = {}): WeixinMessage {
@@ -321,6 +447,12 @@ function createDeferred(): { promise: Promise<void>; resolve: () => void } {
 
 async function delay(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function flushMicrotasks(): Promise<void> {
+  for (let index = 0; index < 5; index += 1) {
+    await Promise.resolve();
+  }
 }
 
 async function waitForCondition(

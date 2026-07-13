@@ -6,13 +6,11 @@ import { MessageItemType, type WeixinMessage } from "../api/types.js";
 import { resolveStateDir } from "../storage/state-dir.js";
 import type { Logger } from "../util/logger.js";
 
-const DEFAULT_ORDINARY_CONCURRENCY = 4;
-const APPROVAL_CONCURRENCY = 1;
-const DEFAULT_RETRY_BASE_MS = 1_000;
-const DEFAULT_RETRY_MAX_MS = 30_000;
-const DEFAULT_MAX_DONE_RECORDS = 32;
-const DEFAULT_MAX_DONE_AGE_MS = 24 * 60 * 60 * 1000;
-const ACTIVE_RECORDS_SYMBOL = Symbol.for("openclaw-weixin.inbound-inbox.active-records");
+const ORDINARY_CONCURRENCY = 4;
+const RETRY_BASE_MS = 1_000;
+const RETRY_MAX_MS = 30_000;
+const DONE_RETENTION_MS = 24 * 60 * 60 * 1000;
+const SHARED_STATE_SYMBOL = Symbol.for("openclaw-weixin.inbound-inbox.shared-state");
 
 type InboxKind = "ordinary" | "approval";
 type PendingEntry = {
@@ -21,44 +19,52 @@ type PendingEntry = {
   donePath: string;
 };
 
-export type InboundInboxRecord = {
+type InboundInboxRecord = {
   id: string;
-  enqueuedAt: string;
   message: WeixinMessage;
 };
 
-export type CreateInboundInboxOpts = {
+type CreateInboundInboxOpts = {
   accountId: string;
   aLog: Logger;
   processMessage: (message: WeixinMessage) => Promise<void>;
-  ordinaryConcurrency?: number;
-  retryBaseMs?: number;
-  retryMaxMs?: number;
-  maxDoneRecords?: number;
-  maxDoneAgeMs?: number;
 };
 
-export type InboundInbox = {
+type InboundInbox = {
   enqueueBatch(messages: WeixinMessage[]): Promise<void>;
   scheduleProcessing(): void;
   stop(): void;
 };
 
-type GlobalWithActiveRecords = typeof globalThis & {
-  [ACTIVE_RECORDS_SYMBOL]?: Set<string>;
+type RecordState = {
+  kind?: InboxKind;
+  active: boolean;
+  processed: boolean;
+  retryAttempts: number;
+  blockedUntil: number;
+};
+
+type SharedInboxState = {
+  records: Map<string, RecordState>;
+  managers: Set<InboundInbox>;
+  wakeTimer?: ReturnType<typeof setTimeout>;
+};
+
+type GlobalWithInboxState = typeof globalThis & {
+  [SHARED_STATE_SYMBOL]?: Map<string, SharedInboxState>;
 };
 
 export function resolveInboundInboxDir(accountId: string): string {
   return path.join(resolveStateDir(), "openclaw-weixin", "inbox", accountId);
 }
 
-export function getInboundInboxRecordId(message: WeixinMessage): string {
+function getInboundInboxRecordId(message: WeixinMessage): string {
   if (message.message_id != null) return `msg-${message.message_id}`;
   if (message.seq != null) return `seq-${message.seq}`;
   return `sha-${createHash("sha256").update(stableStringify(message)).digest("hex").slice(0, 24)}`;
 }
 
-export function isApprovalMessage(message: WeixinMessage): boolean {
+function isApprovalMessage(message: WeixinMessage): boolean {
   const textBody = extractTextBody(message.item_list).trim();
   return /^\/approve(?:\s|$)/i.test(textBody) && /\bplugin:/i.test(textBody);
 }
@@ -67,10 +73,15 @@ export function createInboundInbox(opts: CreateInboundInboxOpts): InboundInbox {
   return new LocalInboundInbox(opts);
 }
 
-function getActiveRecords(): Set<string> {
-  const globalState = globalThis as GlobalWithActiveRecords;
-  globalState[ACTIVE_RECORDS_SYMBOL] ??= new Set<string>();
-  return globalState[ACTIVE_RECORDS_SYMBOL];
+function getSharedInboxState(inboxDir: string): SharedInboxState {
+  const globalState = globalThis as GlobalWithInboxState;
+  globalState[SHARED_STATE_SYMBOL] ??= new Map<string, SharedInboxState>();
+  let state = globalState[SHARED_STATE_SYMBOL].get(inboxDir);
+  if (!state) {
+    state = { records: new Map(), managers: new Set() };
+    globalState[SHARED_STATE_SYMBOL].set(inboxDir, state);
+  }
+  return state;
 }
 
 function stableStringify(value: unknown): string {
@@ -105,31 +116,19 @@ function formatError(err: unknown): string {
 
 class LocalInboundInbox implements InboundInbox {
   private readonly inboxDir: string;
-  private readonly ordinaryConcurrency: number;
-  private readonly retryBaseMs: number;
-  private readonly retryMaxMs: number;
-  private readonly maxDoneRecords: number;
-  private readonly maxDoneAgeMs: number;
-  private ordinaryActive = 0;
-  private approvalActive = 0;
+  private readonly sharedState: SharedInboxState;
   private pumpQueued = false;
   private stopped = false;
-  private readonly retryAttempts = new Map<string, number>();
-  private readonly retryBlockedUntil = new Map<string, number>();
-  private readonly retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(private readonly opts: CreateInboundInboxOpts) {
     this.inboxDir = resolveInboundInboxDir(opts.accountId);
-    this.ordinaryConcurrency = opts.ordinaryConcurrency ?? DEFAULT_ORDINARY_CONCURRENCY;
-    this.retryBaseMs = opts.retryBaseMs ?? DEFAULT_RETRY_BASE_MS;
-    this.retryMaxMs = opts.retryMaxMs ?? DEFAULT_RETRY_MAX_MS;
-    this.maxDoneRecords = opts.maxDoneRecords ?? DEFAULT_MAX_DONE_RECORDS;
-    this.maxDoneAgeMs = opts.maxDoneAgeMs ?? DEFAULT_MAX_DONE_AGE_MS;
     try {
       fs.mkdirSync(this.inboxDir, { recursive: true });
     } catch (err) {
       throw new Error(`Failed to initialize inbound inbox ${this.inboxDir}: ${formatError(err)}`);
     }
+    this.sharedState = getSharedInboxState(this.inboxDir);
+    this.sharedState.managers.add(this);
   }
 
   async enqueueBatch(messages: WeixinMessage[]): Promise<void> {
@@ -144,19 +143,21 @@ class LocalInboundInbox implements InboundInbox {
     queueMicrotask(() => {
       this.pumpQueued = false;
       if (this.stopped) return;
-      void this.pump().catch((err) => {
+      try {
+        this.pump();
+      } catch (err) {
         this.opts.aLog.error(`Inbound inbox pump failed: ${formatError(err)}`);
-      });
+      }
     });
   }
 
   stop(): void {
     this.stopped = true;
-    for (const timer of this.retryTimers.values()) {
-      clearTimeout(timer);
+    this.sharedState.managers.delete(this);
+    if (this.sharedState.managers.size === 0 && this.sharedState.wakeTimer) {
+      clearTimeout(this.sharedState.wakeTimer);
+      this.sharedState.wakeTimer = undefined;
     }
-    this.retryTimers.clear();
-    this.retryBlockedUntil.clear();
   }
 
   private persistRecord(message: WeixinMessage): void {
@@ -168,7 +169,6 @@ class LocalInboundInbox implements InboundInbox {
     );
     const record: InboundInboxRecord = {
       id: entry.id,
-      enqueuedAt: new Date().toISOString(),
       message,
     };
     try {
@@ -182,133 +182,165 @@ class LocalInboundInbox implements InboundInbox {
     }
   }
 
-  private async pump(): Promise<void> {
+  private pump(): void {
     this.pruneDoneTombstones();
     for (const entry of this.listPendingEntries()) {
       if (this.stopped) return;
-      if (this.ordinaryActive >= this.ordinaryConcurrency && this.approvalActive >= APPROVAL_CONCURRENCY) {
+      if (
+        this.getActiveCount("ordinary") >= ORDINARY_CONCURRENCY &&
+        this.getActiveCount("approval") >= 1
+      ) {
         return;
       }
-      const blockedUntil = this.retryBlockedUntil.get(entry.pendingPath);
-      if (blockedUntil != null && blockedUntil > Date.now()) continue;
-      if (getActiveRecords().has(entry.pendingPath)) continue;
-      let record: InboundInboxRecord;
-      try {
-        record = this.readRecord(entry);
-      } catch (err) {
-        this.opts.aLog.error(`Failed to read inbound inbox record ${entry.id}: ${formatError(err)}`);
-        this.scheduleRetry(entry.pendingPath);
-        continue;
+      const state = this.sharedState.records.get(entry.pendingPath);
+      if (state?.active || (state?.blockedUntil ?? 0) > Date.now()) continue;
+
+      let record: InboundInboxRecord | undefined;
+      if (!state?.processed) {
+        try {
+          record = this.readRecord(entry);
+        } catch (err) {
+          this.opts.aLog.error(`Failed to read inbound inbox record ${entry.id}: ${formatError(err)}`);
+          this.scheduleRetry(state ?? this.createRecordState(entry.pendingPath));
+          continue;
+        }
       }
-      const kind: InboxKind = isApprovalMessage(record.message) ? "approval" : "ordinary";
-      if (kind === "approval") {
-        if (this.approvalActive >= APPROVAL_CONCURRENCY) continue;
-      } else if (this.ordinaryActive >= this.ordinaryConcurrency) {
-        continue;
+      let kind = state?.kind;
+      if (!kind) {
+        if (!record) {
+          throw new Error(`Missing payload for unclassified inbound record ${entry.id}`);
+        }
+        kind = isApprovalMessage(record.message) ? "approval" : "ordinary";
       }
-      this.startProcessing(entry, record, kind);
+      const concurrency = kind === "approval" ? 1 : ORDINARY_CONCURRENCY;
+      if (this.getActiveCount(kind) >= concurrency) continue;
+
+      const nextState = state ?? this.createRecordState(entry.pendingPath);
+      nextState.kind = kind;
+      this.startProcessing(entry, record, nextState);
     }
+    this.scheduleWake();
   }
 
-  private startProcessing(entry: PendingEntry, record: InboundInboxRecord, kind: InboxKind): void {
-    getActiveRecords().add(entry.pendingPath);
-    if (kind === "approval") {
-      this.approvalActive += 1;
-    } else {
-      this.ordinaryActive += 1;
-    }
-    void this.runRecord(entry, record, kind);
+  private startProcessing(
+    entry: PendingEntry,
+    record: InboundInboxRecord | undefined,
+    state: RecordState,
+  ): void {
+    state.active = true;
+    void this.runRecord(entry, record, state);
   }
 
   private async runRecord(
     entry: PendingEntry,
-    record: InboundInboxRecord,
-    kind: InboxKind,
+    record: InboundInboxRecord | undefined,
+    state: RecordState,
   ): Promise<void> {
     try {
+      if (!state.processed) {
+        if (!record) {
+          throw new Error(`Missing payload for unprocessed inbound record ${entry.id}`);
+        }
+        try {
+          await this.opts.processMessage(record.message);
+          state.processed = true;
+        } catch (err) {
+          this.opts.aLog.error(`Failed to process inbound record ${entry.id}: ${formatError(err)}`);
+          this.scheduleRetry(state);
+          return;
+        }
+      }
       try {
-        await this.opts.processMessage(record.message);
+        this.markDone(entry);
+        this.sharedState.records.delete(entry.pendingPath);
+        this.scheduleWake();
       } catch (err) {
-        this.opts.aLog.error(`Failed to process inbound record ${record.id}: ${formatError(err)}`);
-        this.scheduleRetry(entry.pendingPath);
-        return;
+        this.opts.aLog.error(`Failed to finalize inbound record ${entry.id}: ${formatError(err)}`);
+        this.scheduleRetry(state);
       }
-      await this.finalizeRecord(entry);
     } finally {
-      getActiveRecords().delete(entry.pendingPath);
-      if (kind === "approval") {
-        this.approvalActive -= 1;
-      } else {
-        this.ordinaryActive -= 1;
-      }
-      if (!this.stopped) {
-        this.scheduleProcessing();
-      }
+      state.active = false;
+      this.wakeManagers();
     }
   }
 
-  private async finalizeRecord(entry: PendingEntry): Promise<void> {
-    let attempt = 0;
-    while (true) {
-      try {
-        this.markDone(entry);
-        return;
-      } catch (err) {
-        attempt += 1;
-        const delayMs = Math.min(this.retryBaseMs * 2 ** (attempt - 1), this.retryMaxMs);
-        this.opts.aLog.error(
-          `Failed to finalize inbound record ${entry.id}; retrying in ${delayMs}ms: ${formatError(err)}`,
-        );
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
+  private getActiveCount(kind: InboxKind): number {
+    let count = 0;
+    for (const state of this.sharedState.records.values()) {
+      if (state.active && state.kind === kind) {
+        count += 1;
       }
     }
+    return count;
+  }
+
+  private createRecordState(pendingPath: string): RecordState {
+    const state: RecordState = {
+      active: false,
+      processed: false,
+      retryAttempts: 0,
+      blockedUntil: 0,
+    };
+    this.sharedState.records.set(pendingPath, state);
+    return state;
   }
 
   private markDone(entry: PendingEntry): void {
     try {
       fs.renameSync(entry.pendingPath, entry.donePath);
     } catch (err) {
-      if (!fs.existsSync(entry.pendingPath) && fs.existsSync(entry.donePath)) return;
+      if (!fs.existsSync(entry.pendingPath) && fs.existsSync(entry.donePath)) {
+        return;
+      }
       throw new Error(`Failed to finalize inbound record ${entry.id}: ${formatError(err)}`);
     }
-    this.clearRetry(entry.pendingPath);
-    this.pruneDoneTombstones();
   }
 
-  private scheduleRetry(pendingPath: string): void {
-    if (this.stopped) return;
-    const attempt = (this.retryAttempts.get(pendingPath) ?? 0) + 1;
-    this.retryAttempts.set(pendingPath, attempt);
-    const delayMs = Math.min(this.retryBaseMs * 2 ** (attempt - 1), this.retryMaxMs);
-    this.retryBlockedUntil.set(pendingPath, Date.now() + delayMs);
-    const existingTimer = this.retryTimers.get(pendingPath);
-    if (existingTimer) clearTimeout(existingTimer);
-    const timer = setTimeout(() => {
-      this.retryTimers.delete(pendingPath);
-      this.retryBlockedUntil.delete(pendingPath);
-      this.scheduleProcessing();
-    }, delayMs);
-    this.retryTimers.set(pendingPath, timer);
+  private scheduleRetry(state: RecordState): void {
+    state.retryAttempts += 1;
+    const delayMs = Math.min(
+      RETRY_BASE_MS * 2 ** (state.retryAttempts - 1),
+      RETRY_MAX_MS,
+    );
+    state.blockedUntil = Date.now() + delayMs;
+    this.scheduleWake();
   }
 
-  private clearRetry(pendingPath: string): void {
-    this.retryAttempts.delete(pendingPath);
-    this.retryBlockedUntil.delete(pendingPath);
-    const timer = this.retryTimers.get(pendingPath);
-    if (timer) {
-      clearTimeout(timer);
-      this.retryTimers.delete(pendingPath);
+  private scheduleWake(): void {
+    if (this.sharedState.wakeTimer) {
+      clearTimeout(this.sharedState.wakeTimer);
+      this.sharedState.wakeTimer = undefined;
+    }
+    if (this.sharedState.managers.size === 0) return;
+
+    const now = Date.now();
+    let nextWake = Number.POSITIVE_INFINITY;
+    for (const state of this.sharedState.records.values()) {
+      if (state.blockedUntil > now && state.blockedUntil < nextWake) {
+        nextWake = state.blockedUntil;
+      }
+    }
+    if (!Number.isFinite(nextWake)) return;
+
+    this.sharedState.wakeTimer = setTimeout(() => {
+      this.sharedState.wakeTimer = undefined;
+      this.wakeManagers();
+    }, nextWake - now);
+  }
+
+  private wakeManagers(): void {
+    for (const manager of this.sharedState.managers) {
+      manager.scheduleProcessing();
     }
   }
 
   private readRecord(entry: PendingEntry): InboundInboxRecord {
     const parsed = JSON.parse(fs.readFileSync(entry.pendingPath, "utf-8")) as Partial<InboundInboxRecord>;
-    if (parsed.id !== entry.id || typeof parsed.enqueuedAt !== "string" || parsed.message == null) {
+    if (parsed.id !== entry.id || parsed.message == null) {
       throw new Error(`Invalid inbox record payload at ${entry.pendingPath}`);
     }
     return {
       id: parsed.id,
-      enqueuedAt: parsed.enqueuedAt,
       message: parsed.message as WeixinMessage,
     };
   }
@@ -329,28 +361,22 @@ class LocalInboundInbox implements InboundInbox {
     return fs
       .readdirSync(this.inboxDir)
       .filter((name) => name.endsWith(".pending.json"))
-      .sort((left, right) => left.localeCompare(right))
+      .sort((left, right) => left.localeCompare(right, "en", { numeric: true }))
       .map((name) => this.getEntry(name.slice(0, -".pending.json".length)));
   }
 
   private pruneDoneTombstones(): void {
     const now = Date.now();
-    const doneFiles = fs
-      .readdirSync(this.inboxDir)
-      .filter((name) => name.endsWith(".done.json"))
-      .map((name) => {
-        const filePath = path.join(this.inboxDir, name);
-        return { filePath, stat: fs.statSync(filePath) };
-      })
-      .sort((left, right) => right.stat.mtimeMs - left.stat.mtimeMs);
-    doneFiles.forEach(({ filePath, stat }, index) => {
-      if (index < this.maxDoneRecords && now - stat.mtimeMs <= this.maxDoneAgeMs) return;
+    for (const name of fs.readdirSync(this.inboxDir)) {
+      if (!name.endsWith(".done.json")) continue;
+      const filePath = path.join(this.inboxDir, name);
       try {
+        if (now - fs.statSync(filePath).mtimeMs <= DONE_RETENTION_MS) continue;
         fs.unlinkSync(filePath);
       } catch (err) {
         this.opts.aLog.warn(`Failed to prune inbound tombstone ${filePath}: ${formatError(err)}`);
       }
-    });
+    }
   }
 
   private cleanupTempFile(tempPath: string): void {
