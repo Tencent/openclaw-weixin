@@ -254,10 +254,9 @@ class LocalInboundInbox implements InboundInbox {
           throw new Error(`Missing payload for unprocessed inbound record ${entry.id}`);
         }
         try {
-          const durableInboundLifecycle =
-            state.kind === "ordinary" && this.opts.durableQueueAdmissionSupported
-              ? this.createDurableInboundLifecycle(entry, state)
-              : undefined;
+          const durableInboundLifecycle = this.opts.durableQueueAdmissionSupported
+            ? this.createDurableInboundLifecycle(entry, state)
+            : undefined;
           await this.opts.processMessage(record.message, durableInboundLifecycle);
           if (state.queued || state.processed) return;
           state.processed = true;

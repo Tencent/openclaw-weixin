@@ -427,7 +427,7 @@ describe("createInboundInbox", () => {
     }
   });
 
-  it("starts approval work while ordinary capacity is saturated", async () => {
+  it("starts approval work with durable admission while ordinary capacity is saturated", async () => {
     const ordinaryGate = createDeferred();
     const approvalGate = createDeferred();
     const started: string[] = [];
@@ -462,7 +462,7 @@ describe("createInboundInbox", () => {
       await waitForCondition(() => started.some((text) => !text.startsWith("/approve")));
       await waitForCondition(() => started.includes("/approve plugin:approval deny"));
       expect(lifecycles.get("one")).toBeDefined();
-      expect(lifecycles.get("/approve plugin:approval deny")).toBeUndefined();
+      expect(lifecycles.get("/approve plugin:approval deny")).toBeDefined();
 
       ordinaryGate.resolve();
       approvalGate.resolve();
