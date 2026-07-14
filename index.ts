@@ -1,8 +1,8 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import { buildChannelConfigSchema } from "openclaw/plugin-sdk/channel-config-schema";
 
-import { weixinPlugin } from "./src/channel.js";
-import { assertHostCompatibility } from "./src/compat.js";
+import { setDurableQueueAdmissionSupported, weixinPlugin } from "./src/channel.js";
+import { assertHostCompatibility, supportsDurableQueueAdmission } from "./src/compat.js";
 import { WeixinConfigSchema } from "./src/config/config-schema.js";
 
 export default {
@@ -12,7 +12,9 @@ export default {
   configSchema: buildChannelConfigSchema(WeixinConfigSchema),
   register(api: OpenClawPluginApi) {
     // Fail-fast: reject incompatible host versions before any side-effects.
-    assertHostCompatibility(api.runtime?.version);
+    const hostVersion = api.runtime?.version;
+    assertHostCompatibility(hostVersion);
+    setDurableQueueAdmissionSupported(supportsDurableQueueAdmission(hostVersion));
 
     api.registerChannel({ plugin: weixinPlugin });
   },

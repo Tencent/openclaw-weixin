@@ -9,6 +9,8 @@
 import { logger } from "./util/logger.js";
 
 export const SUPPORTED_HOST_MIN = "2026.3.22";
+const DURABLE_QUEUE_ADMISSION_VERSION = "2026.7.1";
+const DURABLE_QUEUE_ADMISSION_BETA = 6;
 
 export interface OpenClawVersion {
   year: number;
@@ -45,9 +47,27 @@ export function compareVersions(a: OpenClawVersion, b: OpenClawVersion): -1 | 0 
  * Check whether a host version string is >= SUPPORTED_HOST_MIN.
  */
 export function isHostVersionSupported(hostVersion: string): boolean {
+  return isVersionAtLeast(hostVersion, SUPPORTED_HOST_MIN);
+}
+
+export function supportsDurableQueueAdmission(hostVersion: string | undefined): boolean {
+  if (!hostVersion) return false;
   const host = parseOpenClawVersion(hostVersion);
+  const minimum = parseOpenClawVersion(DURABLE_QUEUE_ADMISSION_VERSION)!;
   if (!host) return false;
-  const min = parseOpenClawVersion(SUPPORTED_HOST_MIN)!;
+  const comparison = compareVersions(host, minimum);
+  if (comparison !== 0) return comparison > 0;
+
+  const prerelease = hostVersion.trim().split("-", 2)[1];
+  if (!prerelease) return true;
+  const beta = /^beta\.(\d+)(?:\b|$)/.exec(prerelease);
+  return beta != null && Number(beta[1]) >= DURABLE_QUEUE_ADMISSION_BETA;
+}
+
+function isVersionAtLeast(version: string, minimum: string): boolean {
+  const host = parseOpenClawVersion(version);
+  if (!host) return false;
+  const min = parseOpenClawVersion(minimum)!;
   return compareVersions(host, min) >= 0;
 }
 

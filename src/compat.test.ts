@@ -4,6 +4,7 @@ import {
   parseOpenClawVersion,
   compareVersions,
   isHostVersionSupported,
+  supportsDurableQueueAdmission,
   assertHostCompatibility,
   SUPPORTED_HOST_MIN,
 } from "./compat.js";
@@ -60,6 +61,24 @@ describe("isHostVersionSupported", () => {
 
   it("rejects garbage input", () => {
     expect(isHostVersionSupported("not-a-version")).toBe(false);
+  });
+});
+
+describe("supportsDurableQueueAdmission", () => {
+  it("rejects hosts without the queue admission fix", () => {
+    expect(supportsDurableQueueAdmission("2026.5.12")).toBe(false);
+    expect(supportsDurableQueueAdmission("2026.6.11")).toBe(false);
+    expect(supportsDurableQueueAdmission("2026.7.1-beta.5")).toBe(false);
+  });
+
+  it("accepts the fixed beta, stable release, and later versions", () => {
+    expect(supportsDurableQueueAdmission("2026.7.1-beta.6")).toBe(true);
+    expect(supportsDurableQueueAdmission("2026.7.1")).toBe(true);
+    expect(supportsDurableQueueAdmission("2026.7.2-beta.1")).toBe(true);
+  });
+
+  it("rejects an unknown host version", () => {
+    expect(supportsDurableQueueAdmission(undefined)).toBe(false);
   });
 });
 

@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MessageItemType, type GetUpdatesResp, type WeixinMessage } from "../api/types.js";
+import type { ProcessMessageDeps } from "../messaging/process-message.js";
 import { getSyncBufFilePath, loadGetUpdatesBuf } from "../storage/sync-buf.js";
 import { resolveInboundInboxDir } from "./inbound-inbox.js";
 
@@ -11,7 +12,8 @@ const getUpdatesMock = vi.fn<(opts: { abortSignal?: AbortSignal }) => Promise<Ge
 const getForUserMock = vi.fn<
   (userId: string, contextToken?: string) => Promise<{ typingTicket: string }>
 >();
-const processOneMessageMock = vi.fn<(message: WeixinMessage, deps: unknown) => Promise<void>>();
+const processOneMessageMock =
+  vi.fn<(message: WeixinMessage, deps: ProcessMessageDeps) => Promise<void>>();
 
 vi.mock("../api/api.js", () => ({
   getUpdates: (opts: { abortSignal?: AbortSignal }) => getUpdatesMock(opts),
@@ -71,6 +73,7 @@ describe("monitorWeixinProvider", () => {
     const abortController = new AbortController();
     const firstRun = createDeferred();
     const started: string[] = [];
+    const processDeps: ProcessMessageDeps[] = [];
     const responses: GetUpdatesResp[] = [
       {
         ret: 0,
@@ -90,14 +93,17 @@ describe("monitorWeixinProvider", () => {
       return await waitForAbort(abortSignal);
     });
     getForUserMock.mockResolvedValue({ typingTicket: "ticket" });
-    processOneMessageMock.mockImplementation(async (message) => {
+    processOneMessageMock.mockImplementation(async (message, deps) => {
       const text = getText(message);
       started.push(text);
+      processDeps.push(deps);
       if (text === "first") {
+        deps.durableInboundLifecycle?.onTurnAdopted();
         await firstRun.promise;
         return;
       }
       abortController.abort();
+      await firstRun.promise;
     });
 
     const monitor = monitorWeixinProvider({
@@ -106,12 +112,15 @@ describe("monitorWeixinProvider", () => {
       accountId: "acc-monitor",
       config: {} as never,
       channelRuntime: {} as never,
+      durableQueueAdmissionSupported: true,
       abortSignal: abortController.signal,
       runtime: { log: vi.fn(), error: vi.fn() },
     });
 
     try {
       await waitForCondition(() => started.includes("first") && started.includes("second"));
+      expect(processDeps).toHaveLength(2);
+      expect(processDeps.every((deps) => deps.durableInboundLifecycle !== undefined)).toBe(true);
       expect(loadGetUpdatesBuf(getSyncBufFilePath("acc-monitor"))).toBe("cursor-2");
       const inboxFiles = fs.readdirSync(resolveInboundInboxDir("acc-monitor"));
       expect(inboxFiles.some((name) => name.endsWith(".pending.json"))).toBe(true);

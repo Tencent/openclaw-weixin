@@ -152,6 +152,12 @@ async function sendWeixinOutbound(params: {
   }
 }
 
+let durableQueueAdmissionSupported = false;
+
+export function setDurableQueueAdmissionSupported(supported: boolean): void {
+  durableQueueAdmissionSupported = supported;
+}
+
 export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
   id: "openclaw-weixin",
   meta: {
@@ -463,6 +469,7 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
         config: ctx.cfg,
         runtime: ctx.runtime,
         channelRuntime: ctx.channelRuntime as unknown as PluginRuntime["channel"],
+        durableQueueAdmissionSupported,
         abortSignal: ctx.abortSignal,
         setStatus: ctx.setStatus,
       });

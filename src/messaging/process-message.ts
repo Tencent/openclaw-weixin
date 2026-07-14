@@ -38,6 +38,19 @@ import { handleSlashCommand } from "./slash-commands.js";
 
 const MEDIA_OUTBOUND_TEMP_DIR = path.join(resolvePreferredOpenClawTmpDir(), "weixin/media/outbound-temp");
 
+export type DurableInboundLifecycle = {
+  onEnqueued: () => void;
+  onComplete: () => void;
+  onTurnAdopted: () => void;
+};
+
+type DispatchReplyOptions = NonNullable<
+  Parameters<PluginRuntime["channel"]["reply"]["dispatchReplyFromConfig"]>[0]["replyOptions"]
+> & {
+  /** Added after the current stable SDK; beta.6 uses it to confirm transcript adoption. */
+  onTurnAdopted?: () => void | Promise<void>;
+};
+
 /** Dependencies for processOneMessage, injected by the monitor loop. */
 export type ProcessMessageDeps = {
   accountId: string;
@@ -49,6 +62,7 @@ export type ProcessMessageDeps = {
   typingTicket?: string;
   log: (msg: string) => void;
   errLog: (m: string) => void;
+  durableInboundLifecycle?: DurableInboundLifecycle;
 };
 
 /** Extract text body from item_list (for slash command detection). */
@@ -446,6 +460,18 @@ export async function processOneMessage(
       },
     });
 
+  const dispatchReplyOptions: DispatchReplyOptions = {
+    ...replyOptions,
+    ...(replyProgressSender?.replyOptions ?? {}),
+    ...(deps.durableInboundLifecycle
+      ? {
+          queuedFollowupLifecycle: deps.durableInboundLifecycle,
+          onTurnAdopted: deps.durableInboundLifecycle.onTurnAdopted,
+        }
+      : {}),
+    disableBlockStreaming: true,
+  };
+
   logger.debug(`dispatchReplyFromConfig: starting agentId=${route.agentId ?? "(none)"}`);
   try {
     await deps.channelRuntime.reply.withReplyDispatcher({
@@ -455,11 +481,7 @@ export async function processOneMessage(
           ctx: finalized,
           cfg: deps.config,
           dispatcher,
-          replyOptions: {
-            ...replyOptions,
-            ...(replyProgressSender?.replyOptions ?? {}),
-            disableBlockStreaming: true,
-          },
+          replyOptions: dispatchReplyOptions,
         }),
     });
     logger.debug(`dispatchReplyFromConfig: done agentId=${route.agentId ?? "(none)"}`);

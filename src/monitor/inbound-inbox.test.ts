@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MessageItemType, type WeixinMessage } from "../api/types.js";
+import type { DurableInboundLifecycle } from "../messaging/process-message.js";
 import { createInboundInbox, resolveInboundInboxDir } from "./inbound-inbox.js";
 
 const TEST_STATE_ROOT = path.join(process.cwd(), ".vitest-state");
@@ -35,12 +36,12 @@ describe("createInboundInbox", () => {
       started.push(getText(message));
       await gate.promise;
     });
-    const inboxA = createInboundInbox({
+    const inboxA = createModernInboundInbox({
       accountId: "acc-overlap",
       aLog: createLogger(),
       processMessage: processor,
     });
-    const inboxB = createInboundInbox({
+    const inboxB = createModernInboundInbox({
       accountId: "acc-overlap",
       aLog: createLogger(),
       processMessage: processor,
@@ -65,13 +66,13 @@ describe("createInboundInbox", () => {
   });
 
   it("replays pending records when a new inbox instance starts", async () => {
-    const seedInbox = createInboundInbox({
+    const seedInbox = createModernInboundInbox({
       accountId: "acc-replay",
       aLog: createLogger(),
       processMessage: vi.fn(async () => {}),
     });
     const replayed: string[] = [];
-    const replayInbox = createInboundInbox({
+    const replayInbox = createModernInboundInbox({
       accountId: "acc-replay",
       aLog: createLogger(),
       processMessage: vi.fn(async (message: WeixinMessage) => {
@@ -93,7 +94,7 @@ describe("createInboundInbox", () => {
 
   it("retains a done tombstone and suppresses replay after success", async () => {
     const processed: string[] = [];
-    const inbox = createInboundInbox({
+    const inbox = createModernInboundInbox({
       accountId: "acc-done",
       aLog: createLogger(),
       processMessage: vi.fn(async (message: WeixinMessage) => {
@@ -122,44 +123,55 @@ describe("createInboundInbox", () => {
   it("shares retry backoff across overlapping inbox instances", async () => {
     vi.useFakeTimers();
     const aLog = createLogger();
-    let attempts = 0;
-    const processor = vi.fn(async () => {
-      attempts += 1;
-      if (attempts === 1) {
+    let retryAttempts = 0;
+    const started: string[] = [];
+    const processor = vi.fn(async (message: WeixinMessage) => {
+      const text = getText(message);
+      started.push(text);
+      if (text === "retry" && ++retryAttempts === 1) {
         throw new Error("retry me");
       }
     });
-    const inboxA = createInboundInbox({
+    const inboxA = createModernInboundInbox({
       accountId: "acc-retry",
       aLog,
       processMessage: processor,
     });
-    const inboxB = createInboundInbox({
+    const inboxB = createModernInboundInbox({
       accountId: "acc-retry",
       aLog,
       processMessage: processor,
     });
 
     try {
-      await inboxA.enqueueBatch([makeMessage("retry", { message_id: 41 })]);
+      await inboxA.enqueueBatch([
+        makeMessage("retry", { message_id: 41 }),
+        makeMessage("later", { message_id: 42 }),
+        makeMessage("/approve plugin:retry deny", { message_id: 43 }),
+      ]);
       inboxA.scheduleProcessing();
       inboxB.scheduleProcessing();
       await flushMicrotasks();
 
-      expect(attempts).toBe(1);
-      expect(listPendingFiles("acc-retry")).toHaveLength(1);
+      expect(started).toEqual(["retry", "/approve plugin:retry deny"]);
+      expect(listPendingFiles("acc-retry")).toHaveLength(2);
 
       inboxB.scheduleProcessing();
       await flushMicrotasks();
-      expect(attempts).toBe(1);
+      expect(started).toEqual(["retry", "/approve plugin:retry deny"]);
 
       await vi.advanceTimersByTimeAsync(999);
-      expect(attempts).toBe(1);
+      expect(retryAttempts).toBe(1);
 
       await vi.advanceTimersByTimeAsync(1);
       await flushMicrotasks();
-      expect(attempts).toBe(2);
-      expect(listDoneFiles("acc-retry")).toHaveLength(1);
+      expect(started).toEqual([
+        "retry",
+        "/approve plugin:retry deny",
+        "retry",
+        "later",
+      ]);
+      expect(listDoneFiles("acc-retry")).toHaveLength(3);
       expect(aLog.error).toHaveBeenCalledWith(expect.stringContaining("Failed to process inbound record"));
     } finally {
       inboxA.stop();
@@ -174,7 +186,7 @@ describe("createInboundInbox", () => {
     const processor = vi.fn(async () => {
       await processGate.promise;
     });
-    const inboxA = createInboundInbox({
+    const inboxA = createModernInboundInbox({
       accountId: "acc-finalize",
       aLog,
       processMessage: processor,
@@ -200,7 +212,7 @@ describe("createInboundInbox", () => {
       inboxA.scheduleProcessing();
 
       await waitForCondition(() => processor.mock.calls.length === 1);
-      inboxB = createInboundInbox({
+      inboxB = createModernInboundInbox({
         accountId: "acc-finalize",
         aLog,
         processMessage: processor,
@@ -223,7 +235,7 @@ describe("createInboundInbox", () => {
 
   it("preserves numeric message order when dispatching pending records", async () => {
     const started: string[] = [];
-    const inbox = createInboundInbox({
+    const inbox = createModernInboundInbox({
       accountId: "acc-order",
       aLog: createLogger(),
       processMessage: vi.fn(async (message: WeixinMessage) => {
@@ -245,33 +257,173 @@ describe("createInboundInbox", () => {
     }
   });
 
-  it("allows ordinary messages to overlap", async () => {
-    const gate = createDeferred();
+  it("keeps ordinary work serial without durable queue admission", async () => {
+    const ordinaryGate = createDeferred();
     const started: string[] = [];
+    const lifecycles = new Map<string, DurableInboundLifecycle | undefined>();
     const inbox = createInboundInbox({
-      accountId: "acc-ordinary",
+      accountId: "acc-legacy",
       aLog: createLogger(),
-      processMessage: vi.fn(async (message: WeixinMessage) => {
-        started.push(getText(message));
-        await gate.promise;
-      }),
+      durableQueueAdmissionSupported: false,
+      processMessage: vi.fn(
+        async (message: WeixinMessage, lifecycle?: DurableInboundLifecycle) => {
+          const text = getText(message);
+          started.push(text);
+          lifecycles.set(text, lifecycle);
+          if (!text.startsWith("/approve")) {
+            await ordinaryGate.promise;
+          }
+        },
+      ),
     });
 
     try {
       await inbox.enqueueBatch([
-        makeMessage("one", { message_id: 51 }),
-        makeMessage("two", { message_id: 52 }),
+        makeMessage("first", { message_id: 53 }),
+        makeMessage("second", { message_id: 54 }),
+        makeMessage("/approve plugin:legacy deny", { message_id: 55 }),
+      ]);
+      inbox.scheduleProcessing();
+
+      await waitForCondition(
+        () => started.includes("first") && started.includes("/approve plugin:legacy deny"),
+      );
+      await delay(30);
+      expect(started).not.toContain("second");
+      expect([...lifecycles.values()].every((lifecycle) => lifecycle === undefined)).toBe(true);
+
+      ordinaryGate.resolve();
+      await waitForCondition(() => started.includes("second"));
+      await waitForCondition(() => listDoneFiles("acc-legacy").length === 3);
+    } finally {
+      ordinaryGate.resolve();
+      inbox.stop();
+    }
+  });
+
+  it("completes an adopted turn without waiting for its handler to settle", async () => {
+    const handlerGate = createDeferred();
+    const started: string[] = [];
+    let firstHandlerSettled = false;
+    const inbox = createModernInboundInbox({
+      accountId: "acc-adopted",
+      aLog: createLogger(),
+      processMessage: vi.fn(
+        async (message: WeixinMessage, lifecycle?: DurableInboundLifecycle) => {
+          const text = getText(message);
+          started.push(text);
+          lifecycle?.onTurnAdopted();
+          if (text === "first") {
+            await handlerGate.promise;
+            firstHandlerSettled = true;
+          }
+        },
+      ),
+    });
+
+    try {
+      await inbox.enqueueBatch([
+        makeMessage("first", { message_id: 56 }),
+        makeMessage("second", { message_id: 57 }),
+      ]);
+      inbox.scheduleProcessing();
+
+      await waitForCondition(() => listDoneFiles("acc-adopted").length === 2);
+      expect(started).toEqual(["first", "second"]);
+      expect(firstHandlerSettled).toBe(false);
+
+      handlerGate.resolve();
+      await waitForCondition(() => firstHandlerSettled);
+    } finally {
+      handlerGate.resolve();
+      inbox.stop();
+    }
+  });
+
+  it("keeps queued follow-ups pending while releasing their ordinary slot", async () => {
+    const ordinaryGate = createDeferred();
+    const started: string[] = [];
+    let queuedLifecycle: DurableInboundLifecycle | undefined;
+    const inbox = createModernInboundInbox({
+      accountId: "acc-followup",
+      aLog: createLogger(),
+      processMessage: vi.fn(
+        async (message: WeixinMessage, lifecycle?: DurableInboundLifecycle) => {
+          const text = getText(message);
+          started.push(text);
+          if (text === "queued") {
+            queuedLifecycle = lifecycle;
+            lifecycle?.onEnqueued();
+            return;
+          }
+          await ordinaryGate.promise;
+        },
+      ),
+    });
+
+    try {
+      await inbox.enqueueBatch([
+        makeMessage("queued", { message_id: 58 }),
+        makeMessage("ordinary", { message_id: 59 }),
       ]);
       inbox.scheduleProcessing();
 
       await waitForCondition(() => started.length === 2);
-      expect(started).toEqual(expect.arrayContaining(["one", "two"]));
+      expect(queuedLifecycle).toBeDefined();
+      expect(listPendingFiles("acc-followup")).toHaveLength(2);
+      expect(listDoneFiles("acc-followup")).toEqual([]);
 
-      gate.resolve();
-      await waitForCondition(() => listDoneFiles("acc-ordinary").length === 2);
+      queuedLifecycle?.onComplete();
+      await waitForCondition(() => listDoneFiles("acc-followup").length === 1);
+      expect(listPendingFiles("acc-followup")).toHaveLength(1);
+
+      ordinaryGate.resolve();
+      await waitForCondition(() => listDoneFiles("acc-followup").length === 2);
     } finally {
-      gate.resolve();
+      ordinaryGate.resolve();
       inbox.stop();
+    }
+  });
+
+  it("replays a queued follow-up after process-local ownership is lost", async () => {
+    let queuedLifecycle: DurableInboundLifecycle | undefined;
+    const initialProcessor = vi.fn(
+      async (_message: WeixinMessage, lifecycle?: DurableInboundLifecycle) => {
+        queuedLifecycle = lifecycle;
+        lifecycle?.onEnqueued();
+      },
+    );
+    const initialInbox = createModernInboundInbox({
+      accountId: "acc-followup-restart",
+      aLog: createLogger(),
+      processMessage: initialProcessor,
+    });
+    let replayInbox: ReturnType<typeof createInboundInbox> | undefined;
+
+    try {
+      await initialInbox.enqueueBatch([makeMessage("queued", { message_id: 66 })]);
+      initialInbox.scheduleProcessing();
+      await waitForCondition(() => queuedLifecycle !== undefined);
+      expect(listPendingFiles("acc-followup-restart")).toHaveLength(1);
+      expect(listDoneFiles("acc-followup-restart")).toEqual([]);
+
+      initialInbox.stop();
+      delete (globalThis as Record<PropertyKey, unknown>)[SHARED_STATE_SYMBOL];
+
+      const replayProcessor = vi.fn(async () => {});
+      replayInbox = createModernInboundInbox({
+        accountId: "acc-followup-restart",
+        aLog: createLogger(),
+        processMessage: replayProcessor,
+      });
+      replayInbox.scheduleProcessing();
+
+      await waitForCondition(() => listDoneFiles("acc-followup-restart").length === 1);
+      expect(initialProcessor).toHaveBeenCalledTimes(1);
+      expect(replayProcessor).toHaveBeenCalledTimes(1);
+    } finally {
+      initialInbox.stop();
+      replayInbox?.stop();
     }
   });
 
@@ -279,18 +431,22 @@ describe("createInboundInbox", () => {
     const ordinaryGate = createDeferred();
     const approvalGate = createDeferred();
     const started: string[] = [];
-    const inbox = createInboundInbox({
+    const lifecycles = new Map<string, DurableInboundLifecycle | undefined>();
+    const inbox = createModernInboundInbox({
       accountId: "acc-approval",
       aLog: createLogger(),
-      processMessage: vi.fn(async (message: WeixinMessage) => {
-        const text = getText(message);
-        started.push(text);
-        if (text.startsWith("/approve")) {
-          await approvalGate.promise;
-          return;
-        }
-        await ordinaryGate.promise;
-      }),
+      processMessage: vi.fn(
+        async (message: WeixinMessage, lifecycle?: DurableInboundLifecycle) => {
+          const text = getText(message);
+          started.push(text);
+          lifecycles.set(text, lifecycle);
+          if (text.startsWith("/approve")) {
+            await approvalGate.promise;
+            return;
+          }
+          await ordinaryGate.promise;
+        },
+      ),
     });
 
     try {
@@ -303,10 +459,10 @@ describe("createInboundInbox", () => {
       ]);
       inbox.scheduleProcessing();
 
-      await waitForCondition(
-        () => started.filter((text) => !text.startsWith("/approve")).length === 4,
-      );
+      await waitForCondition(() => started.some((text) => !text.startsWith("/approve")));
       await waitForCondition(() => started.includes("/approve plugin:approval deny"));
+      expect(lifecycles.get("one")).toBeDefined();
+      expect(lifecycles.get("/approve plugin:approval deny")).toBeUndefined();
 
       ordinaryGate.resolve();
       approvalGate.resolve();
@@ -325,12 +481,12 @@ describe("createInboundInbox", () => {
       started.push(getText(message));
       await gate.promise;
     });
-    const inboxA = createInboundInbox({
+    const inboxA = createModernInboundInbox({
       accountId: "acc-shared-capacity",
       aLog: createLogger(),
       processMessage: processor,
     });
-    const inboxB = createInboundInbox({
+    const inboxB = createModernInboundInbox({
       accountId: "acc-shared-capacity",
       aLog: createLogger(),
       processMessage: processor,
@@ -349,9 +505,9 @@ describe("createInboundInbox", () => {
       inboxA.scheduleProcessing();
       inboxB.scheduleProcessing();
 
-      await waitForCondition(() => started.length === 5);
+      await waitForCondition(() => started.length === 2);
       await delay(30);
-      expect(started.filter((text) => !text.startsWith("/approve"))).toHaveLength(4);
+      expect(started.filter((text) => !text.startsWith("/approve"))).toHaveLength(1);
       expect(started.filter((text) => text.startsWith("/approve"))).toHaveLength(1);
 
       gate.resolve();
@@ -365,7 +521,7 @@ describe("createInboundInbox", () => {
 
   it("retains all recent tombstones for replay suppression", async () => {
     const processed: string[] = [];
-    const inbox = createInboundInbox({
+    const inbox = createModernInboundInbox({
       accountId: "acc-tombstones",
       aLog: createLogger(),
       processMessage: vi.fn(async (message: WeixinMessage) => {
@@ -430,6 +586,15 @@ function createLogger() {
     getLogFilePath: vi.fn(() => ""),
     close: vi.fn(),
   } as never;
+}
+
+function createModernInboundInbox(
+  opts: Omit<Parameters<typeof createInboundInbox>[0], "durableQueueAdmissionSupported">,
+) {
+  return createInboundInbox({
+    ...opts,
+    durableQueueAdmissionSupported: true,
+  });
 }
 
 function createDeferred(): { promise: Promise<void>; resolve: () => void } {

@@ -30,6 +30,7 @@ export type MonitorWeixinOpts = {
    * Required for inbound message processing; provided by `ChannelGatewayContext.channelRuntime`.
    */
   channelRuntime: PluginRuntime["channel"];
+  durableQueueAdmissionSupported: boolean;
   abortSignal?: AbortSignal;
   longPollTimeoutMs?: number;
   /** Gateway status callback — called on each successful poll and inbound message. */
@@ -48,6 +49,7 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
     accountId,
     config,
     channelRuntime,
+    durableQueueAdmissionSupported,
     abortSignal,
     longPollTimeoutMs,
     setStatus,
@@ -67,6 +69,11 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
   aLog.info(
     `Monitor started: baseUrl=${baseUrl} timeoutMs=${longPollTimeoutMs ?? DEFAULT_LONG_POLL_TIMEOUT_MS}`,
   );
+  if (!durableQueueAdmissionSupported) {
+    aLog.warn(
+      "Host lacks durable queue admission support; ordinary inbound processing will remain serial",
+    );
+  }
 
   const syncFilePath = getSyncBufFilePath(accountId);
   aLog.debug(`syncFilePath: ${syncFilePath}`);
@@ -86,7 +93,8 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
   const inbox = createInboundInbox({
     accountId,
     aLog,
-    processMessage: async (full) => {
+    durableQueueAdmissionSupported,
+    processMessage: async (full, durableInboundLifecycle) => {
       aLog.info(
         `inbound message: from=${full.from_user_id} types=${full.item_list?.map((i) => i.type).join(",") ?? "none"}`,
       );
@@ -110,6 +118,7 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
         typingTicket: cachedConfig.typingTicket,
         log: opts.runtime?.log ?? (() => {}),
         errLog,
+        durableInboundLifecycle,
       });
     },
   });

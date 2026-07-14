@@ -3,10 +3,10 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { MessageItemType, type WeixinMessage } from "../api/types.js";
+import type { DurableInboundLifecycle } from "../messaging/process-message.js";
 import { resolveStateDir } from "../storage/state-dir.js";
 import type { Logger } from "../util/logger.js";
 
-const ORDINARY_CONCURRENCY = 4;
 const RETRY_BASE_MS = 1_000;
 const RETRY_MAX_MS = 30_000;
 const DONE_RETENTION_MS = 24 * 60 * 60 * 1000;
@@ -27,7 +27,11 @@ type InboundInboxRecord = {
 type CreateInboundInboxOpts = {
   accountId: string;
   aLog: Logger;
-  processMessage: (message: WeixinMessage) => Promise<void>;
+  durableQueueAdmissionSupported: boolean;
+  processMessage: (
+    message: WeixinMessage,
+    durableInboundLifecycle?: DurableInboundLifecycle,
+  ) => Promise<void>;
 };
 
 type InboundInbox = {
@@ -40,6 +44,7 @@ type RecordState = {
   kind?: InboxKind;
   active: boolean;
   processed: boolean;
+  queued: boolean;
   retryAttempts: number;
   blockedUntil: number;
 };
@@ -184,16 +189,23 @@ class LocalInboundInbox implements InboundInbox {
 
   private pump(): void {
     this.pruneDoneTombstones();
+    let ordinaryRetryBlocked = false;
     for (const entry of this.listPendingEntries()) {
       if (this.stopped) return;
       if (
-        this.getActiveCount("ordinary") >= ORDINARY_CONCURRENCY &&
+        this.getActiveCount("ordinary") >= 1 &&
         this.getActiveCount("approval") >= 1
       ) {
         return;
       }
       const state = this.sharedState.records.get(entry.pendingPath);
-      if (state?.active || (state?.blockedUntil ?? 0) > Date.now()) continue;
+      if (state?.active || state?.queued) continue;
+      if ((state?.blockedUntil ?? 0) > Date.now()) {
+        if (!state?.processed && state?.kind !== "approval") {
+          ordinaryRetryBlocked = true;
+        }
+        continue;
+      }
 
       let record: InboundInboxRecord | undefined;
       if (!state?.processed) {
@@ -212,8 +224,8 @@ class LocalInboundInbox implements InboundInbox {
         }
         kind = isApprovalMessage(record.message) ? "approval" : "ordinary";
       }
-      const concurrency = kind === "approval" ? 1 : ORDINARY_CONCURRENCY;
-      if (this.getActiveCount(kind) >= concurrency) continue;
+      if (kind === "ordinary" && ordinaryRetryBlocked) continue;
+      if (this.getActiveCount(kind) >= 1) continue;
 
       const nextState = state ?? this.createRecordState(entry.pendingPath);
       nextState.kind = kind;
@@ -242,22 +254,22 @@ class LocalInboundInbox implements InboundInbox {
           throw new Error(`Missing payload for unprocessed inbound record ${entry.id}`);
         }
         try {
-          await this.opts.processMessage(record.message);
+          const durableInboundLifecycle =
+            state.kind === "ordinary" && this.opts.durableQueueAdmissionSupported
+              ? this.createDurableInboundLifecycle(entry, state)
+              : undefined;
+          await this.opts.processMessage(record.message, durableInboundLifecycle);
+          if (state.queued || state.processed) return;
           state.processed = true;
         } catch (err) {
           this.opts.aLog.error(`Failed to process inbound record ${entry.id}: ${formatError(err)}`);
-          this.scheduleRetry(state);
+          if (!state.queued && !state.processed) {
+            this.scheduleRetry(state);
+          }
           return;
         }
       }
-      try {
-        this.markDone(entry);
-        this.sharedState.records.delete(entry.pendingPath);
-        this.scheduleWake();
-      } catch (err) {
-        this.opts.aLog.error(`Failed to finalize inbound record ${entry.id}: ${formatError(err)}`);
-        this.scheduleRetry(state);
-      }
+      this.finalizeRecord(entry, state);
     } finally {
       state.active = false;
       this.wakeManagers();
@@ -278,11 +290,45 @@ class LocalInboundInbox implements InboundInbox {
     const state: RecordState = {
       active: false,
       processed: false,
+      queued: false,
       retryAttempts: 0,
       blockedUntil: 0,
     };
     this.sharedState.records.set(pendingPath, state);
     return state;
+  }
+
+  private createDurableInboundLifecycle(
+    entry: PendingEntry,
+    state: RecordState,
+  ): DurableInboundLifecycle {
+    const complete = () => {
+      state.queued = false;
+      state.processed = true;
+      state.active = false;
+      this.finalizeRecord(entry, state);
+      this.wakeManagers();
+    };
+    return {
+      onEnqueued: () => {
+        state.queued = true;
+        state.active = false;
+        this.wakeManagers();
+      },
+      onComplete: complete,
+      onTurnAdopted: complete,
+    };
+  }
+
+  private finalizeRecord(entry: PendingEntry, state: RecordState): void {
+    try {
+      this.markDone(entry);
+      this.sharedState.records.delete(entry.pendingPath);
+      this.scheduleWake();
+    } catch (err) {
+      this.opts.aLog.error(`Failed to finalize inbound record ${entry.id}: ${formatError(err)}`);
+      this.scheduleRetry(state);
+    }
   }
 
   private markDone(entry: PendingEntry): void {
