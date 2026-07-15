@@ -255,7 +255,10 @@ export async function processOneMessage(
     agentId: route.agentId,
   });
   const finalized = deps.channelRuntime.reply.finalizeInboundContext(
-    ctx as Parameters<typeof deps.channelRuntime.reply.finalizeInboundContext>[0],
+    {
+      ...ctx,
+      BodyForAgent: ctx.Body,
+    } as Parameters<typeof deps.channelRuntime.reply.finalizeInboundContext>[0],
   );
 
   logger.info(
