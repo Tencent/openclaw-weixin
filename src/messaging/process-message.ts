@@ -176,7 +176,7 @@ export async function processOneMessage(
   const ctx = weixinMessageToMsgContext(full, deps.accountId, mediaOpts);
 
   // --- Framework command authorization ---
-  const rawBody = ctx.Body?.trim() ?? "";
+  const rawBody = textBody.trim() || (ctx.Body?.trim() ?? "");
   ctx.CommandBody = rawBody;
 
   const senderId = full.from_user_id ?? "";
