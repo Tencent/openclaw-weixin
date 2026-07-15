@@ -10,6 +10,7 @@ import type { Logger } from "../util/logger.js";
 const RETRY_BASE_MS = 1_000;
 const RETRY_MAX_MS = 30_000;
 const DONE_RETENTION_MS = 24 * 60 * 60 * 1000;
+const DONE_PRUNE_INTERVAL_MS = 60 * 60 * 1000;
 const SHARED_STATE_SYMBOL = Symbol.for("openclaw-weixin.inbound-inbox.shared-state");
 
 type InboxKind = "ordinary" | "approval";
@@ -17,10 +18,12 @@ type PendingEntry = {
   id: string;
   pendingPath: string;
   donePath: string;
+  record?: InboundInboxRecord;
 };
 
 type InboundInboxRecord = {
   id: string;
+  order?: number;
   message: WeixinMessage;
 };
 
@@ -31,6 +34,7 @@ type CreateInboundInboxOpts = {
   processMessage: (
     message: WeixinMessage,
     durableInboundLifecycle?: DurableInboundLifecycle,
+    messageSid?: string,
   ) => Promise<void>;
 };
 
@@ -52,6 +56,8 @@ type RecordState = {
 type SharedInboxState = {
   records: Map<string, RecordState>;
   managers: Set<InboundInbox>;
+  nextRecordOrder?: number;
+  lastPrunedAt?: number;
   wakeTimer?: ReturnType<typeof setTimeout>;
 };
 
@@ -71,7 +77,7 @@ function getInboundInboxRecordId(message: WeixinMessage): string {
 
 function isApprovalMessage(message: WeixinMessage): boolean {
   const textBody = extractTextBody(message.item_list).trim();
-  return /^\/approve(?:\s|$)/i.test(textBody) && /\bplugin:/i.test(textBody);
+  return /^\/approve\s+plugin:/i.test(textBody);
 }
 
 export function createInboundInbox(opts: CreateInboundInboxOpts): InboundInbox {
@@ -174,6 +180,7 @@ class LocalInboundInbox implements InboundInbox {
     );
     const record: InboundInboxRecord = {
       id: entry.id,
+      order: this.reserveRecordOrder(),
       message,
     };
     try {
@@ -207,14 +214,19 @@ class LocalInboundInbox implements InboundInbox {
         continue;
       }
 
-      let record: InboundInboxRecord | undefined;
+      let record = entry.record;
       if (!state?.processed) {
-        try {
-          record = this.readRecord(entry);
-        } catch (err) {
-          this.opts.aLog.error(`Failed to read inbound inbox record ${entry.id}: ${formatError(err)}`);
-          this.scheduleRetry(state ?? this.createRecordState(entry.pendingPath));
-          continue;
+        if (!record) {
+          try {
+            record = this.readRecord(entry);
+          } catch (err) {
+            this.opts.aLog.error(`Failed to read inbound inbox record ${entry.id}: ${formatError(err)}`);
+            if (state?.kind !== "approval") {
+              ordinaryRetryBlocked = true;
+            }
+            this.scheduleRetry(state ?? this.createRecordState(entry.pendingPath));
+            continue;
+          }
         }
       }
       let kind = state?.kind;
@@ -257,7 +269,11 @@ class LocalInboundInbox implements InboundInbox {
           const durableInboundLifecycle = this.opts.durableQueueAdmissionSupported
             ? this.createDurableInboundLifecycle(entry, state)
             : undefined;
-          await this.opts.processMessage(record.message, durableInboundLifecycle);
+          await this.opts.processMessage(
+            record.message,
+            durableInboundLifecycle,
+            this.getMessageSid(entry.id),
+          );
           if (state.queued || state.processed) return;
           state.processed = true;
         } catch (err) {
@@ -332,6 +348,8 @@ class LocalInboundInbox implements InboundInbox {
 
   private markDone(entry: PendingEntry): void {
     try {
+      const completedAt = new Date();
+      fs.utimesSync(entry.pendingPath, completedAt, completedAt);
       fs.renameSync(entry.pendingPath, entry.donePath);
     } catch (err) {
       if (!fs.existsSync(entry.pendingPath) && fs.existsSync(entry.donePath)) {
@@ -381,11 +399,16 @@ class LocalInboundInbox implements InboundInbox {
 
   private readRecord(entry: PendingEntry): InboundInboxRecord {
     const parsed = JSON.parse(fs.readFileSync(entry.pendingPath, "utf-8")) as Partial<InboundInboxRecord>;
-    if (parsed.id !== entry.id || parsed.message == null) {
+    if (
+      parsed.id !== entry.id ||
+      parsed.message == null ||
+      (parsed.order != null && !Number.isSafeInteger(parsed.order))
+    ) {
       throw new Error(`Invalid inbox record payload at ${entry.pendingPath}`);
     }
     return {
       id: parsed.id,
+      ...(parsed.order != null ? { order: parsed.order } : {}),
       message: parsed.message as WeixinMessage,
     };
   }
@@ -402,16 +425,64 @@ class LocalInboundInbox implements InboundInbox {
     };
   }
 
+  private getMessageSid(recordId: string): string {
+    const digest = createHash("sha256")
+      .update(`${this.opts.accountId}\0${recordId}`)
+      .digest("hex")
+      .slice(0, 24);
+    return `openclaw-weixin:inbox-${digest}`;
+  }
+
+  private reserveRecordOrder(): number {
+    if (this.sharedState.nextRecordOrder == null) {
+      let highestOrder = Date.now() * 1000;
+      for (const name of fs.readdirSync(this.inboxDir)) {
+        if (!name.endsWith(".pending.json")) continue;
+        const entry = this.getEntry(name.slice(0, -".pending.json".length));
+        try {
+          const order = this.readRecord(entry).order;
+          if (order != null && Number.isSafeInteger(order)) {
+            highestOrder = Math.max(highestOrder, order);
+          }
+        } catch (err) {
+          this.opts.aLog.warn(
+            `Failed to inspect inbound record order ${entry.id}: ${formatError(err)}`,
+          );
+        }
+      }
+      this.sharedState.nextRecordOrder = highestOrder;
+    }
+    this.sharedState.nextRecordOrder += 1;
+    return this.sharedState.nextRecordOrder;
+  }
+
   private listPendingEntries(): PendingEntry[] {
-    return fs
+    const entries = fs
       .readdirSync(this.inboxDir)
       .filter((name) => name.endsWith(".pending.json"))
-      .sort((left, right) => left.localeCompare(right, "en", { numeric: true }))
-      .map((name) => this.getEntry(name.slice(0, -".pending.json".length)));
+      .map((name) => this.getEntry(name.slice(0, -".pending.json".length)))
+      .map((entry) => {
+        try {
+          return { ...entry, record: this.readRecord(entry) };
+        } catch {
+          return entry;
+        }
+      });
+    return entries.sort((left, right) => {
+      const leftOrder = left.record?.order;
+      const rightOrder = right.record?.order;
+      if (leftOrder != null || rightOrder != null) {
+        if (leftOrder == null) return -1;
+        if (rightOrder == null) return 1;
+        if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+      }
+      return left.id.localeCompare(right.id, "en", { numeric: true });
+    });
   }
 
   private pruneDoneTombstones(): void {
     const now = Date.now();
+    if (now - (this.sharedState.lastPrunedAt ?? 0) < DONE_PRUNE_INTERVAL_MS) return;
     for (const name of fs.readdirSync(this.inboxDir)) {
       if (!name.endsWith(".done.json")) continue;
       const filePath = path.join(this.inboxDir, name);
@@ -422,6 +493,7 @@ class LocalInboundInbox implements InboundInbox {
         this.opts.aLog.warn(`Failed to prune inbound tombstone ${filePath}: ${formatError(err)}`);
       }
     }
+    this.sharedState.lastPrunedAt = now;
   }
 
   private cleanupTempFile(tempPath: string): void {

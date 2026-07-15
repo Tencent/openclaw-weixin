@@ -125,13 +125,23 @@ describe("createInboundInbox", () => {
     const aLog = createLogger();
     let retryAttempts = 0;
     const started: string[] = [];
-    const processor = vi.fn(async (message: WeixinMessage) => {
-      const text = getText(message);
-      started.push(text);
-      if (text === "retry" && ++retryAttempts === 1) {
-        throw new Error("retry me");
-      }
-    });
+    const retryMessageSids: string[] = [];
+    const processor = vi.fn(
+      async (
+        message: WeixinMessage,
+        _lifecycle?: DurableInboundLifecycle,
+        messageSid?: string,
+      ) => {
+        const text = getText(message);
+        started.push(text);
+        if (text === "retry") {
+          retryMessageSids.push(messageSid ?? "");
+          if (++retryAttempts === 1) {
+            throw new Error("retry me");
+          }
+        }
+      },
+    );
     const inboxA = createModernInboundInbox({
       accountId: "acc-retry",
       aLog,
@@ -172,10 +182,47 @@ describe("createInboundInbox", () => {
         "later",
       ]);
       expect(listDoneFiles("acc-retry")).toHaveLength(3);
+      expect(retryMessageSids).toHaveLength(2);
+      expect(new Set(retryMessageSids)).toHaveProperty("size", 1);
+      expect(retryMessageSids[0]).toMatch(/^openclaw-weixin:inbox-[0-9a-f]{24}$/);
       expect(aLog.error).toHaveBeenCalledWith(expect.stringContaining("Failed to process inbound record"));
     } finally {
       inboxA.stop();
       inboxB.stop();
+      vi.useRealTimers();
+    }
+  });
+
+  it("blocks later ordinary work while an earlier record read retries", async () => {
+    vi.useFakeTimers();
+    const started: string[] = [];
+    const inbox = createModernInboundInbox({
+      accountId: "acc-read-retry",
+      aLog: createLogger(),
+      processMessage: vi.fn(async (message: WeixinMessage) => {
+        started.push(getText(message));
+      }),
+    });
+
+    try {
+      await inbox.enqueueBatch([
+        makeMessage("first", { message_id: 46 }),
+        makeMessage("second", { message_id: 47 }),
+      ]);
+      const firstPath = path.join(resolveInboundInboxDir("acc-read-retry"), "msg-46.pending.json");
+      const firstRecord = fs.readFileSync(firstPath, "utf-8");
+      fs.writeFileSync(firstPath, "invalid", "utf-8");
+
+      inbox.scheduleProcessing();
+      await flushMicrotasks();
+      expect(started).toEqual([]);
+
+      fs.writeFileSync(firstPath, firstRecord, "utf-8");
+      await vi.advanceTimersByTimeAsync(1_000);
+      await flushMicrotasks();
+      expect(started).toEqual(["first", "second"]);
+    } finally {
+      inbox.stop();
       vi.useRealTimers();
     }
   });
@@ -233,7 +280,7 @@ describe("createInboundInbox", () => {
     }
   });
 
-  it("preserves numeric message order when dispatching pending records", async () => {
+  it("preserves polling order when message IDs and sequences sort differently", async () => {
     const started: string[] = [];
     const inbox = createModernInboundInbox({
       accountId: "acc-order",
@@ -245,13 +292,13 @@ describe("createInboundInbox", () => {
 
     try {
       await inbox.enqueueBatch([
-        makeMessage("nine", { message_id: 9 }),
-        makeMessage("ten", { message_id: 10 }),
+        makeMessage("first", { message_id: 10, seq: 10 }),
+        makeMessage("second", { message_id: 9, seq: 9 }),
       ]);
       inbox.scheduleProcessing();
 
       await waitForCondition(() => started.length === 2);
-      expect(started).toEqual(["nine", "ten"]);
+      expect(started).toEqual(["first", "second"]);
     } finally {
       inbox.stop();
     }
@@ -474,6 +521,37 @@ describe("createInboundInbox", () => {
     }
   });
 
+  it("keeps unrelated approve text on the ordinary lane", async () => {
+    const gate = createDeferred();
+    const started: string[] = [];
+    const inbox = createModernInboundInbox({
+      accountId: "acc-approval-shape",
+      aLog: createLogger(),
+      processMessage: vi.fn(async (message: WeixinMessage) => {
+        started.push(getText(message));
+        await gate.promise;
+      }),
+    });
+
+    try {
+      await inbox.enqueueBatch([
+        makeMessage("ordinary", { message_id: 66 }),
+        makeMessage("/approve request for plugin:approval", { message_id: 67 }),
+      ]);
+      inbox.scheduleProcessing();
+
+      await waitForCondition(() => started.includes("ordinary"));
+      await delay(30);
+      expect(started).toEqual(["ordinary"]);
+
+      gate.resolve();
+      await waitForCondition(() => listDoneFiles("acc-approval-shape").length === 2);
+    } finally {
+      gate.resolve();
+      inbox.stop();
+    }
+  });
+
   it("shares ordinary and approval limits across overlapping inbox instances", async () => {
     const gate = createDeferred();
     const started: string[] = [];
@@ -519,14 +597,15 @@ describe("createInboundInbox", () => {
     }
   });
 
-  it("retains all recent tombstones for replay suppression", async () => {
+  it("retains all tombstones for 24 hours after completion", async () => {
     const processed: string[] = [];
-    const inbox = createModernInboundInbox({
+    const processor = vi.fn(async (message: WeixinMessage) => {
+      processed.push(getText(message));
+    });
+    let inbox = createModernInboundInbox({
       accountId: "acc-tombstones",
       aLog: createLogger(),
-      processMessage: vi.fn(async (message: WeixinMessage) => {
-        processed.push(getText(message));
-      }),
+      processMessage: processor,
     });
     const messages = Array.from({ length: 33 }, (_, index) =>
       makeMessage(`message-${index}`, { message_id: 100 + index }),
@@ -534,11 +613,26 @@ describe("createInboundInbox", () => {
 
     try {
       await inbox.enqueueBatch(messages);
+      const beforeRetentionWindow = new Date(Date.now() - 25 * 60 * 60 * 1000);
+      for (const name of listPendingFiles("acc-tombstones")) {
+        const pendingPath = path.join(resolveInboundInboxDir("acc-tombstones"), name);
+        fs.utimesSync(pendingPath, beforeRetentionWindow, beforeRetentionWindow);
+      }
       inbox.scheduleProcessing();
       await waitForCondition(
         () => listDoneFiles("acc-tombstones").length === messages.length,
         5_000,
       );
+
+      inbox.stop();
+      delete (globalThis as Record<PropertyKey, unknown>)[SHARED_STATE_SYMBOL];
+      inbox = createModernInboundInbox({
+        accountId: "acc-tombstones",
+        aLog: createLogger(),
+        processMessage: processor,
+      });
+      inbox.scheduleProcessing();
+      await delay(30);
 
       await inbox.enqueueBatch([messages[0]]);
       inbox.scheduleProcessing();

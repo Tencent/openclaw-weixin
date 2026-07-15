@@ -62,6 +62,7 @@ export type ProcessMessageDeps = {
   typingTicket?: string;
   log: (msg: string) => void;
   errLog: (m: string) => void;
+  messageSid?: string;
   durableInboundLifecycle?: DurableInboundLifecycle;
 };
 
@@ -178,6 +179,9 @@ export async function processOneMessage(
   }
 
   const ctx = weixinMessageToMsgContext(full, deps.accountId, mediaOpts);
+  if (deps.messageSid) {
+    ctx.MessageSid = deps.messageSid;
+  }
 
   // --- Framework command authorization ---
   const rawBody = ctx.Body?.trim() ?? "";

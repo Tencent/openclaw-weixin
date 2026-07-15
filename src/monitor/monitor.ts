@@ -94,7 +94,7 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
     accountId,
     aLog,
     durableQueueAdmissionSupported,
-    processMessage: async (full, durableInboundLifecycle) => {
+    processMessage: async (full, durableInboundLifecycle, messageSid) => {
       aLog.info(
         `inbound message: from=${full.from_user_id} types=${full.item_list?.map((i) => i.type).join(",") ?? "none"}`,
       );
@@ -118,6 +118,7 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
         typingTicket: cachedConfig.typingTicket,
         log: opts.runtime?.log ?? (() => {}),
         errLog,
+        messageSid,
         durableInboundLifecycle,
       });
     },

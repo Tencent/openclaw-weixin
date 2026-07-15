@@ -121,6 +121,10 @@ describe("monitorWeixinProvider", () => {
       await waitForCondition(() => started.includes("first") && started.includes("second"));
       expect(processDeps).toHaveLength(2);
       expect(processDeps.every((deps) => deps.durableInboundLifecycle !== undefined)).toBe(true);
+      expect(processDeps.every((deps) => deps.messageSid?.startsWith("openclaw-weixin:inbox-"))).toBe(
+        true,
+      );
+      expect(new Set(processDeps.map((deps) => deps.messageSid))).toHaveProperty("size", 2);
       expect(loadGetUpdatesBuf(getSyncBufFilePath("acc-monitor"))).toBe("cursor-2");
       const inboxFiles = fs.readdirSync(resolveInboundInboxDir("acc-monitor"));
       expect(inboxFiles.some((name) => name.endsWith(".pending.json"))).toBe(true);
