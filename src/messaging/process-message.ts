@@ -24,7 +24,6 @@ import { isDebugMode } from "./debug-mode.js";
 import { sendWeixinErrorNotice } from "./error-notice.js";
 import { applyWeixinMessageSendingHook, emitWeixinMessageSent } from "./outbound-hooks.js";
 import {
-  setContextToken,
   weixinMessageToMsgContext,
   getContextTokenFromMsgContext,
   isMediaItem,
@@ -38,16 +37,13 @@ import { handleSlashCommand } from "./slash-commands.js";
 
 const MEDIA_OUTBOUND_TEMP_DIR = path.join(resolvePreferredOpenClawTmpDir(), "weixin/media/outbound-temp");
 
-export type DurableInboundLifecycle = {
-  onEnqueued: () => void;
-  onComplete: () => void;
-  onTurnAdopted: () => void;
-};
-
 type DispatchReplyOptions = NonNullable<
   Parameters<PluginRuntime["channel"]["reply"]["dispatchReplyFromConfig"]>[0]["replyOptions"]
 > & {
-  /** Added after the current stable SDK; beta.6 uses it to confirm transcript adoption. */
+  queuedFollowupLifecycle?: {
+    onEnqueued?: () => void;
+    onComplete?: () => void;
+  };
   onTurnAdopted?: () => void | Promise<void>;
 };
 
@@ -62,8 +58,7 @@ export type ProcessMessageDeps = {
   typingTicket?: string;
   log: (msg: string) => void;
   errLog: (m: string) => void;
-  messageSid?: string;
-  durableInboundLifecycle?: DurableInboundLifecycle;
+  onReplyAdmitted?: () => void;
 };
 
 /** Extract text body from item_list (for slash command detection). */
@@ -179,9 +174,6 @@ export async function processOneMessage(
   }
 
   const ctx = weixinMessageToMsgContext(full, deps.accountId, mediaOpts);
-  if (deps.messageSid) {
-    ctx.MessageSid = deps.messageSid;
-  }
 
   // --- Framework command authorization ---
   const rawBody = ctx.Body?.trim() ?? "";
@@ -288,9 +280,6 @@ export async function processOneMessage(
   );
 
   const contextToken = getContextTokenFromMsgContext(ctx);
-  if (contextToken) {
-    setContextToken(deps.accountId, full.from_user_id ?? "", contextToken);
-  }
   const runId = randomUUID();
   const replyProgressSender = resolveReplyProgressMessagesEnabled(deps.config)
     ? new WeixinReplyProgressSender({
@@ -467,12 +456,12 @@ export async function processOneMessage(
   const dispatchReplyOptions: DispatchReplyOptions = {
     ...replyOptions,
     ...(replyProgressSender?.replyOptions ?? {}),
-    ...(deps.durableInboundLifecycle
-      ? {
-          queuedFollowupLifecycle: deps.durableInboundLifecycle,
-          onTurnAdopted: deps.durableInboundLifecycle.onTurnAdopted,
-        }
-      : {}),
+    // Newer hosts use this marker for active-run admission; older hosts ignore it.
+    queuedFollowupLifecycle: {
+      onEnqueued: deps.onReplyAdmitted,
+    },
+    onAgentRunStart: () => deps.onReplyAdmitted?.(),
+    onTurnAdopted: deps.onReplyAdmitted,
     disableBlockStreaming: true,
   };
 
