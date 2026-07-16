@@ -90,6 +90,11 @@ describe("applyWeixinMessageSendingHook", () => {
       },
       { channelId: "openclaw-weixin", accountId: "acc-1" },
     );
+
+    runMessageSending.mockResolvedValueOnce({});
+    await expect(
+      applyWeixinMessageSendingHook({ to: "user-1", text: "original" }),
+    ).resolves.toEqual({ cancelled: false, text: "original" });
   });
 
   it("reports cancellation while preserving original text", async () => {

@@ -1,9 +1,13 @@
 {
-  "name": "@tencent-weixin/openclaw-weixin",
-  "version": "2.4.6",
+  "name": "@netcat-ai/openclaw-weixin",
+  "version": "2.4.8",
   "description": "OpenClaw Weixin channel",
   "license": "MIT",
   "author": "Tencent",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/netcat-ai/openclaw-weixin.git"
+  },
   "type": "module",
   "files": [
     "src/",
@@ -58,10 +62,14 @@
       "order": 75
     },
     "install": {
-      "npmSpec": "@tencent-weixin/openclaw-weixin",
+      "npmSpec": "@netcat-ai/openclaw-weixin",
       "defaultChoice": "npm",
       "minHostVersion": ">=2026.5.12"
     }
   },
-  "ilink_appid": "bot"
+  "ilink_appid": "bot",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  }
 }

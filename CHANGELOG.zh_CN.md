@@ -4,6 +4,24 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/) 格式。
 
+## [2.4.8] - 2026-07-16
+
+### 新增
+
+- **群聊支持：** 按 Webox `group_id` / `@chatroom` 路由群会话、上下文 token 和回复，同时通过 `SenderId` 保留实际群成员身份。
+
+### 安全
+
+- 插件内置 slash command 和私聊路由元数据与群消息隔离；群回复也不再读取私聊用户的正在输入配置。
+
+## [2.4.7] - 2026-07-12
+
+### 变更
+
+- fork 改为通过 `@netcat-ai/openclaw-weixin` 发布。
+- 自定义 iLink 后端支持 channel 和 account 两级 `baseUrl`；account 配置优先于 channel 配置和已保存凭据。
+- 二维码登录及刷新使用解析后的 account base URL，不再固定请求腾讯端点。
+
 ## [2.4.5] - 2026-06-22
 
 ### 新增

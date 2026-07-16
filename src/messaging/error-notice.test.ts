@@ -32,13 +32,14 @@ describe("sendWeixinErrorNotice", () => {
       message: "Something went wrong",
       baseUrl: "https://api.com",
       token: "tok",
+      runId: "run-1",
       errLog: vi.fn(),
     });
     expect(mockSendMessageWeixin).toHaveBeenCalledOnce();
     expect(mockSendMessageWeixin).toHaveBeenCalledWith({
       to: "user1",
       text: "Something went wrong",
-      opts: { baseUrl: "https://api.com", token: "tok", contextToken: "ctx-tok" },
+      opts: { baseUrl: "https://api.com", token: "tok", contextToken: "ctx-tok", runId: "run-1" },
     });
   });
 

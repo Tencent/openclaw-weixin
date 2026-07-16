@@ -20,6 +20,7 @@ describe("parseOpenClawVersion", () => {
   it("returns null for malformed strings", () => {
     expect(parseOpenClawVersion("")).toBeNull();
     expect(parseOpenClawVersion("abc")).toBeNull();
+    expect(parseOpenClawVersion("2026.x.22")).toBeNull();
     expect(parseOpenClawVersion("2026.3")).toBeNull();
     expect(parseOpenClawVersion("2026.3.22.1")).toBeNull();
   });

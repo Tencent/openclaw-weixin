@@ -82,11 +82,15 @@ export async function processOneMessage(
   const debug = isDebugMode(deps.accountId);
   const debugTrace: string[] = [];
   const debugTs: Record<string, number> = { received: receivedAt };
+  const groupId = full.group_id;
+  const senderId = full.from_user_id ?? "";
+  const isGroup = Boolean(groupId);
+  const to = groupId || senderId;
 
   const textBody = extractTextBody(full.item_list);
-  if (textBody.startsWith("/")) {
+  if (!isGroup && textBody.startsWith("/")) {
     const slashResult = await handleSlashCommand(textBody, {
-      to: full.from_user_id ?? "",
+      to,
       contextToken: full.context_token,
       baseUrl: deps.baseUrl,
       token: deps.token,
@@ -169,13 +173,11 @@ export async function processOneMessage(
   const rawBody = ctx.Body?.trim() ?? "";
   ctx.CommandBody = rawBody;
 
-  const senderId = full.from_user_id ?? "";
-
   const { senderAllowedForCommands, commandAuthorized } =
     await resolveSenderCommandAuthorizationWithRuntime({
       cfg: deps.config,
       rawBody,
-      isGroup: false,
+      isGroup,
       dmPolicy: "pairing",
       configuredAllowFrom: [],
       configuredGroupAllowFrom: [],
@@ -192,7 +194,7 @@ export async function processOneMessage(
     });
 
   const directDmOutcome = resolveDirectDmAuthorizationOutcome({
-    isGroup: false,
+    isGroup,
     dmPolicy: "pairing",
     senderAllowedForCommands,
   });
@@ -220,7 +222,7 @@ export async function processOneMessage(
     cfg: deps.config,
     channel: "openclaw-weixin",
     accountId: deps.accountId,
-    peer: { kind: "direct", id: ctx.To },
+    peer: { kind: isGroup ? "group" : "direct", id: to },
   });
   logger.debug(
     `resolveAgentRoute: agentId=${route.agentId ?? "(none)"} sessionKey=${route.sessionKey ?? "(none)"} mainSessionKey=${route.mainSessionKey ?? "(none)"}`,
@@ -257,12 +259,16 @@ export async function processOneMessage(
     storePath,
     sessionKey: route.sessionKey,
     ctx: finalized as Parameters<typeof deps.channelRuntime.session.recordInboundSession>[0]["ctx"],
-    updateLastRoute: {
-      sessionKey: route.mainSessionKey,
-      channel: "openclaw-weixin",
-      to: ctx.To,
-      accountId: deps.accountId,
-    },
+    ...(isGroup
+      ? {}
+      : {
+          updateLastRoute: {
+            sessionKey: route.mainSessionKey,
+            channel: "openclaw-weixin" as const,
+            to: ctx.To,
+            accountId: deps.accountId,
+          },
+        }),
     onRecordError: (err) => deps.errLog(`recordInboundSession: ${String(err)}`),
   });
   logger.debug(
@@ -271,7 +277,7 @@ export async function processOneMessage(
 
   const contextToken = getContextTokenFromMsgContext(ctx);
   if (contextToken) {
-    setContextToken(deps.accountId, full.from_user_id ?? "", contextToken);
+    setContextToken(deps.accountId, to, contextToken);
   }
   const runId = randomUUID();
   const replyProgressSender = resolveReplyProgressMessagesEnabled(deps.config)
@@ -288,7 +294,7 @@ export async function processOneMessage(
     : undefined;
   const humanDelay = deps.channelRuntime.reply.resolveHumanDelayConfig(deps.config, route.agentId);
 
-  const hasTypingTicket = Boolean(deps.typingTicket);
+  const hasTypingTicket = !isGroup && Boolean(deps.typingTicket);
   const typingCallbacks = createTypingCallbacks({
     start: hasTypingTicket
       ? () =>

@@ -20,37 +20,35 @@ OpenClaw's WeChat channel plugin, supporting login authorization via QR code sca
 
 Check your version: `openclaw --version`
 
-## Quick Install
+## Installation
 
 ```bash
-npx -y @tencent-weixin/openclaw-weixin-cli install
+openclaw plugins install @netcat-ai/openclaw-weixin
 ```
 
-## Manual Installation
-
-If the quick install doesn't work, follow these steps manually:
-
-### 1. Install the plugin
-
-```bash
-openclaw plugins install "@tencent-weixin/openclaw-weixin"
-```
-
-### 2. Enable the plugin
+Enable the plugin:
 
 ```bash
 openclaw config set plugins.entries.openclaw-weixin.enabled true
 ```
 
-### 3. QR code login
+For a custom iLink backend, set the service URL before the login that should use it:
+
+```bash
+openclaw config set channels.openclaw-weixin.baseUrl http://127.0.0.1:38080
+```
+
+Then start QR code login:
 
 ```bash
 openclaw channels login --channel openclaw-weixin
 ```
 
-A QR code will appear in the terminal. Scan it with your phone and confirm the authorization. Once confirmed, the login credentials will be saved locally automatically — no further action is needed.
+A QR code will appear in the terminal. Scan it with your phone and confirm the authorization. Once confirmed, the login credentials and service URL are saved with that account.
 
-### 4. Restart the gateway
+Changing the channel-level `baseUrl` later only affects the next new account login. Existing accounts keep their saved backend, so one `openclaw-weixin` channel can use the official backend and multiple Webox instances at the same time.
+
+Restart the gateway:
 
 ```bash
 openclaw gateway restart
@@ -58,7 +56,17 @@ openclaw gateway restart
 
 ## Adding More WeChat Accounts
 
+Log in through the official backend:
+
 ```bash
+openclaw config set channels.openclaw-weixin.baseUrl https://ilinkai.weixin.qq.com
+openclaw channels login --channel openclaw-weixin
+```
+
+Log in through another Webox instance:
+
+```bash
+openclaw config set channels.openclaw-weixin.baseUrl http://127.0.0.1:38081
 openclaw channels login --channel openclaw-weixin
 ```
 
@@ -322,7 +330,7 @@ All media types (image/voice/file/video) are transferred via CDN using AES-128-E
 ## Uninstall
 
 ```bash
-openclaw plugins uninstall @tencent-weixin/openclaw-weixin
+openclaw plugins uninstall @netcat-ai/openclaw-weixin
 ```
 
 ## Troubleshooting
@@ -335,11 +343,7 @@ Your OpenClaw version is too old for this plugin version. Check with:
 openclaw --version
 ```
 
-Install the legacy plugin line instead:
-
-```bash
-openclaw plugins install @tencent-weixin/openclaw-weixin@legacy
-```
+Upgrade OpenClaw before installing this plugin.
 
 ### Channel shows "OK" but doesn't connect
 

@@ -167,7 +167,9 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
         // authorization pipeline (resolveSenderCommandAuthorizationWithRuntime).
 
         const fromUserId = full.from_user_id ?? "";
-        const cachedConfig = await configManager.getForUser(fromUserId, full.context_token);
+        const cachedConfig = full.group_id
+          ? { typingTicket: "" }
+          : await configManager.getForUser(fromUserId, full.context_token);
 
         await processOneMessage(full, {
           accountId,

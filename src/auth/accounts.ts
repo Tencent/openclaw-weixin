@@ -346,6 +346,7 @@ export type ResolvedWeixinAccount = {
 type WeixinAccountConfig = {
   name?: string;
   enabled?: boolean;
+  baseUrl?: string;
   cdnBaseUrl?: string;
   /** Optional SKRouteTag source; read from openclaw.json when `accountId` is passed to `loadConfigRouteTag`. */
   routeTag?: number | string;
@@ -373,19 +374,21 @@ export function resolveWeixinAccount(
   }
   const id = normalizeAccountId(raw);
   const section = cfg.channels?.["openclaw-weixin"] as WeixinSectionConfig | undefined;
-  const accountCfg: WeixinAccountConfig = section?.accounts?.[id] ?? section ?? {};
+  const accountCfg: WeixinAccountConfig = section?.accounts?.[id] ?? {};
 
   const accountData = loadWeixinAccount(id);
   const token = accountData?.token?.trim() || undefined;
   const stateBaseUrl = accountData?.baseUrl?.trim() || "";
+  const accountBaseUrl = accountCfg.baseUrl?.trim() || "";
+  const sectionBaseUrl = section?.baseUrl?.trim() || "";
 
   return {
     accountId: id,
-    baseUrl: stateBaseUrl || DEFAULT_BASE_URL,
-    cdnBaseUrl: accountCfg.cdnBaseUrl?.trim() || CDN_BASE_URL,
+    baseUrl: accountBaseUrl || stateBaseUrl || sectionBaseUrl || DEFAULT_BASE_URL,
+    cdnBaseUrl: accountCfg.cdnBaseUrl?.trim() || section?.cdnBaseUrl?.trim() || CDN_BASE_URL,
     token,
-    enabled: accountCfg.enabled !== false,
+    enabled: (accountCfg.enabled ?? section?.enabled) !== false,
     configured: Boolean(token),
-    name: accountCfg.name?.trim() || undefined,
+    name: accountCfg.name?.trim() || section?.name?.trim() || undefined,
   };
 }

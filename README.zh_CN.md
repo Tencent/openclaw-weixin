@@ -19,37 +19,35 @@ OpenClaw 的微信渠道插件，支持通过扫码完成登录授权。
 
 查看版本：`openclaw --version`
 
-## 一键安装
+## 安装
 
 ```bash
-npx -y @tencent-weixin/openclaw-weixin-cli install
+openclaw plugins install @netcat-ai/openclaw-weixin
 ```
 
-## 手动安装
-
-如果一键安装不适用，可以按以下步骤手动操作：
-
-### 1. 安装插件
-
-```bash
-openclaw plugins install "@tencent-weixin/openclaw-weixin"
-```
-
-### 2. 启用插件
+启用插件：
 
 ```bash
 openclaw config set plugins.entries.openclaw-weixin.enabled true
 ```
 
-### 3. 扫码登录
+使用自定义 iLink 后端时，在扫码登录前设置本次登录使用的服务地址：
+
+```bash
+openclaw config set channels.openclaw-weixin.baseUrl http://127.0.0.1:38080
+```
+
+开始扫码登录：
 
 ```bash
 openclaw channels login --channel openclaw-weixin
 ```
 
-终端会显示一个二维码，用手机扫码并在手机上确认授权。确认后，登录凭证会自动保存到本地，无需额外操作。
+终端会显示一个二维码，用手机扫码并在手机上确认授权。确认后，登录凭证和本次使用的服务地址会自动保存到该账号。
 
-### 4. 重启 gateway
+之后修改渠道级 `baseUrl` 只影响下一次新账号登录，不会改变已有账号使用的后端。因此，同一个 `openclaw-weixin` 渠道可以同时连接官方后端和多个 Webox。
+
+重启 gateway：
 
 ```bash
 openclaw gateway restart
@@ -57,7 +55,17 @@ openclaw gateway restart
 
 ## 添加更多微信账号
 
+登录官方后端：
+
 ```bash
+openclaw config set channels.openclaw-weixin.baseUrl https://ilinkai.weixin.qq.com
+openclaw channels login --channel openclaw-weixin
+```
+
+登录另一个 Webox：
+
+```bash
+openclaw config set channels.openclaw-weixin.baseUrl http://127.0.0.1:38081
 openclaw channels login --channel openclaw-weixin
 ```
 
@@ -318,7 +326,7 @@ openclaw config set session.dmScope per-account-channel-peer
 ## 卸载
 
 ```bash
-openclaw plugins uninstall @tencent-weixin/openclaw-weixin
+openclaw plugins uninstall @netcat-ai/openclaw-weixin
 ```
 
 ## 故障排查
@@ -331,11 +339,7 @@ openclaw plugins uninstall @tencent-weixin/openclaw-weixin
 openclaw --version
 ```
 
-安装旧版插件线：
-
-```bash
-openclaw plugins install @tencent-weixin/openclaw-weixin@legacy
-```
+请先升级 OpenClaw，再安装此插件。
 
 ### Channel 显示 "OK" 但未连接
 

@@ -168,6 +168,10 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
       type: "object",
       additionalProperties: false,
       properties: {
+        baseUrl: {
+          type: "string",
+          description: "iLink API base URL used for QR login and account requests.",
+        },
         replyProgressMessages: {
           type: "boolean",
           default: true,
@@ -177,7 +181,7 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
     },
   },
   capabilities: {
-    chatTypes: ["direct"],
+    chatTypes: ["direct", "group"],
     media: true,
     blockStreaming: true,
   },
@@ -189,8 +193,8 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
   },
   messaging: {
     targetResolver: {
-      // Weixin user IDs always end with @im.wechat; treat as direct IDs, skip directory lookup.
-      looksLikeId: (raw) => raw.endsWith("@im.wechat"),
+      // Weixin user and Webox group IDs are already routable; skip directory lookup.
+      looksLikeId: (raw) => raw.endsWith("@im.wechat") || raw.endsWith("@chatroom"),
     },
   },
   agentPrompt: {

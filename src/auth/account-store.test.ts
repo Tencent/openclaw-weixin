@@ -106,6 +106,65 @@ describe("saveWeixinAccount", () => {
   });
 });
 
+describe("resolveWeixinAccount", () => {
+  it("uses account config baseUrl for a new account", async () => {
+    const { resolveWeixinAccount } = await loadModule();
+    const account = resolveWeixinAccount(
+      {
+        channels: {
+          "openclaw-weixin": {
+            baseUrl: "https://section.example.com",
+            accounts: {
+              primary: { baseUrl: "http://127.0.0.1:38080" },
+            },
+          },
+        },
+      } as never,
+      "primary",
+    );
+
+    expect(account.baseUrl).toBe("http://127.0.0.1:38080");
+    expect(account.configured).toBe(false);
+  });
+
+  it("keeps each stored account backend when the channel login default changes", async () => {
+    const { resolveWeixinAccount, saveWeixinAccount } = await loadModule();
+    saveWeixinAccount("stored", { token: "tok", baseUrl: "https://stored.example.com" });
+
+    const storedAccount = resolveWeixinAccount(
+      { channels: { "openclaw-weixin": { baseUrl: "https://section.example.com" } } } as never,
+      "stored",
+    );
+    const newAccount = resolveWeixinAccount(
+      { channels: { "openclaw-weixin": { baseUrl: "https://section.example.com" } } } as never,
+      "new",
+    );
+
+    expect(storedAccount.baseUrl).toBe("https://stored.example.com");
+    expect(newAccount.baseUrl).toBe("https://section.example.com");
+    expect(storedAccount.configured).toBe(true);
+  });
+
+  it("allows account config to override its stored backend", async () => {
+    const { resolveWeixinAccount, saveWeixinAccount } = await loadModule();
+    saveWeixinAccount("stored", { token: "tok", baseUrl: "https://stored.example.com" });
+
+    const account = resolveWeixinAccount(
+      {
+        channels: {
+          "openclaw-weixin": {
+            baseUrl: "https://section.example.com",
+            accounts: { stored: { baseUrl: "https://account.example.com" } },
+          },
+        },
+      } as never,
+      "stored",
+    );
+
+    expect(account.baseUrl).toBe("https://account.example.com");
+  });
+});
+
 describe("clearWeixinAccount", () => {
   it("removes account file", async () => {
     const { saveWeixinAccount, clearWeixinAccount, loadWeixinAccount } = await loadModule();

@@ -4,6 +4,24 @@
 
 This project follows the [Keep a Changelog](https://keepachangelog.com/) format.
 
+## [2.4.8] - 2026-07-16
+
+### Added
+
+- **Group chat support:** Route Webox `group_id` / `@chatroom` conversations, sessions, context tokens, and replies by group while preserving the member identity in `SenderId`.
+
+### Security
+
+- Keep plugin-local slash commands and direct-message route metadata isolated from group traffic; group replies also skip direct-user typing configuration.
+
+## [2.4.7] - 2026-07-12
+
+### Changed
+
+- Published the fork as `@netcat-ai/openclaw-weixin`.
+- Added channel- and account-level `baseUrl` configuration for custom iLink backends; account configuration takes precedence over channel configuration and saved credentials.
+- QR login and QR refresh now use the resolved account base URL instead of the fixed Tencent endpoint.
+
 ## [2.4.5] - 2026-06-22
 
 ### Added

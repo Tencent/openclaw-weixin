@@ -146,7 +146,9 @@ export type WeixinMsgContext = {
   MessageSid: string;
   Timestamp?: number;
   Provider: "openclaw-weixin";
-  ChatType: "direct";
+  ChatType: "direct" | "group";
+  GroupSubject?: string;
+  SenderId?: string;
   /** Set by monitor after resolveAgentRoute so dispatchReplyFromConfig uses the correct session. */
   SessionKey?: string;
   context_token?: string;
@@ -222,18 +224,22 @@ export function weixinMessageToMsgContext(
   accountId: string,
   opts?: WeixinInboundMediaOpts,
 ): WeixinMsgContext {
-  const from_user_id = msg.from_user_id ?? "";
+  const groupId = msg.group_id;
+  const senderId = msg.from_user_id ?? "";
+  const to = groupId || senderId;
   const ctx: WeixinMsgContext = {
     Body: bodyFromItemList(msg.item_list),
-    From: from_user_id,
-    To: from_user_id,
+    From: to,
+    To: to,
     AccountId: accountId,
     OriginatingChannel: "openclaw-weixin",
-    OriginatingTo: from_user_id,
+    OriginatingTo: to,
     MessageSid: generateMessageSid(),
     Timestamp: msg.create_time_ms,
     Provider: "openclaw-weixin",
-    ChatType: "direct",
+    ChatType: groupId ? "group" : "direct",
+    GroupSubject: groupId,
+    SenderId: msg.from_user_id,
   };
   if (msg.context_token) {
     ctx.context_token = msg.context_token;

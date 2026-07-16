@@ -82,10 +82,39 @@ describe("weixinMessageToMsgContext", () => {
     expect(ctx.To).toBe("");
   });
 
+  it("separates a group conversation from its member sender", () => {
+    const msg: WeixinMessage = {
+      from_user_id: "wxid-alice",
+      group_id: "family@chatroom",
+      item_list: [{ type: MessageItemType.TEXT, text_item: { text: "hello group" } }],
+      context_token: "group-context",
+    };
+    const ctx = weixinMessageToMsgContext(msg, "acc");
+    expect(ctx).toMatchObject({
+      Body: "hello group",
+      From: "family@chatroom",
+      To: "family@chatroom",
+      OriginatingTo: "family@chatroom",
+      ChatType: "group",
+      GroupSubject: "family@chatroom",
+      SenderId: "wxid-alice",
+      context_token: "group-context",
+    });
+    expect(weixinMessageToMsgContext({ ...msg, from_user_id: undefined }, "acc").SenderId)
+      .toBeUndefined();
+  });
+
   it("handles empty item_list", () => {
     const msg: WeixinMessage = { from_user_id: "u", item_list: [] };
     const ctx = weixinMessageToMsgContext(msg, "acc");
     expect(ctx.Body).toBe("");
+  });
+
+  it("uses voice transcription as the message body", () => {
+    const msg: WeixinMessage = {
+      item_list: [{ type: MessageItemType.VOICE, voice_item: { text: "transcribed voice" } }],
+    };
+    expect(weixinMessageToMsgContext(msg, "acc").Body).toBe("transcribed voice");
   });
 
   it("handles missing context_token", () => {
