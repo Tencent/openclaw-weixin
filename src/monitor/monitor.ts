@@ -88,6 +88,7 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
     full: WeixinMessage,
     onReplyAdmitted: () => void,
   ): Promise<void> => {
+    if (abortSignal?.aborted) return;
     aLog.info(
       `inbound message: from=${full.from_user_id} types=${full.item_list?.map((i) => i.type).join(",") ?? "none"}`,
     );
@@ -100,6 +101,7 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
 
     const fromUserId = full.from_user_id ?? "";
     const cachedConfig = await configManager.getForUser(fromUserId, full.context_token);
+    if (abortSignal?.aborted) return;
 
     await processOneMessage(full, {
       accountId,

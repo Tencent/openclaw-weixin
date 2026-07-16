@@ -77,6 +77,7 @@ describe("monitorWeixinProvider", () => {
         ret: 0,
         msgs: [
           makeMessage("second", { message_id: 102, context_token: "token-2" }),
+          makeMessage("third", { message_id: 104, context_token: "token-4" }),
           makeMessage("/approve plugin:test approve", {
             message_id: 103,
             context_token: "token-3",
@@ -133,11 +134,13 @@ describe("monitorWeixinProvider", () => {
       firstPreprocessing.resolve();
       await secondStarted.promise;
       await monitor;
+      await new Promise((resolve) => setTimeout(resolve, 0));
       expect(started).toEqual(["first", "/approve plugin:test approve", "second"]);
       expect(saveGetUpdatesBufMock).toHaveBeenLastCalledWith("sync-buf", "cursor-2");
       expect(setContextTokenMock.mock.calls).toEqual([
         ["acc-monitor", "user-a", "token-1"],
         ["acc-monitor", "user-a", "token-2"],
+        ["acc-monitor", "user-a", "token-4"],
         ["acc-monitor", "user-a", "token-3"],
       ]);
     } finally {

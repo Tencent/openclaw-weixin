@@ -456,12 +456,17 @@ export async function processOneMessage(
       },
     });
 
+  let queuedFollowup = false;
   const dispatchReplyOptions: DispatchReplyOptions = {
     ...replyOptions,
     ...(replyProgressSender?.replyOptions ?? {}),
     // Newer hosts use this marker for active-run admission; older hosts ignore it.
     queuedFollowupLifecycle: {
-      onEnqueued: deps.onReplyAdmitted,
+      onEnqueued: () => {
+        queuedFollowup = true;
+        deps.onReplyAdmitted?.();
+      },
+      onComplete: () => void replyProgressSender?.finalize(),
     },
     onAgentRunStart: () => deps.onReplyAdmitted?.(),
     onTurnAdopted: deps.onReplyAdmitted,
@@ -488,7 +493,7 @@ export async function processOneMessage(
     throw err;
   } finally {
     markDispatchIdle();
-    await replyProgressSender?.finalize();
+    if (!queuedFollowup) await replyProgressSender?.finalize();
 
     logger.info(
       `debug-check: accountId=${deps.accountId} debug=${String(debug)} hasContextToken=${Boolean(contextToken)}`,
