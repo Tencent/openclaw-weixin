@@ -216,11 +216,12 @@ export async function processOneMessage(
     );
   }
 
+  const routePeerId = ctx.To.toLowerCase();
   const route = deps.channelRuntime.routing.resolveAgentRoute({
     cfg: deps.config,
     channel: "openclaw-weixin",
     accountId: deps.accountId,
-    peer: { kind: "direct", id: ctx.To },
+    peer: { kind: "direct", id: routePeerId },
   });
   logger.debug(
     `resolveAgentRoute: agentId=${route.agentId ?? "(none)"} sessionKey=${route.sessionKey ?? "(none)"} mainSessionKey=${route.mainSessionKey ?? "(none)"}`,
@@ -260,7 +261,7 @@ export async function processOneMessage(
     updateLastRoute: {
       sessionKey: route.mainSessionKey,
       channel: "openclaw-weixin",
-      to: ctx.To,
+      to: routePeerId,
       accountId: deps.accountId,
     },
     onRecordError: (err) => deps.errLog(`recordInboundSession: ${String(err)}`),
