@@ -4,6 +4,12 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/) 格式。
 
+## [Unreleased]
+
+### 修复
+
+- **入站 getUpdates 双投递：** `processOneMessage` 在任何副作用之前按短 TTL 去重键认领消息（`message_id` → `client_id` → `seq` → 正文指纹），避免 iLink 长轮询至少一次投递（约 1 秒内重放）把同一条用户消息跑两遍 AI。`MessageSid` 在存在传输层 id 时使用同一稳定键。
+
 ## [2.4.5] - 2026-06-22
 
 ### 新增

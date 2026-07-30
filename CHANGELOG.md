@@ -4,6 +4,12 @@
 
 This project follows the [Keep a Changelog](https://keepachangelog.com/) format.
 
+## [Unreleased]
+
+### Fixed
+
+- **Inbound getUpdates duplicate delivery:** `processOneMessage` now claims a short-TTL dedupe key (`message_id` → `client_id` → `seq` → body fingerprint) before any side effects, so at-least-once iLink long-poll replays (~1s) no longer run the AI pipeline twice. `MessageSid` is derived from the same stable key when transport ids are present.
+
 ## [2.4.5] - 2026-06-22
 
 ### Added

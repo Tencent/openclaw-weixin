@@ -30,6 +30,11 @@ import {
   isMediaItem,
 } from "./inbound.js";
 import type { WeixinInboundMediaOpts } from "./inbound.js";
+import {
+  buildWeixinInboundDedupeKey,
+  claimWeixinInboundMessage,
+  logWeixinInboundDuplicate,
+} from "./inbound-dedupe.js";
 import { sendWeixinMediaFile } from "./send-media.js";
 import { StreamingMarkdownFilter } from "./markdown-filter.js";
 import { sendMessageWeixin } from "./send.js";
@@ -75,6 +80,19 @@ export async function processOneMessage(
       `processOneMessage: channelRuntime is undefined, skipping message from=${full.from_user_id}`,
     );
     deps.errLog("processOneMessage: channelRuntime is undefined, skip");
+    return;
+  }
+
+  // getUpdates is at-least-once; drop short-window replays before any side effects.
+  const dedupeKey = buildWeixinInboundDedupeKey(deps.accountId, full);
+  if (dedupeKey && !claimWeixinInboundMessage(dedupeKey)) {
+    logWeixinInboundDuplicate({
+      accountId: deps.accountId,
+      key: dedupeKey,
+      messageId: full.message_id,
+      seq: full.seq,
+      from: full.from_user_id,
+    });
     return;
   }
 
