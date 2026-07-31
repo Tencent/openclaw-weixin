@@ -4,10 +4,15 @@ import type { MessageItem, WeixinMessage } from "../api/types.js";
 import { MessageItemType } from "../api/types.js";
 import { logger } from "../util/logger.js";
 
-/** Drop short-window getUpdates replays (~1s typical); keep a few minutes for retries. */
+/**
+ * Replay-dedupe TTL for getUpdates at-least-once delivery (~1s typical spacing).
+ * Not a content-dedupe window: a new user send with a new message_id is always claimed.
+ * In-memory Map — single process only; multi-instance gateways need a shared store (out of scope).
+ */
 export const WEIXIN_INBOUND_DEDUPE_TTL_MS = 5 * 60 * 1000;
 const WEIXIN_INBOUND_DEDUPE_MAX_ENTRIES = 20_000;
 
+/** Process-local claim store (single-instance deploy). */
 const seenAt = new Map<string, number>();
 
 function extractTextForFallback(itemList?: MessageItem[]): string {

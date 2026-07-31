@@ -8,7 +8,7 @@ This project follows the [Keep a Changelog](https://keepachangelog.com/) format.
 
 ### Fixed
 
-- **Inbound getUpdates duplicate delivery:** `processOneMessage` now claims a short-TTL dedupe key (`message_id` → `client_id` → `seq` → body fingerprint) before any side effects, so at-least-once iLink long-poll replays (~1s) no longer run the AI pipeline twice. `MessageSid` is derived from the same stable key when transport ids are present.
+- **Inbound getUpdates duplicate delivery:** `processOneMessage` now claims a short-TTL dedupe key (`message_id` → `client_id` → `seq` → body fingerprint) before any side effects, so at-least-once iLink long-poll replays (~1s) no longer run the AI pipeline twice. `MessageSid` is derived from the same stable key when transport ids are present. The **5-minute window is a replay-dedupe window** (same transport id / same claim key from getUpdates at-least-once delivery), **not** a “message dedupe window” that drops a user intentionally sending the same text again with a new `message_id`. In-memory claim is **single-process only** (current deploy assumption: one gateway instance per account).
 
 ## [2.4.5] - 2026-06-22
 
