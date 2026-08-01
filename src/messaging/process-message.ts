@@ -33,7 +33,9 @@ import type { WeixinInboundMediaOpts } from "./inbound.js";
 import {
   buildWeixinInboundDedupeKey,
   claimWeixinInboundMessage,
+  commitWeixinInboundMessage,
   logWeixinInboundDuplicate,
+  releaseWeixinInboundMessage,
 } from "./inbound-dedupe.js";
 import { sendWeixinMediaFile } from "./send-media.js";
 import { StreamingMarkdownFilter } from "./markdown-filter.js";
@@ -83,19 +85,53 @@ export async function processOneMessage(
     return;
   }
 
-  // getUpdates is at-least-once; drop short-window replays before any side effects.
+  // getUpdates is at-least-once; claim before any side effects (disk tombstone on commit).
   const dedupeKey = buildWeixinInboundDedupeKey(deps.accountId, full);
-  if (dedupeKey && !claimWeixinInboundMessage(dedupeKey)) {
-    logWeixinInboundDuplicate({
-      accountId: deps.accountId,
-      key: dedupeKey,
-      messageId: full.message_id,
-      seq: full.seq,
-      from: full.from_user_id,
+  let heldDedupeKey: string | null = null;
+  if (dedupeKey) {
+    const claimed = await claimWeixinInboundMessage(dedupeKey, {
+      namespace: deps.accountId,
     });
-    return;
+    if (!claimed) {
+      logWeixinInboundDuplicate({
+        accountId: deps.accountId,
+        key: dedupeKey,
+        messageId: full.message_id,
+        seq: full.seq,
+        from: full.from_user_id,
+      });
+      return;
+    }
+    heldDedupeKey = dedupeKey;
   }
 
+  let dedupeFailed = false;
+  try {
+    await processOneMessageBody(full, deps);
+  } catch (error) {
+    dedupeFailed = true;
+    if (heldDedupeKey) {
+      releaseWeixinInboundMessage(heldDedupeKey, {
+        namespace: deps.accountId,
+        error,
+      });
+      heldDedupeKey = null;
+    }
+    throw error;
+  } finally {
+    if (heldDedupeKey && !dedupeFailed) {
+      await commitWeixinInboundMessage(heldDedupeKey, {
+        namespace: deps.accountId,
+      });
+    }
+  }
+}
+
+/** Inbound handling after replay-dedupe claim (slash / media / AI dispatch). */
+async function processOneMessageBody(
+  full: WeixinMessage,
+  deps: ProcessMessageDeps,
+): Promise<void> {
   const receivedAt = Date.now();
   const debug = isDebugMode(deps.accountId);
   const debugTrace: string[] = [];

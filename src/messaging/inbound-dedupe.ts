@@ -1,19 +1,62 @@
 import { createHash } from "node:crypto";
+import path from "node:path";
+
+import { createClaimableDedupe } from "openclaw/plugin-sdk/persistent-dedupe";
+import { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
 
 import type { MessageItem, WeixinMessage } from "../api/types.js";
 import { MessageItemType } from "../api/types.js";
 import { logger } from "../util/logger.js";
 
 /**
- * Replay-dedupe TTL for getUpdates at-least-once delivery (~1s typical spacing).
- * Not a content-dedupe window: a new user send with a new message_id is always claimed.
- * In-memory Map — single process only; multi-instance gateways need a shared store (out of scope).
+ * Replay-dedupe tombstone TTL for getUpdates at-least-once delivery.
+ * Covers ~1s iLink replays and longer redeliveries (e.g. 30–50 min after a
+ * stuck long turn). Not a content-dedupe window: a new user send with a new
+ * `message_id` is always claimed. Body-fingerprint keys include create_time_ms.
+ *
+ * Backed by `createClaimableDedupe` (memory + disk under OPENCLAW_STATE_DIR),
+ * so claims survive process restart. Concurrent multi-replica gateways still
+ * need a shared store / ingress drain (out of scope).
  */
-export const WEIXIN_INBOUND_DEDUPE_TTL_MS = 5 * 60 * 1000;
-const WEIXIN_INBOUND_DEDUPE_MAX_ENTRIES = 20_000;
+export const WEIXIN_INBOUND_DEDUPE_TTL_MS = 24 * 60 * 60 * 1000;
+const WEIXIN_INBOUND_DEDUPE_MEMORY_MAX = 20_000;
+const WEIXIN_INBOUND_DEDUPE_FILE_MAX = 20_000;
 
-/** Process-local claim store (single-instance deploy). */
-const seenAt = new Map<string, number>();
+function sanitizeSegment(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "global";
+  return trimmed.replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
+function createWeixinInboundDedupe(options?: { stateDir?: string | null }) {
+  const base = {
+    ttlMs: WEIXIN_INBOUND_DEDUPE_TTL_MS,
+    memoryMaxSize: WEIXIN_INBOUND_DEDUPE_MEMORY_MAX,
+  };
+  if (options?.stateDir === null) {
+    // Memory-only for unit tests.
+    return createClaimableDedupe(base);
+  }
+  const stateDir = options?.stateDir ?? resolveStateDir();
+  return createClaimableDedupe({
+    ...base,
+    fileMaxEntries: WEIXIN_INBOUND_DEDUPE_FILE_MAX,
+    resolveFilePath: (namespace) =>
+      path.join(
+        stateDir,
+        "openclaw-weixin",
+        "replay-dedupe",
+        `${sanitizeSegment(namespace)}.json`,
+      ),
+    onDiskError: (error) => {
+      logger.warn(
+        `[weixin] inbound replay-dedupe disk error: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    },
+  });
+}
+
+let inboundDedupe = createWeixinInboundDedupe();
 
 function extractTextForFallback(itemList?: MessageItem[]): string {
   if (!itemList?.length) return "";
@@ -61,36 +104,53 @@ export function buildWeixinInboundDedupeKey(
   return `weixin:v1:${accountId}:${from}:body:${digest}`;
 }
 
-function pruneExpired(now: number): void {
-  for (const [key, at] of seenAt) {
-    if (now - at > WEIXIN_INBOUND_DEDUPE_TTL_MS) seenAt.delete(key);
-  }
-  if (seenAt.size <= WEIXIN_INBOUND_DEDUPE_MAX_ENTRIES) return;
-  // Hard cap: drop oldest half when overflowing.
-  const entries = [...seenAt.entries()].sort((a, b) => a[1] - b[1]);
-  const drop = Math.ceil(entries.length / 2);
-  for (let i = 0; i < drop; i++) {
-    seenAt.delete(entries[i]![0]);
-  }
-}
+export type WeixinInboundDedupeOptions = {
+  /** Account-scoped disk namespace (file shard). */
+  namespace?: string;
+  now?: number;
+};
 
 /**
  * Claim a logical inbound message for processing.
- * @returns true if this is the first claim (process it); false if a duplicate within TTL.
+ * @returns true if this is the first claim (process it); false if duplicate/in-flight.
  */
-export function claimWeixinInboundMessage(key: string, now = Date.now()): boolean {
-  pruneExpired(now);
-  const prev = seenAt.get(key);
-  if (prev != null && now - prev <= WEIXIN_INBOUND_DEDUPE_TTL_MS) {
-    return false;
-  }
-  seenAt.set(key, now);
-  return true;
+export async function claimWeixinInboundMessage(
+  key: string,
+  options?: WeixinInboundDedupeOptions,
+): Promise<boolean> {
+  const result = await inboundDedupe.claim(key, {
+    namespace: options?.namespace,
+    now: options?.now,
+  });
+  return result.kind === "claimed";
 }
 
-/** Test helper — clears the in-memory cache. */
+/** Persist the claim after successful handling (survives restart for TTL). */
+export async function commitWeixinInboundMessage(
+  key: string,
+  options?: WeixinInboundDedupeOptions,
+): Promise<void> {
+  await inboundDedupe.commit(key, {
+    namespace: options?.namespace,
+    now: options?.now,
+  });
+}
+
+/** Release a held claim so a later delivery can retry after a thrown failure. */
+export function releaseWeixinInboundMessage(
+  key: string,
+  options?: WeixinInboundDedupeOptions & { error?: unknown },
+): void {
+  inboundDedupe.release(key, {
+    namespace: options?.namespace,
+    error: options?.error,
+  });
+}
+
+/** Test helper — switch to memory-only guard and clear. */
 export function resetWeixinInboundDedupeForTests(): void {
-  seenAt.clear();
+  inboundDedupe.clearMemory();
+  inboundDedupe = createWeixinInboundDedupe({ stateDir: null });
 }
 
 export function logWeixinInboundDuplicate(params: {
