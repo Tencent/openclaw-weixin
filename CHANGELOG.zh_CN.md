@@ -4,6 +4,12 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/) 格式。
 
+## [Unreleased]
+
+### 修复
+
+- **入站 getUpdates 双投递：** `processOneMessage` 在任何副作用之前用 OpenClaw `createClaimableDedupe` 认领稳定去重键（`message_id` → `client_id` → `seq` → 正文指纹），处理完成后在 `$OPENCLAW_STATE_DIR/openclaw-weixin/replay-dedupe/` **落盘墓碑**，避免 iLink 长轮询至少一次投递（约 1 秒重放）以及更长窗口重投（例如长任务卡住后的 30–50 分钟）把同一条用户消息跑两遍 AI，并在进程重启后仍生效。`MessageSid` 在存在传输层 id 时使用同一稳定键。**24 小时是「重放去重 / 墓碑窗口」**（同一传输层 id / claim key），**不是**「消息去重窗口」——用户故意再发一条相同正文、但带有新 `message_id` 的消息不会被吞。多副本网关仍需共享存储 / ingress drain（本 PR 不做）。
+
 ## [2.4.5] - 2026-06-22
 
 ### 新增

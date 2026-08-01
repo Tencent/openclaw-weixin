@@ -4,6 +4,12 @@
 
 This project follows the [Keep a Changelog](https://keepachangelog.com/) format.
 
+## [Unreleased]
+
+### Fixed
+
+- **Inbound getUpdates duplicate delivery:** `processOneMessage` claims a stable dedupe key (`message_id` → `client_id` → `seq` → body fingerprint) via OpenClaw `createClaimableDedupe` before any side effects, then **commits a disk tombstone** under `$OPENCLAW_STATE_DIR/openclaw-weixin/replay-dedupe/` so at-least-once iLink long-poll replays (~1s) and longer redeliveries (e.g. 30–50 min after a stuck long turn) do not run the AI pipeline twice — including across process restart. `MessageSid` uses the same key when transport ids are present. The **24-hour window is a replay-dedupe / tombstone window** (same transport id / claim key), **not** a “message dedupe window” that drops a user intentionally sending the same text again with a new `message_id`. Multi-replica gateways still need a shared store / ingress drain (out of scope).
+
 ## [2.4.5] - 2026-06-22
 
 ### Added

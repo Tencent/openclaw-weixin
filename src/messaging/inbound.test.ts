@@ -14,12 +14,18 @@ vi.mock("../util/logger.js", () => ({
   },
 }));
 
-// Mock crypto.randomBytes for deterministic MessageSid
-vi.mock("node:crypto", () => ({
-  default: {
+// Mock crypto.randomBytes for deterministic MessageSid; keep createHash real for stable sid fallback
+vi.mock("node:crypto", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:crypto")>();
+  return {
+    ...actual,
+    default: {
+      ...actual,
+      randomBytes: vi.fn(() => Buffer.from("deadbeef", "hex")),
+    },
     randomBytes: vi.fn(() => Buffer.from("deadbeef", "hex")),
-  },
-}));
+  };
+});
 
 describe("isMediaItem", () => {
   it("returns true for IMAGE type", () => {
@@ -71,8 +77,14 @@ describe("weixinMessageToMsgContext", () => {
     expect(ctx.Provider).toBe("openclaw-weixin");
     expect(ctx.ChatType).toBe("direct");
     expect(ctx.context_token).toBe("ctx-token-abc");
-    expect(ctx.MessageSid).toMatch(/^openclaw-weixin:\d+-[0-9a-f]+$/);
+    // Stable sid from body fingerprint when transport message_id/seq/client_id absent
+    expect(ctx.MessageSid).toMatch(/^weixin:v1:account1:user123:body:[0-9a-f]{16}$/);
     expect(ctx.Timestamp).toBe(1700000000000);
+  });
+
+  it("uses transport message_id for MessageSid when present", () => {
+    const ctx = weixinMessageToMsgContext({ ...baseMsg, message_id: 99 }, "account1");
+    expect(ctx.MessageSid).toBe("weixin:v1:account1:user123:mid:99");
   });
 
   it("handles missing from_user_id", () => {

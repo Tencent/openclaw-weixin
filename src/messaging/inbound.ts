@@ -6,6 +6,7 @@ import { generateId } from "../util/random.js";
 import type { WeixinMessage, MessageItem } from "../api/types.js";
 import { MessageItemType } from "../api/types.js";
 import { resolveStateDir } from "../storage/state-dir.js";
+import { buildWeixinInboundDedupeKey } from "./inbound-dedupe.js";
 
 // ---------------------------------------------------------------------------
 // Context token store (in-process cache + disk persistence)
@@ -131,7 +132,10 @@ export function findAccountIdsByContextToken(
 // Message ID generation
 // ---------------------------------------------------------------------------
 
-function generateMessageSid(): string {
+function generateMessageSid(msg: WeixinMessage, accountId: string): string {
+  // Prefer stable transport identity so transcripts/core can correlate deliveries.
+  const stable = buildWeixinInboundDedupeKey(accountId, msg);
+  if (stable) return stable;
   return generateId("openclaw-weixin");
 }
 
@@ -230,7 +234,7 @@ export function weixinMessageToMsgContext(
     AccountId: accountId,
     OriginatingChannel: "openclaw-weixin",
     OriginatingTo: from_user_id,
-    MessageSid: generateMessageSid(),
+    MessageSid: generateMessageSid(msg, accountId),
     Timestamp: msg.create_time_ms,
     Provider: "openclaw-weixin",
     ChatType: "direct",
