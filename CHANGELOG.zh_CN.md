@@ -4,6 +4,12 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/) 格式。
 
+## [Unreleased]
+
+### 修复
+
+- **扫码登录持久化稳定 `--account` 别名：** `channels login --account <alias>` 会同时写入 bot id 与别名凭证文件，多账号配置无需再手工复制 hash 文件；同 `userId` 清理会保留这两份。对应社区 PR：[NewFuture/openclaw-weixin#53](https://github.com/NewFuture/openclaw-weixin/pull/53)。
+
 ## [2.4.5] - 2026-06-22
 
 ### 新增

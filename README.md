@@ -58,11 +58,14 @@ openclaw gateway restart
 
 ## Adding More WeChat Accounts
 
+Prefer a stable `--account` alias so OpenClaw config can bind peers / allowlists by name:
+
 ```bash
-openclaw channels login --channel openclaw-weixin
+openclaw channels login --channel openclaw-weixin --account leader
+openclaw channels login --channel openclaw-weixin --account jinjin
 ```
 
-Each QR code login creates a new account entry, supporting multiple WeChat accounts online simultaneously.
+Each successful login writes credentials under both the server bot id (`hex-im-bot`) and the alias (`leader.json` / `jinjin.json`). Omitting `--account` still creates a new account entry from the bot id alone.
 
 ## Multi-Account Context Isolation
 

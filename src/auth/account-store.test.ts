@@ -120,3 +120,150 @@ describe("clearWeixinAccount", () => {
     expect(() => clearWeixinAccount("nonexistent")).not.toThrow();
   });
 });
+
+describe("clearStaleAccountsForUserId", () => {
+  it("removes only older accounts linked to the same user", async () => {
+    const {
+      saveWeixinAccount,
+      loadWeixinAccount,
+      registerWeixinAccountId,
+      listIndexedWeixinAccountIds,
+      clearStaleAccountsForUserId,
+    } = await loadModule();
+    saveWeixinAccount("account-current", {
+      token: "token-current",
+      userId: "user-shared",
+    });
+    saveWeixinAccount("account-stale", {
+      token: "token-stale",
+      userId: "user-shared",
+    });
+    saveWeixinAccount("account-other", {
+      token: "token-other",
+      userId: "user-other",
+    });
+    registerWeixinAccountId("account-current");
+    registerWeixinAccountId("account-stale");
+    registerWeixinAccountId("account-other");
+    const clearContextTokens = vi.fn();
+
+    clearStaleAccountsForUserId("account-current", "user-shared", clearContextTokens);
+
+    expect(listIndexedWeixinAccountIds()).toEqual(["account-current", "account-other"]);
+    expect(loadWeixinAccount("account-stale")).toBeNull();
+    expect(loadWeixinAccount("account-current")).not.toBeNull();
+    expect(clearContextTokens).toHaveBeenCalledOnce();
+    expect(clearContextTokens).toHaveBeenCalledWith("account-stale");
+  });
+
+  it("keeps both primary and alias when keepAccountIds lists both", async () => {
+    const {
+      saveWeixinAccount,
+      loadWeixinAccount,
+      registerWeixinAccountId,
+      listIndexedWeixinAccountIds,
+      clearStaleAccountsForUserId,
+    } = await loadModule();
+    saveWeixinAccount("bot-im-bot", { token: "tok", userId: "user-a" });
+    saveWeixinAccount("staff", { token: "tok", userId: "user-a" });
+    saveWeixinAccount("stale-im-bot", { token: "old", userId: "user-a" });
+    registerWeixinAccountId("bot-im-bot");
+    registerWeixinAccountId("staff");
+    registerWeixinAccountId("stale-im-bot");
+
+    clearStaleAccountsForUserId(["bot-im-bot", "staff"], "user-a");
+
+    expect(listIndexedWeixinAccountIds()).toEqual(["bot-im-bot", "staff"]);
+    expect(loadWeixinAccount("stale-im-bot")).toBeNull();
+    expect(loadWeixinAccount("staff")?.token).toBe("tok");
+  });
+});
+
+describe("resolveLoginAccountAlias", () => {
+  it("returns a stable human alias distinct from the bot id", async () => {
+    const { resolveLoginAccountAlias } = await loadModule();
+    expect(resolveLoginAccountAlias("collin", "9ff4830b870e-im-bot")).toBe("collin");
+  });
+
+  it("returns null when alias matches the primary bot id", async () => {
+    const { resolveLoginAccountAlias } = await loadModule();
+    expect(resolveLoginAccountAlias("9ff4830b870e-im-bot", "9ff4830b870e-im-bot")).toBeNull();
+    expect(resolveLoginAccountAlias("9ff4830b870e@im.bot", "9ff4830b870e-im-bot")).toBeNull();
+  });
+
+  it("returns null for ephemeral UUID session keys", async () => {
+    const { resolveLoginAccountAlias } = await loadModule();
+    expect(resolveLoginAccountAlias("550e8400-e29b-41d4-a716-446655440000", "bot-im-bot")).toBeNull();
+  });
+});
+
+describe("persistWeixinLoginAccounts", () => {
+  it("writes only the bot id when no stable alias is requested", async () => {
+    const {
+      persistWeixinLoginAccounts,
+      listIndexedWeixinAccountIds,
+      loadWeixinAccount,
+    } = await loadModule();
+    const result = persistWeixinLoginAccounts({
+      botAccountId: "abc@im.bot",
+      token: "tok-1",
+      baseUrl: "https://ilink.example.test",
+      userId: "user-1@im.wechat",
+    });
+
+    expect(result).toEqual({ primaryId: "abc-im-bot", aliasId: null });
+    expect(listIndexedWeixinAccountIds()).toEqual(["abc-im-bot"]);
+    expect(loadWeixinAccount("abc-im-bot")).toMatchObject({
+      token: "tok-1",
+      userId: "user-1@im.wechat",
+    });
+    expect(loadWeixinAccount("collin")).toBeNull();
+  });
+
+  it("writes alias credentials alongside the bot id for multi-account login", async () => {
+    const {
+      persistWeixinLoginAccounts,
+      listIndexedWeixinAccountIds,
+      loadWeixinAccount,
+    } = await loadModule();
+    const result = persistWeixinLoginAccounts({
+      botAccountId: "9ff4830b870e@im.bot",
+      token: "tok-alias",
+      baseUrl: "https://ilink.example.test",
+      userId: "o9cq80zLSSEWjtr2UODlOgvt3pO4@im.wechat",
+      requestedAccountId: "collin",
+    });
+
+    expect(result).toEqual({ primaryId: "9ff4830b870e-im-bot", aliasId: "collin" });
+    expect(listIndexedWeixinAccountIds()).toEqual(["9ff4830b870e-im-bot", "collin"]);
+    expect(loadWeixinAccount("collin")).toMatchObject({
+      token: "tok-alias",
+      userId: "o9cq80zLSSEWjtr2UODlOgvt3pO4@im.wechat",
+    });
+    expect(loadWeixinAccount("9ff4830b870e-im-bot")?.token).toBe("tok-alias");
+  });
+
+  it("does not delete the alias when clearing stale accounts for the same user", async () => {
+    const {
+      saveWeixinAccount,
+      registerWeixinAccountId,
+      persistWeixinLoginAccounts,
+      loadWeixinAccount,
+      listIndexedWeixinAccountIds,
+    } = await loadModule();
+    saveWeixinAccount("old-im-bot", { token: "old", userId: "user-shared@im.wechat" });
+    registerWeixinAccountId("old-im-bot");
+
+    persistWeixinLoginAccounts({
+      botAccountId: "new@im.bot",
+      token: "fresh",
+      userId: "user-shared@im.wechat",
+      requestedAccountId: "staff",
+    });
+
+    expect(loadWeixinAccount("old-im-bot")).toBeNull();
+    expect(loadWeixinAccount("staff")?.token).toBe("fresh");
+    expect(loadWeixinAccount("new-im-bot")?.token).toBe("fresh");
+    expect(listIndexedWeixinAccountIds()).toEqual(["new-im-bot", "staff"]);
+  });
+});

@@ -1,17 +1,14 @@
 import path from "node:path";
 
 import type { ChannelPlugin, OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk/core";
-import { normalizeAccountId } from "openclaw/plugin-sdk/account-id";
 import { resolvePreferredOpenClawTmpDir } from "openclaw/plugin-sdk/infra-runtime";
 
 import {
-  registerWeixinAccountId,
   loadWeixinAccount,
-  saveWeixinAccount,
   listWeixinAccountIds,
+  persistWeixinLoginAccounts,
   resolveWeixinAccount,
   triggerWeixinChannelReload,
-  clearStaleAccountsForUserId,
   DEFAULT_BASE_URL,
 } from "./auth/accounts.js";
 import type { ResolvedWeixinAccount } from "./auth/accounts.js";
@@ -359,20 +356,23 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
 
       if (waitResult.connected && waitResult.botToken && waitResult.accountId) {
         try {
-          // Normalize the raw ilink_bot_id (e.g. "hex@im.bot") to a filesystem-safe
-          // key (e.g. "hex-im-bot") so account files have no special chars.
-          const normalizedId = normalizeAccountId(waitResult.accountId);
-          saveWeixinAccount(normalizedId, {
+          // Persist under the server bot id and, when CLI/gateway passed a stable
+          // `--account` alias (e.g. collin), also under that alias so multi-account
+          // configs can resolve credentials without hand-copying hash files.
+          const { primaryId, aliasId } = persistWeixinLoginAccounts({
+            botAccountId: waitResult.accountId,
             token: waitResult.botToken,
             baseUrl: waitResult.baseUrl,
             userId: waitResult.userId,
+            requestedAccountId: account.accountId,
+            onClearContextTokens: clearContextTokensForAccount,
           });
-          registerWeixinAccountId(normalizedId);
-          if (waitResult.userId) {
-            clearStaleAccountsForUserId(normalizedId, waitResult.userId, clearContextTokensForAccount);
-          }
           void triggerWeixinChannelReload();
-          log(`\n已将此 OpenClaw 连接到微信。`);
+          log(
+            aliasId
+              ? `\n已将此 OpenClaw 连接到微信（账号 ${aliasId} → ${primaryId}）。`
+              : `\n已将此 OpenClaw 连接到微信。`,
+          );
         } catch (err) {
           logger.error(
             `auth.login: failed to save account data accountId=${waitResult.accountId} err=${String(err)}`,
@@ -517,18 +517,20 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
 
       if (result.connected && result.botToken && result.accountId) {
         try {
-          const normalizedId = normalizeAccountId(result.accountId);
-          saveWeixinAccount(normalizedId, {
+          const { primaryId, aliasId } = persistWeixinLoginAccounts({
+            botAccountId: result.accountId,
             token: result.botToken,
             baseUrl: result.baseUrl,
             userId: result.userId,
+            requestedAccountId: params.accountId,
+            onClearContextTokens: clearContextTokensForAccount,
           });
-          registerWeixinAccountId(normalizedId);
-          if (result.userId) {
-            clearStaleAccountsForUserId(normalizedId, result.userId, clearContextTokensForAccount);
-          }
           triggerWeixinChannelReload();
-          logger.info(`loginWithQrWait: saved account data for accountId=${normalizedId}`);
+          logger.info(
+            aliasId
+              ? `loginWithQrWait: saved account data primary=${primaryId} alias=${aliasId}`
+              : `loginWithQrWait: saved account data for accountId=${primaryId}`,
+          );
         } catch (err) {
           logger.error(`loginWithQrWait: failed to save account data err=${String(err)}`);
         }
