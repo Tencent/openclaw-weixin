@@ -163,6 +163,7 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
     blurb: "getUpdates long-poll upstream, sendMessage downstream; token auth.",
     order: 75,
   },
+  gatewayMethods: ["web.login.start", "web.login.wait"],
   configSchema: {
     schema: {
       type: "object",
