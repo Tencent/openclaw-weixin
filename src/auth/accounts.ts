@@ -84,17 +84,26 @@ export function unregisterWeixinAccountId(accountId: string): void {
  * Called after a successful QR login to ensure only the latest account remains
  * for a given WeChat user, preventing ambiguous contextToken matches.
  *
+ * `keepAccountIds` may list both the bot hash id and a stable CLI alias so a
+ * dual-file login (primary + alias) does not delete itself.
+ *
  * @param onClearContextTokens callback to clear context tokens for the removed account
  */
 export function clearStaleAccountsForUserId(
-  currentAccountId: string,
+  keepAccountIds: string | readonly string[],
   userId: string,
   onClearContextTokens?: (accountId: string) => void,
 ): void {
   if (!userId) return;
+  const keep = new Set(
+    (Array.isArray(keepAccountIds) ? keepAccountIds : [keepAccountIds])
+      .map((id) => id.trim())
+      .filter(Boolean),
+  );
+  if (keep.size === 0) return;
   const allIds = listIndexedWeixinAccountIds();
   for (const id of allIds) {
-    if (id === currentAccountId) continue;
+    if (keep.has(id)) continue;
     const data = loadWeixinAccount(id);
     if (data?.userId?.trim() === userId) {
       logger.info(`clearStaleAccountsForUserId: removing stale account=${id} (same userId=${userId})`);
@@ -103,6 +112,79 @@ export function clearStaleAccountsForUserId(
       unregisterWeixinAccountId(id);
     }
   }
+}
+
+/**
+ * True when `requestedAccountId` is a human-stable alias (e.g. `collin`), not the
+ * server bot id and not an ephemeral UUID session key used as login sessionKey.
+ */
+export function resolveLoginAccountAlias(
+  requestedAccountId: string | null | undefined,
+  primaryNormalizedId: string,
+): string | null {
+  const raw = requestedAccountId?.trim();
+  if (!raw) return null;
+  const alias = normalizeAccountId(raw);
+  if (!alias || alias === primaryNormalizedId) return null;
+  // Ephemeral login session keys must never become durable account files.
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(alias)) {
+    return null;
+  }
+  return alias;
+}
+
+export type PersistWeixinLoginAccountsResult = {
+  primaryId: string;
+  aliasId: string | null;
+};
+
+/**
+ * Persist QR-login credentials under the server bot id and, when the caller
+ * passed a stable `--account` alias, also under that alias (same token/userId).
+ *
+ * Multi-account deployments bind OpenClaw config to names like `leader` /
+ * `jinjin`, but iLink returns `hex@im.bot`. Without the alias file,
+ * `channels login --account <alias>` leaves only the hash credential and
+ * alias-based bindings / allowlists cannot resolve the linked userId.
+ */
+export function persistWeixinLoginAccounts(params: {
+  botAccountId: string;
+  token: string;
+  baseUrl?: string;
+  userId?: string;
+  requestedAccountId?: string | null;
+  onClearContextTokens?: (accountId: string) => void;
+}): PersistWeixinLoginAccountsResult {
+  const primaryId = normalizeAccountId(params.botAccountId);
+  if (!primaryId) {
+    throw new Error("weixin: bot accountId is required after login");
+  }
+  const creds = {
+    token: params.token,
+    baseUrl: params.baseUrl,
+    userId: params.userId,
+  };
+  saveWeixinAccount(primaryId, creds);
+
+  const aliasId = resolveLoginAccountAlias(params.requestedAccountId, primaryId);
+  if (aliasId) {
+    saveWeixinAccount(aliasId, creds);
+    logger.info(
+      `persistWeixinLoginAccounts: wrote alias=${aliasId} alongside primary=${primaryId}`,
+    );
+  }
+
+  const keep = aliasId ? [primaryId, aliasId] : [primaryId];
+  if (params.userId?.trim()) {
+    clearStaleAccountsForUserId(keep, params.userId.trim(), params.onClearContextTokens);
+  }
+
+  registerWeixinAccountId(primaryId);
+  if (aliasId) {
+    registerWeixinAccountId(aliasId);
+  }
+
+  return { primaryId, aliasId };
 }
 
 // ---------------------------------------------------------------------------

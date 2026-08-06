@@ -4,6 +4,12 @@
 
 This project follows the [Keep a Changelog](https://keepachangelog.com/) format.
 
+## [Unreleased]
+
+### Fixed
+
+- **QR login persists stable `--account` alias:** `channels login --account <alias>` now writes credentials under both the normalized bot id and the alias, so multi-account configs resolve without hand-copying hash files. Stale-`userId` cleanup keeps both files. See also community PR [NewFuture/openclaw-weixin#53](https://github.com/NewFuture/openclaw-weixin/pull/53).
+
 ## [2.4.5] - 2026-06-22
 
 ### Added

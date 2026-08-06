@@ -57,11 +57,14 @@ openclaw gateway restart
 
 ## 添加更多微信账号
 
+建议使用稳定的 `--account` 别名，便于在 OpenClaw 配置里按名称绑定 peer / allowlist：
+
 ```bash
-openclaw channels login --channel openclaw-weixin
+openclaw channels login --channel openclaw-weixin --account leader
+openclaw channels login --channel openclaw-weixin --account jinjin
 ```
 
-每次扫码登录都会创建一个新的账号条目，支持多个微信号同时在线。
+每次登录成功后，会同时写入服务端 bot id（`hex-im-bot`）与别名（`leader.json` / `jinjin.json`）两份凭证。省略 `--account` 时仍只按 bot id 创建账号条目。
 
 ## 多账号上下文隔离
 
