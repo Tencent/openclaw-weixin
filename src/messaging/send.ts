@@ -73,7 +73,9 @@ export async function sendMessageWeixin(params: {
 }): Promise<{ messageId: string }> {
   const { to, text, opts } = params;
   if (!opts.contextToken) {
-    logger.warn(`sendMessageWeixin: contextToken missing for to=${to}, sending without context`);
+    const e = new Error(`[openclaw-weixin] sendMessageWeixin: contextToken missing for to=${to} — refusing to send (silent-drop risk; see upstream issue)`);
+    logger.error(e.message);
+    throw e;
   }
   const clientId = generateClientId();
   const req = buildSendMessageReq({
@@ -107,7 +109,9 @@ export async function sendMessageItemWeixin(params: {
 }): Promise<{ messageId: string }> {
   const { to, item, opts } = params;
   if (!opts.contextToken) {
-    logger.warn(`sendMessageItemWeixin: contextToken missing for to=${to}, sending without context`);
+    const e = new Error(`[openclaw-weixin] sendMessageItemWeixin: contextToken missing for to=${to} — refusing to send (silent-drop risk; see upstream issue)`);
+    logger.error(e.message);
+    throw e;
   }
   const clientId = params.clientId ?? generateClientId();
   const req: SendMessageReq = {
@@ -209,7 +213,9 @@ export async function sendImageMessageWeixin(params: {
 }): Promise<{ messageId: string }> {
   const { to, text, uploaded, opts } = params;
   if (!opts.contextToken) {
-    logger.warn(`sendImageMessageWeixin: contextToken missing for to=${to}, sending without context`);
+    const e = new Error(`[openclaw-weixin] sendImageMessageWeixin: contextToken missing for to=${to} — refusing to send (silent-drop risk; see upstream issue)`);
+    logger.error(e.message);
+    throw e;
   }
   logger.info(
     `sendImageMessageWeixin: to=${to} filekey=${uploaded.filekey} fileSize=${uploaded.fileSize} aeskey=present`,
@@ -243,7 +249,9 @@ export async function sendVideoMessageWeixin(params: {
 }): Promise<{ messageId: string }> {
   const { to, text, uploaded, opts } = params;
   if (!opts.contextToken) {
-    logger.warn(`sendVideoMessageWeixin: contextToken missing for to=${to}, sending without context`);
+    const e = new Error(`[openclaw-weixin] sendVideoMessageWeixin: contextToken missing for to=${to} — refusing to send (silent-drop risk; see upstream issue)`);
+    logger.error(e.message);
+    throw e;
   }
 
   const videoItem: MessageItem = {
@@ -275,7 +283,9 @@ export async function sendFileMessageWeixin(params: {
 }): Promise<{ messageId: string }> {
   const { to, text, fileName, uploaded, opts } = params;
   if (!opts.contextToken) {
-    logger.warn(`sendFileMessageWeixin: contextToken missing for to=${to}, sending without context`);
+    const e = new Error(`[openclaw-weixin] sendFileMessageWeixin: contextToken missing for to=${to} — refusing to send (silent-drop risk; see upstream issue)`);
+    logger.error(e.message);
+    throw e;
   }
   const fileItem: MessageItem = {
     type: MessageItemType.FILE,
