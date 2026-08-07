@@ -1,7 +1,6 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
-import { createTypingCallbacks } from "openclaw/plugin-sdk/channel-runtime";
 import {
   resolveSenderCommandAuthorizationWithRuntime,
   resolveDirectDmAuthorizationOutcome,
@@ -35,6 +34,9 @@ import { StreamingMarkdownFilter } from "./markdown-filter.js";
 import { sendMessageWeixin } from "./send.js";
 import { WeixinReplyProgressSender } from "./reply-progress-sender.js";
 import { handleSlashCommand } from "./slash-commands.js";
+import { loadCreateTypingCallbacks } from "./typing-callbacks.js";
+
+const createTypingCallbacks = await loadCreateTypingCallbacks();
 
 const MEDIA_OUTBOUND_TEMP_DIR = path.join(resolvePreferredOpenClawTmpDir(), "weixin/media/outbound-temp");
 
