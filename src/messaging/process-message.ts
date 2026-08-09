@@ -15,6 +15,7 @@ import { MessageItemType, TypingStatus } from "../api/types.js";
 import { loadWeixinAccount } from "../auth/accounts.js";
 import { readFrameworkAllowFromList } from "../auth/pairing.js";
 import { downloadRemoteImageToTemp } from "../cdn/upload.js";
+import { resolveWeixinBlockStreamingEnabled } from "../config/block-streaming.js";
 import { resolveReplyProgressMessagesEnabled } from "../config/reply-progress.js";
 import { downloadMediaFromItem } from "../media/media-download.js";
 import { logger } from "../util/logger.js";
@@ -458,7 +459,10 @@ export async function processOneMessage(
           replyOptions: {
             ...replyOptions,
             ...(replyProgressSender?.replyOptions ?? {}),
-            disableBlockStreaming: true,
+            disableBlockStreaming: !resolveWeixinBlockStreamingEnabled(
+              deps.config,
+              deps.accountId,
+            ),
           },
         }),
     });

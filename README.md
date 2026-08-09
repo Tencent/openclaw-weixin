@@ -72,6 +72,16 @@ By default, DMs can share one session bucket. For **multiple logged-in WeChat ac
 openclaw config set session.dmScope per-account-channel-peer
 ```
 
+## Block Streaming
+
+Block streaming is enabled by default, so completed text blocks can reach WeChat while the agent continues working. To wait for the complete final reply instead:
+
+```bash
+openclaw config set channels.openclaw-weixin.blockStreaming false
+```
+
+The setting can also be overridden per account with `channels.openclaw-weixin.accounts.<accountId>.blockStreaming`.
+
 ## Custom BotAgent (optional)
 
 Every outbound request to the WeChat backend carries a self-declared `bot_agent`

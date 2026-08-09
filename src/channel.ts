@@ -168,6 +168,11 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
       type: "object",
       additionalProperties: false,
       properties: {
+        blockStreaming: {
+          type: "boolean",
+          default: true,
+          description: "Send completed text blocks before the final reply.",
+        },
         replyProgressMessages: {
           type: "boolean",
           default: true,

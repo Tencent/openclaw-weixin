@@ -6,6 +6,7 @@ describe("WeixinConfigSchema", () => {
     const result = WeixinConfigSchema.parse({});
     expect(result.baseUrl).toBe("https://ilinkai.weixin.qq.com");
     expect(result.cdnBaseUrl).toBe("https://novac2c.cdn.weixin.qq.com/c2c");
+    expect(result.blockStreaming).toBe(true);
     expect(result.replyProgressMessages).toBe(true);
   });
 
@@ -18,13 +19,15 @@ describe("WeixinConfigSchema", () => {
     expect(result.cdnBaseUrl).toBe("https://custom.cdn.com");
   });
 
-  it("accepts optional name and enabled fields", () => {
+  it("accepts optional account fields", () => {
     const result = WeixinConfigSchema.parse({
       name: "my-bot",
       enabled: false,
+      blockStreaming: false,
     });
     expect(result.name).toBe("my-bot");
     expect(result.enabled).toBe(false);
+    expect(result.blockStreaming).toBe(false);
   });
 
   it("accepts disabling reply progress messages", () => {
@@ -37,11 +40,12 @@ describe("WeixinConfigSchema", () => {
   it("accepts accounts map", () => {
     const result = WeixinConfigSchema.parse({
       accounts: {
-        "acc1": { name: "Bot 1", enabled: true },
+        "acc1": { name: "Bot 1", enabled: true, blockStreaming: false },
         "acc2": { name: "Bot 2" },
       },
     });
     expect(result.accounts?.acc1?.name).toBe("Bot 1");
+    expect(result.accounts?.acc1?.blockStreaming).toBe(false);
     expect(result.accounts?.acc2?.name).toBe("Bot 2");
   });
 

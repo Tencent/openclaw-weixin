@@ -71,6 +71,16 @@ openclaw channels login --channel openclaw-weixin
 openclaw config set session.dmScope per-account-channel-peer
 ```
 
+## 分块流式回复
+
+分块流式回复默认开启，因此 Agent 继续工作时，已完成的文本块可以先发送到微信。如需等待完整的最终回复再发送：
+
+```bash
+openclaw config set channels.openclaw-weixin.blockStreaming false
+```
+
+也可以通过 `channels.openclaw-weixin.accounts.<accountId>.blockStreaming` 为单个账号覆盖此设置。
+
 ## 自定义 BotAgent（可选）
 
 每条出站请求会带一个自我声明的 `bot_agent` 字段——类似 HTTP `User-Agent`——用于
