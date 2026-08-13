@@ -61,6 +61,12 @@ describe("resolveFrameworkAllowFromPath", () => {
     // Only [\\/:*?"<>|] and ".." are replaced; @ and dots are preserved
     expect(result).toContain("openclaw-weixin-abc@im.bot-allowFrom.json");
   });
+
+  it("rejects empty or fully unsafe account IDs", async () => {
+    const { resolveFrameworkAllowFromPath } = await loadModule();
+    expect(() => resolveFrameworkAllowFromPath("   ")).toThrow("invalid key");
+    expect(() => resolveFrameworkAllowFromPath("/")).toThrow("invalid key");
+  });
 });
 
 describe("registerUserInFrameworkStore", () => {

@@ -22,6 +22,9 @@ describe("parseOpenClawVersion", () => {
     expect(parseOpenClawVersion("abc")).toBeNull();
     expect(parseOpenClawVersion("2026.3")).toBeNull();
     expect(parseOpenClawVersion("2026.3.22.1")).toBeNull();
+    expect(parseOpenClawVersion("invalid.3.22")).toBeNull();
+    expect(parseOpenClawVersion("2026.invalid.22")).toBeNull();
+    expect(parseOpenClawVersion("2026.3.invalid")).toBeNull();
   });
 });
 

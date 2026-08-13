@@ -44,7 +44,7 @@ export async function downloadMediaFromItem(
       ? Buffer.from(img.aeskey, "hex").toString("base64")
       : img.media.aes_key;
     logger.debug(
-      `${label} image: encrypt_query_param=${(img.media.encrypt_query_param ?? "").slice(0, 40)}... hasAesKey=${Boolean(aesKeyBase64)} aeskeySource=${img.aeskey ? "image_item.aeskey" : "media.aes_key"} full_url=${Boolean(img.media.full_url)}`,
+      `${label} image: hasEncryptQueryParam=${Boolean(img.media.encrypt_query_param)} hasAesKey=${Boolean(aesKeyBase64)} aeskeySource=${img.aeskey ? "image_item.aeskey" : "media.aes_key"} full_url=${Boolean(img.media.full_url)}`,
     );
     try {
       const buf = aesKeyBase64

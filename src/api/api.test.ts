@@ -75,6 +75,22 @@ describe("getUpdates", () => {
     await expect(getUpdates({ baseUrl: "https://api.example.com" })).rejects.toThrow("getUpdates 500");
   });
 
+  it("redacts credentials returned in non-ok responses", async () => {
+    mockFetch.mockResolvedValueOnce(
+      mockResponse({ bot_token: "response-secret", errmsg: "failed" }, 500, false),
+    );
+
+    let thrown = "";
+    try {
+      await getUpdates({ baseUrl: "https://api.example.com" });
+    } catch (err) {
+      thrown = String(err);
+    }
+
+    expect(thrown).toContain('"bot_token":"<redacted>"');
+    expect(thrown).not.toContain("response-secret");
+  });
+
   it("returns empty response on abort/timeout", async () => {
     const abortErr = new Error("AbortError");
     abortErr.name = "AbortError";

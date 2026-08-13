@@ -7,7 +7,7 @@ import type { WeixinApiOptions } from "../api/api.js";
 import { aesEcbPaddedSize } from "./aes-ecb.js";
 import { uploadBufferToCdn } from "./cdn-upload.js";
 import { logger } from "../util/logger.js";
-import { redactUrl } from "../util/redact.js";
+import { redactBody, redactUrl } from "../util/redact.js";
 import { getExtensionFromContentTypeOrUrl } from "../media/mime.js";
 import { tempFileName } from "../util/random.js";
 import { UploadMediaType } from "../api/types.js";
@@ -97,7 +97,7 @@ async function uploadMediaToCdn(params: {
   const uploadParam = uploadUrlResp.upload_param;
   if (!uploadFullUrl && !uploadParam) {
     logger.error(
-      `${label}: getUploadUrl returned no upload URL (need upload_full_url or upload_param), resp=${JSON.stringify(uploadUrlResp)}`,
+      `${label}: getUploadUrl returned no upload URL (need upload_full_url or upload_param), resp=${redactBody(JSON.stringify(uploadUrlResp))}`,
     );
     throw new Error(`${label}: getUploadUrl returned no upload URL`);
   }

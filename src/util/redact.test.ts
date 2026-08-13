@@ -76,6 +76,43 @@ describe("redactBody", () => {
     const body = '{"token":"my-secret-token"}';
     expect(redactBody(body)).toBe('{"token":"<redacted>"}');
   });
+
+  it("redacts nested credential and CDN fields", () => {
+    const body = JSON.stringify({
+      status: "confirmed",
+      result: {
+        aes_key: "base64-secret",
+        encrypt_query_param: "signed-download-param",
+        upload_full_url: "https://cdn.example/upload?signature=secret",
+      },
+    });
+
+    const redacted = redactBody(body);
+    expect(redacted).toContain('"status":"confirmed"');
+    expect(redacted).not.toContain("base64-secret");
+    expect(redacted).not.toContain("signed-download-param");
+    expect(redacted).not.toContain("signature=secret");
+  });
+
+  it("redacts arrays stored in sensitive fields", () => {
+    const body = '{"local_token_list":["token-a","token-b"],"count":2}';
+    expect(redactBody(body)).toBe('{"local_token_list":"<redacted>","count":2}');
+  });
+
+  it("redacts sensitive fields case-insensitively", () => {
+    expect(redactBody('{"Authorization":"Bearer secret"}')).toBe(
+      '{"Authorization":"<redacted>"}',
+    );
+  });
+
+  it("redacts sensitive values in malformed JSON as a fallback", () => {
+    const body = 'partial:{"bot_token":"secret","local_token_list":["a","b"]';
+    const redacted = redactBody(body);
+    expect(redacted).not.toContain("secret");
+    expect(redacted).not.toContain('"a"');
+    expect(redacted).toContain('"bot_token":"<redacted>"');
+    expect(redacted).toContain('"local_token_list":"<redacted>"');
+  });
 });
 
 describe("redactUrl", () => {
