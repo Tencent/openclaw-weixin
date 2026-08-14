@@ -13,6 +13,7 @@
  * - Horizontal rules (---, ***, ___)
  * - Bold (**)
  * - Italic/bold-italic wrapping non-CJK content
+ * - Real HTML tags (<div>, </span>); bare "<" becomes full-width U+FF1C
  *
  * Constructs filtered (markers stripped, content kept):
  * - Italic/bold-italic wrapping CJK content
@@ -202,6 +203,29 @@ export class StreamingMarkdownFilter {
         i++;
         continue;
       }
+      if (c === "<") {
+        // WeChat treats any "<" as an HTML tag start and swallows the rest
+        // of the line (also breaking **bold**). Only real tags start with
+        // a letter or "/"; other bare "<" become full-width U+FF1C.
+        if (i + 1 >= this.buf.length) {
+          if (!eof) {
+            out += this.buf.slice(0, i);
+            this.buf = this.buf.slice(i);
+            return out;
+          }
+          out += this.buf.slice(0, i) + "\uFF1C";
+          this.buf = this.buf.slice(i + 1);
+          return out;
+        }
+        const next = this.buf[i + 1];
+        if (/[a-zA-Z/]/.test(next)) {
+          i++;
+          continue;
+        }
+        out += this.buf.slice(0, i) + "\uFF1C";
+        this.buf = this.buf.slice(i + 1);
+        return out;
+      }
       if (c === "*") {
         if (i + 2 < this.buf.length && this.buf[i + 1] === "*" && this.buf[i + 2] === "*") {
           out += this.buf.slice(0, i);
@@ -252,6 +276,7 @@ export class StreamingMarkdownFilter {
       else if (this.buf.endsWith("*")) hold = 1;
       else if (this.buf.endsWith("_")) hold = 1;
       else if (this.buf.endsWith("!")) hold = 1;
+      else if (this.buf.endsWith("<")) hold = 1;
     }
     out += this.buf.slice(0, this.buf.length - hold);
     this.buf = hold > 0 ? this.buf.slice(-hold) : "";

@@ -699,6 +699,8 @@ describe("StreamingMarkdownFilter", () => {
       ["##### H5 heading", "H5 heading"],
       ["## H2 heading", "## H2 heading"],
       ["before\n---\nafter", "before\n---\nafter"],
+      ["rate<80% **ok**", "rate\uFF1C80% **ok**"],
+      ["see <div>x</div>", "see <div>x</div>"],
       [
         "Here **bold** and *italic* `code` ~~strike~~ ***bi*** end",
         "Here **bold** and *italic* `code` ~~strike~~ ***bi*** end",
@@ -725,6 +727,60 @@ describe("StreamingMarkdownFilter", () => {
       const f = new StreamingMarkdownFilter();
       const out = f.feed("  - nested") + f.flush();
       expect(out).toBe("  - nested");
+    });
+  });
+
+  // ---- Bare < vs HTML tags (WeChat renderer) --------------------------------
+
+  describe("bare less-than vs HTML tags", () => {
+    const FW = "\uFF1C";
+
+    it("rewrites comparison <80% so WeChat does not swallow the line", () => {
+      expectFilter(
+        "当CPU使用率<80%时属于**正常范围**",
+        "当CPU使用率" + FW + "80%时属于**正常范围**",
+      );
+    });
+
+    it("rewrites <50mg next to bold", () => {
+      expectFilter(
+        "推荐摄入量<50mg属于**安全剂量**",
+        "推荐摄入量" + FW + "50mg属于**安全剂量**",
+      );
+    });
+
+    it("leaves bold unchanged when there is no <", () => {
+      expectFilter("这是**正常加粗**测试", "这是**正常加粗**测试");
+    });
+
+    it("rewrites a trailing bare < at EOF", () => {
+      expectFilter("value<", "value" + FW);
+    });
+
+    it("passes through a real HTML start tag", () => {
+      expectFilter("see <div>ok</div>", "see <div>ok</div>");
+    });
+
+    it("passes through a closing tag", () => {
+      expectFilter("end</span> after", "end</span> after");
+    });
+
+    it("leaves < inside a code fence unchanged", () => {
+      expect(oneShot("```\nif (x < 80) {}\n```\n")).toBe("```\nif (x < 80) {}\n```\n");
+    });
+
+    it("holds a split < until the next character arrives", () => {
+      const f = new StreamingMarkdownFilter();
+      const a = f.feed("rate<");
+      expect(a).toBe("rate");
+      const b = f.feed("80%") + f.flush();
+      expect(b).toBe(FW + "80%");
+    });
+
+    it("holds a split < that becomes a real tag", () => {
+      const f = new StreamingMarkdownFilter();
+      expect(f.feed("see <")).toBe("see ");
+      expect(f.feed("br>") + f.flush()).toBe("<br>");
     });
   });
 
