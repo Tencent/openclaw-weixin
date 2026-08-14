@@ -445,7 +445,7 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
 
       // The gateway injects the channel runtime surface per-call (task-scoped). We require it:
       // it carries reply/routing/session/media/commands helpers used by processOneMessage.
-      // Available on hosts >= 2026.2.19 (our peerDependency is >= 2026.3.22).
+      // Available on hosts >= 2026.2.19 (our peerDependency is >= 2026.5.12).
       if (!ctx.channelRuntime) {
         const msg = `ctx.channelRuntime missing — host too old or plugin SDK contract violated`;
         aLog.error(msg);
