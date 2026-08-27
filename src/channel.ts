@@ -1,6 +1,14 @@
 import path from "node:path";
 
-import type { ChannelPlugin, OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk/core";
+import {
+  buildChannelOutboundSessionRoute,
+  stripChannelTargetPrefix,
+  stripTargetKindPrefix,
+  type ChannelOutboundSessionRouteParams,
+  type ChannelPlugin,
+  type OpenClawConfig,
+  type PluginRuntime,
+} from "openclaw/plugin-sdk/core";
 import { normalizeAccountId } from "openclaw/plugin-sdk/account-id";
 import { resolvePreferredOpenClawTmpDir } from "openclaw/plugin-sdk/infra-runtime";
 
@@ -106,6 +114,34 @@ function resolveOutboundAccountId(
   );
 }
 
+function normalizeWeixinUserId(raw: string): string | null {
+  const channelTarget = stripChannelTargetPrefix(raw.trim(), "openclaw-weixin");
+  const userId = stripTargetKindPrefix(channelTarget).trim();
+  if (userId !== channelTarget.trim() && !/^(user|dm):/i.test(channelTarget)) return null;
+  return userId.endsWith("@im.wechat") ? userId : null;
+}
+
+function resolveWeixinOutboundSessionRoute(params: ChannelOutboundSessionRouteParams) {
+  const userId = normalizeWeixinUserId(params.target);
+  if (!userId) return null;
+  const accountId = params.accountId?.trim()
+    ? resolveWeixinAccount(params.cfg, params.accountId).accountId
+    : resolveOutboundAccountId(params.cfg, userId);
+  return {
+    ...buildChannelOutboundSessionRoute({
+      cfg: params.cfg,
+      agentId: params.agentId,
+      channel: "openclaw-weixin",
+      accountId,
+      peer: { kind: "direct", id: userId },
+      chatType: "direct",
+      from: userId,
+      to: userId,
+    }),
+    recipientSessionExact: true as const,
+  };
+}
+
 async function sendWeixinOutbound(params: {
   cfg: OpenClawConfig;
   to: string;
@@ -190,8 +226,9 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
   messaging: {
     targetResolver: {
       // Weixin user IDs always end with @im.wechat; treat as direct IDs, skip directory lookup.
-      looksLikeId: (raw) => raw.endsWith("@im.wechat"),
+      looksLikeId: (raw) => normalizeWeixinUserId(raw) !== null,
     },
+    resolveOutboundSessionRoute: resolveWeixinOutboundSessionRoute,
   },
   agentPrompt: {
     messageToolHints: () => [
