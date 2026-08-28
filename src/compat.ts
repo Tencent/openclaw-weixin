@@ -8,7 +8,7 @@
 
 import { logger } from "./util/logger.js";
 
-export const SUPPORTED_HOST_MIN = "2026.3.22";
+export const SUPPORTED_HOST_MIN = "2026.8.1-beta.3";
 
 export interface OpenClawVersion {
   year: number;
@@ -48,7 +48,24 @@ export function isHostVersionSupported(hostVersion: string): boolean {
   const host = parseOpenClawVersion(hostVersion);
   if (!host) return false;
   const min = parseOpenClawVersion(SUPPORTED_HOST_MIN)!;
-  return compareVersions(host, min) >= 0;
+  const releaseComparison = compareVersions(host, min);
+  if (releaseComparison !== 0) return releaseComparison > 0;
+
+  const prerelease = hostVersion.trim().split("+")[0].split("-").slice(1).join("-");
+  if (!prerelease) return true;
+  const actual = prerelease.split(".");
+  const required = SUPPORTED_HOST_MIN.split("-")[1].split(".");
+  for (let i = 0; i < Math.max(actual.length, required.length); i++) {
+    if (actual[i] === undefined) return false;
+    if (required[i] === undefined) return true;
+    if (actual[i] === required[i]) continue;
+    const aNumeric = /^\d+$/.test(actual[i]);
+    const bNumeric = /^\d+$/.test(required[i]);
+    if (aNumeric && bNumeric) return Number(actual[i]) > Number(required[i]);
+    if (aNumeric !== bNumeric) return !aNumeric;
+    return actual[i] > required[i];
+  }
+  return true;
 }
 
 /**

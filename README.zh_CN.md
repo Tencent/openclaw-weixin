@@ -6,6 +6,12 @@ OpenClaw 的微信渠道插件，支持通过扫码完成登录授权。
 
 ## 兼容性
 
+此源码版本需要 **OpenClaw >=2026.8.1-beta.3**，使用已发布的频道回合 API，
+由 OpenClaw 负责会话记录、回复分发和消息钩子。当前稳定版宿主尚不提供该 API；
+安装此源码构建前，请先升级到 beta 渠道。
+Node.js 版本须满足宿主要求（例如 Node 24 需要 >=24.15.0）。
+已发布的插件版本仍保留原有兼容范围。
+
 | 插件版本 | OpenClaw 版本            | npm dist-tag | 状态   |
 |---------|--------------------------|--------------|--------|
 | 2.0.x   | >=2026.3.22              | `latest`     | 活跃   |
@@ -70,6 +76,16 @@ openclaw channels login --channel openclaw-weixin
 ```bash
 openclaw config set session.dmScope per-account-channel-peer
 ```
+
+## 分块流式回复
+
+分块流式回复默认开启，因此 Agent 继续工作时，已完成的文本块可以先发送到微信。如需等待完整的最终回复再发送：
+
+```bash
+openclaw config set channels.openclaw-weixin.blockStreaming false
+```
+
+也可以通过 `channels.openclaw-weixin.accounts.<accountId>.blockStreaming` 为单个账号覆盖此设置。
 
 ## 自定义 BotAgent（可选）
 
@@ -323,7 +339,7 @@ openclaw plugins uninstall @tencent-weixin/openclaw-weixin
 
 ## 故障排查
 
-### "requires OpenClaw >=2026.3.22" 报错
+### "requires OpenClaw >=2026.8.1-beta.3" 报错
 
 你的 OpenClaw 版本太旧，不兼容当前插件版本。检查版本：
 

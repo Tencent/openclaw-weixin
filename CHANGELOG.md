@@ -4,6 +4,12 @@
 
 This project follows the [Keep a Changelog](https://keepachangelog.com/) format.
 
+## [Unreleased]
+
+### Fixed
+
+- **Block streaming replies:** Restored block streaming by default so intermediate text blocks are delivered in order before the final reply; it can be disabled globally or per account with `blockStreaming: false`.
+
 ## [2.4.5] - 2026-06-22
 
 ### Added

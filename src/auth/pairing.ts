@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
+// The focused file-lock facade is private to official plugins. Keep the public
+// compatibility export until OpenClaw publishes an external pairing-write API.
 import { withFileLock } from "openclaw/plugin-sdk/infra-runtime";
 
 import { resolveStateDir } from "../storage/state-dir.js";

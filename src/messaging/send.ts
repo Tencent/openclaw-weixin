@@ -1,4 +1,4 @@
-import type { ReplyPayload } from "openclaw/plugin-sdk/reply-runtime";
+import type { ReplyPayload } from "openclaw/plugin-sdk/reply-payload";
 
 import { sendMessage as sendMessageApi } from "../api/api.js";
 import type { WeixinApiOptions } from "../api/api.js";

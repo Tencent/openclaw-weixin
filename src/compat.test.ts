@@ -22,6 +22,7 @@ describe("parseOpenClawVersion", () => {
     expect(parseOpenClawVersion("abc")).toBeNull();
     expect(parseOpenClawVersion("2026.3")).toBeNull();
     expect(parseOpenClawVersion("2026.3.22.1")).toBeNull();
+    expect(parseOpenClawVersion("2026.invalid.1")).toBeNull();
   });
 });
 
@@ -46,26 +47,41 @@ describe("isHostVersionSupported", () => {
   });
 
   it("rejects the day before the minimum", () => {
-    expect(isHostVersionSupported("2026.3.21")).toBe(false);
+    expect(isHostVersionSupported("2026.7.31")).toBe(false);
   });
 
   it("accepts a version above the minimum", () => {
-    expect(isHostVersionSupported("2026.3.30")).toBe(true);
+    expect(isHostVersionSupported("2026.8.2")).toBe(true);
   });
 
   it("accepts a future version", () => {
-    expect(isHostVersionSupported("2026.4.0")).toBe(true);
+    expect(isHostVersionSupported("2026.9.1")).toBe(true);
     expect(isHostVersionSupported("2027.1.1")).toBe(true);
   });
 
   it("rejects garbage input", () => {
     expect(isHostVersionSupported("not-a-version")).toBe(false);
   });
+
+  it.each([
+    ["2026.8.1-alpha.9", false],
+    ["2026.8.1-beta", false],
+    ["2026.8.1-beta.2", false],
+    ["2026.8.1-beta.3", true],
+    ["2026.8.1-beta.3.1", true],
+    ["2026.8.1-beta.10", true],
+    ["2026.8.1-1", false],
+    ["2026.8.1-beta.rc", true],
+    ["2026.8.1-rc.1", true],
+    ["2026.8.1", true],
+  ])("checks the published prerelease floor for %s", (version, supported) => {
+    expect(isHostVersionSupported(version)).toBe(supported);
+  });
 });
 
 describe("assertHostCompatibility", () => {
   it("does not throw for a supported version", () => {
-    expect(() => assertHostCompatibility("2026.3.22")).not.toThrow();
+    expect(() => assertHostCompatibility(SUPPORTED_HOST_MIN)).not.toThrow();
   });
 
   it("does not throw when version is undefined (graceful skip)", () => {

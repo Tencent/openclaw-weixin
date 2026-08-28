@@ -12,11 +12,13 @@ const weixinAccountSchema = z.object({
   baseUrl: z.string().default(DEFAULT_BASE_URL),
   cdnBaseUrl: z.string().default(CDN_BASE_URL),
   routeTag: z.number().optional(),
+  blockStreaming: z.boolean().optional(),
 });
 
 /** Top-level weixin config schema (token is stored in credentials file, not config). */
 export const WeixinConfigSchema = weixinAccountSchema.extend({
   accounts: z.record(z.string(), weixinAccountSchema).optional(),
+  blockStreaming: z.boolean().default(true),
   replyProgressMessages: z.boolean().default(true),
   /** ISO 8601; bumped on each successful login to refresh gateway config from disk. */
   channelConfigUpdatedAt: z.string().optional(),

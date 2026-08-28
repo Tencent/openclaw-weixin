@@ -23,17 +23,6 @@ vi.mock("node:crypto", () => ({
   },
 }));
 
-vi.mock("openclaw/plugin-sdk", () => ({
-  stripMarkdown: (text: string) => text
-    .replace(/\*\*([^*]+)\*\*/g, "$1")
-    .replace(/\*([^*]+)\*/g, "$1")
-    .replace(/_([^_]+)_/g, "$1")
-    .replace(/~~([^~]+)~~/g, "$1")
-    .replace(/^#{1,6}\s+/gm, "")
-    .replace(/^[*-]\s+/gm, "")
-    .replace(/^\d+\.\s+/gm, ""),
-}));
-
 import {
   sendMessageWeixin,
   sendMessageItemWeixin,
@@ -108,6 +97,18 @@ describe("sendMessageWeixin", () => {
 });
 
 describe("sendMessageItemWeixin", () => {
+  it.each([undefined, "ctx"])("propagates transport failure with context=%s", async (contextToken) => {
+    const error = new Error("transport unavailable");
+    mockSendMessageApi.mockRejectedValueOnce(error);
+    await expect(sendMessageItemWeixin({
+      to: "user1",
+      item: { type: MessageItemType.TEXT, text_item: { text: "progress" } },
+      opts: { baseUrl: "https://api.com", contextToken },
+      ...(contextToken ? { label: "progress" } : {}),
+    })).rejects.toBe(error);
+    expect(mockSendMessageApi).toHaveBeenCalledOnce();
+  });
+
   it("sends structured message item with run_id", async () => {
     mockSendMessageApi.mockResolvedValueOnce(undefined);
     await sendMessageItemWeixin({
