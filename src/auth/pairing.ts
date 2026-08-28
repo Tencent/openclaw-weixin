@@ -1,10 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { withFileLock } from "openclaw/plugin-sdk/infra-runtime";
-
 import { resolveStateDir } from "../storage/state-dir.js";
-import { logger } from "../util/logger.js";
 
 /**
  * Resolve the framework credentials directory (mirrors core resolveOAuthDir).
@@ -60,61 +57,4 @@ export function readFrameworkAllowFromList(accountId: string): string[] {
     // best-effort
   }
   return [];
-}
-
-/** File lock options matching the framework's pairing store lock settings. */
-const LOCK_OPTIONS = {
-  retries: { retries: 3, factor: 2, minTimeout: 100, maxTimeout: 2000 },
-  stale: 10_000,
-};
-
-/**
- * Register a user ID in the framework's channel allowFrom store.
- * This writes directly to the same JSON file that `readChannelAllowFromStore` reads,
- * making the user visible to the framework authorization pipeline.
- *
- * Uses file locking to avoid races with concurrent readers/writers.
- */
-export async function registerUserInFrameworkStore(params: {
-  accountId: string;
-  userId: string;
-}): Promise<{ changed: boolean }> {
-  const { accountId, userId } = params;
-  const trimmedUserId = userId.trim();
-  if (!trimmedUserId) return { changed: false };
-
-  const filePath = resolveFrameworkAllowFromPath(accountId);
-
-  const dir = path.dirname(filePath);
-  fs.mkdirSync(dir, { recursive: true });
-
-  // Ensure the file exists before locking
-  if (!fs.existsSync(filePath)) {
-    const initial: AllowFromFileContent = { version: 1, allowFrom: [] };
-    fs.writeFileSync(filePath, JSON.stringify(initial, null, 2), "utf-8");
-  }
-
-  return await withFileLock(filePath, LOCK_OPTIONS, async () => {
-    let content: AllowFromFileContent = { version: 1, allowFrom: [] };
-    try {
-      const raw = fs.readFileSync(filePath, "utf-8");
-      const parsed = JSON.parse(raw) as AllowFromFileContent;
-      if (Array.isArray(parsed.allowFrom)) {
-        content = parsed;
-      }
-    } catch {
-      // If read/parse fails, start fresh
-    }
-
-    if (content.allowFrom.includes(trimmedUserId)) {
-      return { changed: false };
-    }
-
-    content.allowFrom.push(trimmedUserId);
-    fs.writeFileSync(filePath, JSON.stringify(content, null, 2), "utf-8");
-    logger.info(
-      `registerUserInFrameworkStore: added userId=${trimmedUserId} accountId=${accountId} path=${filePath}`,
-    );
-    return { changed: true };
-  });
 }
