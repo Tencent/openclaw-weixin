@@ -255,7 +255,7 @@ export async function processOneMessage(
   });
 
   logger.info(
-    `inbound: from=${finalized.From} to=${finalized.To} bodyLen=${(finalized.Body ?? "").length} hasMedia=${Boolean(finalized.MediaPath ?? finalized.MediaUrl)}`,
+    `inbound: from=${finalized.From} to=${finalized.To} bodyLen=${(finalized.Body ?? "").length} hasMedia=${Boolean(finalized.media?.[0]?.path ?? finalized.media?.[0]?.url)}`,
   );
   logger.debug(`inbound context: ${redactBody(JSON.stringify(finalized))}`);
 
