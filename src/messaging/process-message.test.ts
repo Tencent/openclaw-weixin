@@ -1,11 +1,13 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk/core";
-import { createPluginRuntimeMock } from "openclaw/plugin-sdk/channel-test-helpers";
 import {
-  createReplyDispatcherWithTyping,
-  dispatchInboundMessage,
-} from "openclaw/plugin-sdk/reply-runtime";
+  buildChannelInboundEventContext,
+  dispatchChannelInboundTurn,
+} from "openclaw/plugin-sdk/channel-inbound";
 
 import type { WeixinMessage } from "../api/types.js";
 import { MessageItemType } from "../api/types.js";
@@ -30,14 +32,6 @@ vi.mock("./error-notice.js", () => ({
   sendWeixinErrorNotice: vi.fn(),
 }));
 
-vi.mock("./outbound-hooks.js", () => ({
-  applyWeixinMessageSendingHook: vi.fn(async ({ text }: { text: string }) => ({
-    cancelled: false,
-    text,
-  })),
-  emitWeixinMessageSent: vi.fn(),
-}));
-
 vi.mock("./send.js", () => ({
   sendMessageWeixin: mocks.sendMessageWeixin,
 }));
@@ -45,21 +39,24 @@ vi.mock("./send.js", () => ({
 import { processOneMessage } from "./process-message.js";
 
 function createRuntime(): PluginRuntime {
-  const runtime = createPluginRuntimeMock() as PluginRuntime;
-  runtime.channel.reply.createReplyDispatcherWithTyping = createReplyDispatcherWithTyping;
+  const runtime = {
+    channel: {
+      commands: {},
+      media: {},
+      routing: {},
+      inbound: { buildContext: buildChannelInboundEventContext },
+    },
+  } as PluginRuntime;
   runtime.channel.routing.resolveAgentRoute = vi.fn().mockReturnValue({
     agentId: "main",
     accountId: "account-1",
     sessionKey: "agent:main:openclaw-weixin:direct:sender",
     mainSessionKey: "agent:main:main",
   });
-  runtime.channel.reply.dispatchReplyFromConfig = vi.fn(
-    async ({ ctx, cfg, dispatcher, replyOptions }) =>
-      dispatchInboundMessage({
-        ctx,
-        cfg,
-        dispatcher,
-        replyOptions,
+  runtime.channel.inbound.dispatch = vi.fn(
+    async (params) =>
+      dispatchChannelInboundTurn({
+        ...params,
         replyResolver: async (_ctx, opts) => {
           if (opts?.disableBlockStreaming !== true) {
             await opts?.onBlockReply?.({ text: "First intermediate block" });
@@ -73,12 +70,19 @@ function createRuntime(): PluginRuntime {
 }
 
 describe("processOneMessage block streaming", () => {
+  let stateDir: string;
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.sendMessageWeixin.mockResolvedValue({ messageId: "sent" });
+    stateDir = mkdtempSync(path.join(tmpdir(), "weixin-dispatch-"));
+    vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    rmSync(stateDir, { recursive: true, force: true });
   });
 
-  it("delivers intermediate blocks in order before final content by default", async () => {
+  it.each([true, false])("preserves block streaming when enabled=%s", async (enabled) => {
     const message: WeixinMessage = {
       message_id: 1,
       from_user_id: "sender@im.wechat",
@@ -91,9 +95,11 @@ describe("processOneMessage block streaming", () => {
       ],
     };
     const config = {
+      session: { store: path.join(stateDir, "sessions.json") },
       channels: {
         "openclaw-weixin": {
           replyProgressMessages: false,
+          blockStreaming: enabled,
         },
       },
     } as OpenClawConfig;
@@ -108,10 +114,10 @@ describe("processOneMessage block streaming", () => {
       errLog: vi.fn(),
     });
 
-    expect(mocks.sendMessageWeixin.mock.calls.map(([request]) => request.text)).toEqual([
-      "First intermediate block",
-      "Second intermediate block",
-      "Final content",
-    ]);
+    expect(mocks.sendMessageWeixin.mock.calls.map(([request]) => request.text)).toEqual(
+      enabled
+        ? ["First intermediate block", "Second intermediate block", "Final content"]
+        : ["Final content"],
+    );
   });
 });

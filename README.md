@@ -6,6 +6,13 @@ OpenClaw's WeChat channel plugin, supporting login authorization via QR code sca
 
 ## Compatibility
 
+This source revision requires **OpenClaw >=2026.8.1-beta.3**. It uses the
+published channel-turn API so OpenClaw owns session recording, reply dispatch,
+and message hooks. The current stable host does not yet provide that API;
+upgrade to the beta channel before installing a build of this revision.
+Node.js must satisfy the host's engine requirement (for example, >=24.15.0 on Node 24).
+Previously published plugin releases retain their existing compatibility.
+
 | Plugin Version | OpenClaw Version       | npm dist-tag | Status      |
 |---------------|------------------------|--------------|-------------|
 | 2.0.x         | >=2026.3.22            | `latest`     | Active      |
@@ -337,7 +344,7 @@ openclaw plugins uninstall @tencent-weixin/openclaw-weixin
 
 ## Troubleshooting
 
-### "requires OpenClaw >=2026.3.22" error
+### "requires OpenClaw >=2026.8.1-beta.3" error
 
 Your OpenClaw version is too old for this plugin version. Check with:
 
