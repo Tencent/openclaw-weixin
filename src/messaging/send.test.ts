@@ -97,6 +97,18 @@ describe("sendMessageWeixin", () => {
 });
 
 describe("sendMessageItemWeixin", () => {
+  it.each([undefined, "ctx"])("propagates transport failure with context=%s", async (contextToken) => {
+    const error = new Error("transport unavailable");
+    mockSendMessageApi.mockRejectedValueOnce(error);
+    await expect(sendMessageItemWeixin({
+      to: "user1",
+      item: { type: MessageItemType.TEXT, text_item: { text: "progress" } },
+      opts: { baseUrl: "https://api.com", contextToken },
+      ...(contextToken ? { label: "progress" } : {}),
+    })).rejects.toBe(error);
+    expect(mockSendMessageApi).toHaveBeenCalledOnce();
+  });
+
   it("sends structured message item with run_id", async () => {
     mockSendMessageApi.mockResolvedValueOnce(undefined);
     await sendMessageItemWeixin({

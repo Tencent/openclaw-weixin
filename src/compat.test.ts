@@ -22,6 +22,7 @@ describe("parseOpenClawVersion", () => {
     expect(parseOpenClawVersion("abc")).toBeNull();
     expect(parseOpenClawVersion("2026.3")).toBeNull();
     expect(parseOpenClawVersion("2026.3.22.1")).toBeNull();
+    expect(parseOpenClawVersion("2026.invalid.1")).toBeNull();
   });
 });
 
@@ -64,9 +65,13 @@ describe("isHostVersionSupported", () => {
 
   it.each([
     ["2026.8.1-alpha.9", false],
+    ["2026.8.1-beta", false],
     ["2026.8.1-beta.2", false],
     ["2026.8.1-beta.3", true],
+    ["2026.8.1-beta.3.1", true],
     ["2026.8.1-beta.10", true],
+    ["2026.8.1-1", false],
+    ["2026.8.1-beta.rc", true],
     ["2026.8.1-rc.1", true],
     ["2026.8.1", true],
   ])("checks the published prerelease floor for %s", (version, supported) => {
