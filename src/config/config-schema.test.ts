@@ -7,6 +7,14 @@ describe("WeixinConfigSchema", () => {
     expect(result.baseUrl).toBe("https://ilinkai.weixin.qq.com");
     expect(result.cdnBaseUrl).toBe("https://novac2c.cdn.weixin.qq.com/c2c");
     expect(result.replyProgressMessages).toBe(true);
+    expect(result.quoteCache).toEqual({
+      enabled: true,
+      retentionDays: 30,
+      maxMessagesPerAccount: 10_000,
+      mediaRetentionDays: 7,
+      maxMediaBytesPerAccount: 256 * 1024 * 1024,
+      maxSingleMediaBytes: 25 * 1024 * 1024,
+    });
   });
 
   it("accepts custom baseUrl and cdnBaseUrl", () => {
@@ -32,6 +40,12 @@ describe("WeixinConfigSchema", () => {
       replyProgressMessages: false,
     });
     expect(result.replyProgressMessages).toBe(false);
+  });
+
+  it("accepts disabling quote caching for hosts without SQLite", () => {
+    const result = WeixinConfigSchema.parse({ quoteCache: { enabled: false } });
+    expect(result.quoteCache.enabled).toBe(false);
+    expect(result.quoteCache.retentionDays).toBe(30);
   });
 
   it("accepts accounts map", () => {

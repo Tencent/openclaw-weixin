@@ -27,13 +27,16 @@ import {
   setContextToken,
   weixinMessageToMsgContext,
   getContextTokenFromMsgContext,
+  getWeixinMessageId,
   isMediaItem,
+  resolveStoredQuoteContext,
 } from "./inbound.js";
 import type { WeixinInboundMediaOpts } from "./inbound.js";
 import { sendWeixinMediaFile } from "./send-media.js";
 import { StreamingMarkdownFilter } from "./markdown-filter.js";
 import { sendMessageWeixin } from "./send.js";
 import { WeixinReplyProgressSender } from "./reply-progress-sender.js";
+import { getQuoteStore } from "./quote-store.js";
 import { handleSlashCommand } from "./slash-commands.js";
 
 const MEDIA_OUTBOUND_TEMP_DIR = path.join(resolvePreferredOpenClawTmpDir(), "weixin/media/outbound-temp");
@@ -153,6 +156,7 @@ export async function processOneMessage(
       label,
     });
     Object.assign(mediaOpts, downloaded);
+    if (refMediaItem) mediaOpts.referencedMedia = true;
   }
   const mediaDownloadMs = Date.now() - mediaDownloadStart;
 
@@ -214,6 +218,28 @@ export async function processOneMessage(
       "── 鉴权 & 路由 ──",
       `│ auth: cmdAuthorized=${String(commandAuthorized)} senderAllowed=${String(senderAllowedForCommands)}`,
     );
+  }
+
+  resolveStoredQuoteContext(ctx, full, deps.accountId);
+  const inboundMessageId = getWeixinMessageId(full);
+  if (inboundMessageId) {
+    try {
+      await getQuoteStore()?.put({
+        accountId: deps.accountId,
+        conversationId: senderId,
+        messageId: inboundMessageId,
+        direction: "inbound",
+        body: ctx.Body,
+        ...(ctx.MediaPath ? { sourceMediaPath: ctx.MediaPath } : {}),
+        ...(ctx.MediaType ? { mediaMime: ctx.MediaType } : {}),
+        ...(mainMediaItem?.file_item?.file_name
+          ? { mediaName: mainMediaItem.file_item.file_name }
+          : {}),
+        createdAt: full.create_time_ms ?? Date.now(),
+      });
+    } catch (err) {
+      logger.warn(`quote cache: failed to save inbound message id=${inboundMessageId}: ${String(err)}`);
+    }
   }
 
   const route = deps.channelRuntime.routing.resolveAgentRoute({
@@ -283,6 +309,7 @@ export async function processOneMessage(
           baseUrl: deps.baseUrl,
           token: deps.token,
           contextToken,
+          accountId: deps.accountId,
         },
       })
     : undefined;
@@ -386,6 +413,7 @@ export async function processOneMessage(
                 token: deps.token,
                 contextToken,
                 runId,
+                accountId: deps.accountId,
               }});
               emitWeixinMessageSent({ to: ctx.To, content: text, success: true, accountId: deps.accountId, runId });
               logger.info(`outbound: text sent to=${ctx.To}`);
@@ -395,7 +423,13 @@ export async function processOneMessage(
               filePath,
               to: ctx.To,
               text,
-              opts: { baseUrl: deps.baseUrl, token: deps.token, contextToken, runId },
+              opts: {
+                baseUrl: deps.baseUrl,
+                token: deps.token,
+                contextToken,
+                runId,
+                accountId: deps.accountId,
+              },
               cdnBaseUrl: deps.cdnBaseUrl,
             });
             emitWeixinMessageSent({ to: ctx.To, content: text, success: true, accountId: deps.accountId, runId });
@@ -407,6 +441,7 @@ export async function processOneMessage(
               token: deps.token,
               contextToken,
               runId,
+              accountId: deps.accountId,
             }});
             emitWeixinMessageSent({ to: ctx.To, content: text, success: true, accountId: deps.accountId, runId });
             logger.info(`outbound: text sent OK to=${ctx.To}`);
@@ -441,6 +476,7 @@ export async function processOneMessage(
           baseUrl: deps.baseUrl,
           token: deps.token,
           runId,
+          accountId: deps.accountId,
           errLog: deps.errLog,
         });
       },
@@ -514,7 +550,13 @@ export async function processOneMessage(
         await sendMessageWeixin({
           to: ctx.To,
           text: timingText,
-          opts: { baseUrl: deps.baseUrl, token: deps.token, contextToken, runId },
+          opts: {
+            baseUrl: deps.baseUrl,
+            token: deps.token,
+            contextToken,
+            runId,
+            accountId: deps.accountId,
+          },
         });
         logger.info(`debug-timing: sent OK`);
       } catch (debugErr) {

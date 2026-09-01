@@ -111,6 +111,38 @@ authentication or routing. All registered agents on this plugin instance
 currently share the same `botAgent` declaration; per-agent overrides may be
 added in a future version if needed.
 
+## Local quote cache
+
+Newer WeChat clients may send only a server message ID for a quoted message. The
+plugin therefore stores text and media metadata in SQLite and copies images,
+video, voice, and attachments into managed storage. Records are isolated by
+account and conversation. By default, text is retained for 30 days with a limit
+of 10,000 messages per account; media is retained for 7 days with a 256 MiB
+per-account budget and a 25 MiB single-file limit. Cleanup runs at startup,
+hourly, every 100 writes, whenever the media budget is exceeded, and when an
+account is deleted.
+
+If `node:sqlite` is unavailable, the plugin logs a warning and disables this
+feature; it does not fall back to an in-memory cache. You can also disable it or
+change the limits explicitly:
+
+```json
+{
+  "channels": {
+    "openclaw-weixin": {
+      "quoteCache": {
+        "enabled": false,
+        "retentionDays": 30,
+        "maxMessagesPerAccount": 10000,
+        "mediaRetentionDays": 7,
+        "maxMediaBytesPerAccount": 268435456,
+        "maxSingleMediaBytes": 26214400
+      }
+    }
+  }
+}
+```
+
 ## Backend API Protocol
 
 This plugin communicates with the backend gateway via HTTP JSON API. Developers integrating with their own backend need to implement the following interfaces.

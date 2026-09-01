@@ -85,6 +85,8 @@ describe("sendWeixinMediaFile", () => {
       fileName: "doc.pdf",
       uploaded: fakeUploaded,
       opts: baseParams.opts,
+      filePath: "/tmp/doc.pdf",
+      mediaMime: "application/pdf",
     });
   });
 

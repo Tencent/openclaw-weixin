@@ -1,5 +1,15 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { isMediaItem, weixinMessageToMsgContext, getContextTokenFromMsgContext } from "./inbound.js";
+import {
+  getContextTokenFromMsgContext,
+  getWeixinMessageId,
+  isMediaItem,
+  resolveStoredQuoteContext,
+  weixinMessageToMsgContext,
+} from "./inbound.js";
 import type { WeixinMsgContext } from "./inbound.js";
 import { MessageItemType } from "../api/types.js";
 import type { WeixinMessage, MessageItem } from "../api/types.js";
@@ -44,6 +54,17 @@ describe("isMediaItem", () => {
 
   it("returns false for NONE type", () => {
     expect(isMediaItem({ type: MessageItemType.NONE })).toBe(false);
+  });
+});
+
+describe("getMediaLabel", () => {
+  it("labels every supported media kind", async () => {
+    const { getMediaLabel } = await import("./inbound.js");
+    expect(getMediaLabel(MessageItemType.IMAGE)).toBe("[图片]");
+    expect(getMediaLabel(MessageItemType.VIDEO)).toBe("[视频]");
+    expect(getMediaLabel(MessageItemType.FILE)).toBe("[文件]");
+    expect(getMediaLabel(MessageItemType.VOICE)).toBe("[语音]");
+    expect(getMediaLabel(MessageItemType.TEXT)).toBe("");
   });
 });
 
@@ -142,6 +163,14 @@ describe("weixinMessageToMsgContext", () => {
     expect(ctx.MediaType).toBe("audio/wav");
   });
 
+  it("uses transcribed voice text as the body", () => {
+    const ctx = weixinMessageToMsgContext({
+      from_user_id: "u",
+      item_list: [{ type: MessageItemType.VOICE, voice_item: { text: "voice transcript" } }],
+    }, "acc");
+    expect(ctx.Body).toBe("voice transcript");
+  });
+
   it("prioritizes pic > video > file > voice", () => {
     const ctx = weixinMessageToMsgContext(baseMsg, "acc", {
       decryptedPicPath: "/tmp/pic.png",
@@ -151,6 +180,17 @@ describe("weixinMessageToMsgContext", () => {
     });
     expect(ctx.MediaPath).toBe("/tmp/pic.png");
     expect(ctx.MediaType).toBe("image/*");
+  });
+
+  it("keeps downloaded inline-quote media out of the current message attachment", () => {
+    const ctx = weixinMessageToMsgContext(baseMsg, "acc", {
+      decryptedPicPath: "/tmp/quoted.png",
+      referencedMedia: true,
+    });
+    expect(ctx.MediaPath).toBeUndefined();
+    expect(ctx.MediaType).toBeUndefined();
+    expect(ctx.MediaPaths).toEqual(["/tmp/quoted.png"]);
+    expect(ctx.MediaTypes).toEqual(["image/*"]);
   });
 
   it("builds quoted context from ref_msg title", () => {
@@ -165,7 +205,9 @@ describe("weixinMessageToMsgContext", () => {
       ],
     };
     const ctx = weixinMessageToMsgContext(msg, "acc");
-    expect(ctx.Body).toBe("[引用: original title]\nreply");
+    expect(ctx.Body).toBe("reply");
+    expect(ctx.ReplyToBody).toBe("original title");
+    expect(ctx.ReplyToIsQuote).toBe(true);
   });
 
   it("skips quoted context when ref_msg is a media item", () => {
@@ -203,7 +245,9 @@ describe("weixinMessageToMsgContext", () => {
       ],
     };
     const ctx = weixinMessageToMsgContext(msg, "acc");
-    expect(ctx.Body).toBe("[引用: Author | original text]\nmy reply");
+    expect(ctx.Body).toBe("my reply");
+    expect(ctx.ReplyToBody).toBe("Author | original text");
+    expect(ctx.ReplyToIsQuote).toBe(true);
   });
 
   it("builds quoted context with only message_item (no title)", () => {
@@ -223,7 +267,8 @@ describe("weixinMessageToMsgContext", () => {
       ],
     };
     const ctx = weixinMessageToMsgContext(msg, "acc");
-    expect(ctx.Body).toBe("[引用: quoted]\nreply");
+    expect(ctx.Body).toBe("reply");
+    expect(ctx.ReplyToBody).toBe("quoted");
   });
 
   it("returns text when ref_msg has no extractable content", () => {
@@ -241,7 +286,7 @@ describe("weixinMessageToMsgContext", () => {
     expect(ctx.Body).toBe("reply");
   });
 
-  it("returns empty body when item_list has only non-text items", () => {
+  it("uses a stable label when item_list has only a media item", () => {
     const msg: WeixinMessage = {
       from_user_id: "u",
       item_list: [
@@ -249,7 +294,174 @@ describe("weixinMessageToMsgContext", () => {
       ],
     };
     const ctx = weixinMessageToMsgContext(msg, "acc");
-    expect(ctx.Body).toBe("");
+    expect(ctx.Body).toBe("[图片]");
+  });
+
+  it("keeps the provider uint64 ID separately from the generated MessageSid", () => {
+    const ctx = weixinMessageToMsgContext({ ...baseMsg, message_id: "18446744073709551615" }, "acc");
+    expect(ctx.MessageSidFull).toBe("18446744073709551615");
+    expect(ctx.MessageSid).not.toBe(ctx.MessageSidFull);
+  });
+});
+
+describe("stored quote resolution", () => {
+  const quotedMessage = (partial_text?: NonNullable<NonNullable<MessageItem["ref_msg"]>["partial_text"]>): WeixinMessage => ({
+    from_user_id: "user1",
+    item_list: [{
+      type: MessageItemType.TEXT,
+      text_item: { text: "reply" },
+      ref_msg: { svr_id: "9007199254740993123", ...(partial_text ? { partial_text } : {}) },
+    }],
+  });
+
+  it("looks up an ID-only quote in the account and conversation scope", () => {
+    const msg = quotedMessage();
+    const ctx = weixinMessageToMsgContext(msg, "acc");
+    const find = vi.fn(() => ({
+      accountId: "acc",
+      conversationId: "user1",
+      messageId: "9007199254740993123",
+      direction: "inbound" as const,
+      body: "original text",
+      createdAt: Date.now(),
+    }));
+    resolveStoredQuoteContext(ctx, msg, "acc", { find });
+    expect(find).toHaveBeenCalledWith("acc", "user1", "9007199254740993123");
+    expect(ctx).toMatchObject({
+      Body: "reply",
+      ReplyToId: "9007199254740993123",
+      ReplyToBody: "original text",
+      ReplyToIsQuote: true,
+    });
+  });
+
+  it("marks a cache miss without modifying the current message body", () => {
+    const msg = quotedMessage();
+    const ctx = weixinMessageToMsgContext(msg, "acc");
+    resolveStoredQuoteContext(ctx, msg, "acc", { find: () => null });
+    expect(ctx.Body).toBe("reply");
+    expect(ctx.ReplyToBody).toBe("[引用消息内容未缓存]");
+  });
+
+  it("resolves the legacy nested message ID", () => {
+    const msg: WeixinMessage = {
+      from_user_id: "user1",
+      item_list: [{
+        type: MessageItemType.TEXT,
+        text_item: { text: "reply" },
+        ref_msg: { message_item: { type: MessageItemType.TEXT, msg_id: "legacy-id" } },
+      }],
+    };
+    const ctx = weixinMessageToMsgContext(msg, "acc");
+    resolveStoredQuoteContext(ctx, msg, "acc", {
+      find: () => ({
+        accountId: "acc", conversationId: "user1", messageId: "legacy-id",
+        direction: "inbound", body: "legacy body", createdAt: Date.now(),
+      }),
+    });
+    expect(ctx.ReplyToId).toBe("legacy-id");
+    expect(ctx.ReplyToBody).toBe("legacy body");
+  });
+
+  it("keeps complete inline quote content instead of replacing it from storage", () => {
+    const msg: WeixinMessage = {
+      from_user_id: "user1",
+      item_list: [{
+        type: MessageItemType.TEXT,
+        text_item: { text: "reply" },
+        ref_msg: {
+          svr_id: "id",
+          message_item: { type: MessageItemType.TEXT, text_item: { text: "inline body" } },
+        },
+      }],
+    };
+    const ctx = weixinMessageToMsgContext(msg, "acc");
+    const find = vi.fn();
+    resolveStoredQuoteContext(ctx, msg, "acc", { find });
+    expect(find).not.toHaveBeenCalled();
+    expect(ctx.ReplyToBody).toBe("inline body");
+  });
+
+  it("sets ReplyToQuoteText for a partial quote", () => {
+    const selected = "second abc";
+    const msg = quotedMessage({
+      start: "s",
+      end: "c",
+      startindex: 1,
+      endindex: 2,
+      quotemd5: "",
+    });
+    const ctx = weixinMessageToMsgContext(msg, "acc");
+    resolveStoredQuoteContext(ctx, msg, "acc", {
+      find: () => ({
+        accountId: "acc",
+        conversationId: "user1",
+        messageId: "9007199254740993123",
+        direction: "inbound",
+        body: "start abc, second abc",
+        createdAt: Date.now(),
+      }),
+    });
+    expect(ctx.ReplyToQuoteText).toBe(selected);
+  });
+
+  it.each([
+    ["image/png", "picture.png", "[引用的图片已过期: picture.png]"],
+    ["video/mp4", undefined, "[引用的视频已过期]"],
+    ["audio/mpeg", undefined, "[引用的语音已过期]"],
+    ["application/pdf", "doc.pdf", "[引用的附件已过期: doc.pdf]"],
+  ])("describes expired managed media (%s)", (mediaMime, mediaName, expected) => {
+    const msg = quotedMessage();
+    const ctx = weixinMessageToMsgContext(msg, "acc");
+    resolveStoredQuoteContext(ctx, msg, "acc", {
+      find: () => ({
+        accountId: "acc", conversationId: "user1", messageId: "9007199254740993123",
+        direction: "inbound", body: "[媒体]", mediaMime, ...(mediaName ? { mediaName } : {}),
+        createdAt: Date.now(),
+      }),
+    });
+    expect(ctx.ReplyToBody).toBe(expected);
+  });
+
+  it("adds an existing quoted media file alongside the current attachment", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "weixin-inbound-quote-"));
+    const quotedPath = path.join(tempDir, "quoted.png");
+    fs.writeFileSync(quotedPath, "image");
+    try {
+      const msg = quotedMessage();
+      const ctx = weixinMessageToMsgContext(msg, "acc", { decryptedFilePath: "/tmp/current.pdf" });
+      resolveStoredQuoteContext(ctx, msg, "acc", {
+        find: () => ({
+          accountId: "acc", conversationId: "user1", messageId: "9007199254740993123",
+          direction: "inbound", body: "[图片]", mediaPath: quotedPath, mediaMime: "image/png",
+          createdAt: Date.now(),
+        }),
+      });
+      expect(ctx.MediaPaths).toEqual(["/tmp/current.pdf", quotedPath]);
+      expect(ctx.MediaTypes).toEqual(["application/octet-stream", "image/png"]);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("marks a referenced media path that disappeared from disk as expired", () => {
+    const msg = quotedMessage();
+    const ctx = weixinMessageToMsgContext(msg, "acc");
+    resolveStoredQuoteContext(ctx, msg, "acc", {
+      find: () => ({
+        accountId: "acc", conversationId: "user1", messageId: "9007199254740993123",
+        direction: "inbound", body: "[视频]", mediaPath: "/definitely/missing/video.mp4",
+        mediaMime: "video/mp4", createdAt: Date.now(),
+      }),
+    });
+    expect(ctx.ReplyToBody).toBe("[引用的视频已过期]");
+  });
+});
+
+describe("getWeixinMessageId", () => {
+  it("prefers the top-level ID and falls back to an item ID", () => {
+    expect(getWeixinMessageId({ message_id: "10", item_list: [{ msg_id: "11" }] })).toBe("10");
+    expect(getWeixinMessageId({ item_list: [{ msg_id: "11" }] })).toBe("11");
   });
 });
 

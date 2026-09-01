@@ -107,6 +107,34 @@ openclaw config set session.dmScope per-account-channel-peer
 已注册的 agent 共享同一个 `botAgent` 声明；如有需要按 agent 单独标识的场景，
 可在后续版本扩展配置。
 
+## 引用消息本地缓存
+
+新版微信的引用消息可能只携带服务端消息 ID。插件默认使用 SQLite 保存文本和媒体元数据，
+并将图片、视频、语音及附件复制到受管目录，从而在后续引用时还原原消息。缓存按账号和会话
+隔离；文本默认保留 30 天且每账号最多 10,000 条，媒体默认保留 7 天、每账号最多 256 MiB、
+单文件最多 25 MiB。淘汰在启动时、每小时、每写入 100 条及媒体超出空间上限时触发；删除
+账号时会同步删除其引用缓存。
+
+如当前 Node.js 不提供 `node:sqlite`，插件会记录警告并自动关闭此功能，不使用内存缓存降级。
+也可以显式关闭或调整限制：
+
+```json
+{
+  "channels": {
+    "openclaw-weixin": {
+      "quoteCache": {
+        "enabled": false,
+        "retentionDays": 30,
+        "maxMessagesPerAccount": 10000,
+        "mediaRetentionDays": 7,
+        "maxMediaBytesPerAccount": 268435456,
+        "maxSingleMediaBytes": 26214400
+      }
+    }
+  }
+}
+```
+
 ## 后端 API 协议
 
 本插件通过 HTTP JSON API 与后端网关通信。二次开发者若需对接自有后端，需实现以下接口。

@@ -13,6 +13,7 @@ export async function sendWeixinErrorNotice(params: {
   baseUrl: string;
   token?: string;
   runId?: string;
+  accountId?: string;
   errLog: (m: string) => void;
 }): Promise<void> {
   if (!params.contextToken) {
@@ -23,6 +24,7 @@ export async function sendWeixinErrorNotice(params: {
       baseUrl: params.baseUrl,
       token: params.token,
       contextToken: params.contextToken,
+      accountId: params.accountId,
       ...(params.runId ? { runId: params.runId } : {}),
     }});
     logger.debug(`sendWeixinErrorNotice: sent to=${params.to}`);
