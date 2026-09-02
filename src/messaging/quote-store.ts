@@ -15,6 +15,7 @@ const DEFAULT_MAX_MEDIA_BYTES_PER_ACCOUNT = 256 * 1024 * 1024;
 const DEFAULT_MAX_SINGLE_MEDIA_BYTES = 25 * 1024 * 1024;
 const GC_WRITE_INTERVAL = 100;
 const GC_TIMER_MS = 60 * 60 * 1000;
+const QUOTE_MEDIA_SUBDIR = "inbound/openclaw-weixin-quotes";
 
 type SqliteStatement = {
   run: (...params: unknown[]) => unknown;
@@ -135,9 +136,13 @@ function accountMediaDirName(accountId: string): string {
   return `${readable}-${digest}`;
 }
 
-function safeMediaExtension(filePath: string): string {
-  const ext = path.extname(filePath).toLowerCase();
-  return /^\.[a-z0-9]{1,16}$/.test(ext) ? ext : "";
+/** OpenClaw media-store subdirectory owned and garbage-collected by this plugin. */
+export function resolveQuoteMediaSubdir(accountId: string): string {
+  return path.posix.join(QUOTE_MEDIA_SUBDIR, accountMediaDirName(accountId));
+}
+
+function resolveQuoteMediaRoot(): string {
+  return path.join(resolveStateDir(), "media", ...QUOTE_MEDIA_SUBDIR.split("/"));
 }
 
 function asStoredRow(value: unknown): StoredRow | null {
@@ -157,12 +162,18 @@ export class QuoteStore {
   private closed = false;
   private readonly gcTimer: ReturnType<typeof setInterval>;
 
-  private constructor(db: SqliteDatabase, rootDir: string, policy: QuoteCachePolicy) {
+  private constructor(
+    db: SqliteDatabase,
+    rootDir: string,
+    mediaRoot: string,
+    policy: QuoteCachePolicy,
+  ) {
     this.db = db;
     this.rootDir = rootDir;
-    this.mediaRoot = path.join(rootDir, "ref-media");
+    this.mediaRoot = mediaRoot;
     this.policy = policy;
     this.initializeSchema();
+    this.migrateLegacyMedia();
     this.gcTimer = setInterval(() => this.requestGc(), GC_TIMER_MS);
     this.gcTimer.unref();
     this.runGc();
@@ -171,6 +182,7 @@ export class QuoteStore {
   static async open(params: {
     policy: QuoteCachePolicy;
     rootDir?: string;
+    mediaRoot?: string;
   }): Promise<QuoteStore | null> {
     if (!params.policy.enabled) return null;
     try {
@@ -178,7 +190,9 @@ export class QuoteStore {
         DatabaseSync: DatabaseSyncConstructor;
       };
       const rootDir = params.rootDir ?? path.join(resolveStateDir(), "openclaw-weixin");
+      const mediaRoot = params.mediaRoot ?? resolveQuoteMediaRoot();
       fs.mkdirSync(rootDir, { recursive: true, mode: 0o700 });
+      fs.mkdirSync(mediaRoot, { recursive: true, mode: 0o700 });
       try {
         fs.chmodSync(rootDir, 0o700);
       } catch {
@@ -191,7 +205,7 @@ export class QuoteStore {
       } catch {
         // best-effort
       }
-      return new QuoteStore(db, rootDir, params.policy);
+      return new QuoteStore(db, rootDir, mediaRoot, params.policy);
     } catch (err) {
       logger.warn(
         `quote cache disabled: node:sqlite is unavailable or the database could not be opened: ${String(err)}`,
@@ -230,6 +244,64 @@ export class QuoteStore {
     `);
   }
 
+  /** Move media written by pre-managed-root builds without duplicating file contents. */
+  private migrateLegacyMedia(): void {
+    const legacyRoots = [
+      path.join(this.rootDir, "ref-media"),
+      // A short-lived local build accidentally omitted the media/ segment.
+      path.join(path.dirname(this.rootDir), ...QUOTE_MEDIA_SUBDIR.split("/")),
+    ];
+    for (const legacyRoot of new Set(legacyRoots)) {
+      this.migrateLegacyMediaRoot(legacyRoot);
+    }
+  }
+
+  private migrateLegacyMediaRoot(legacyRoot: string): void {
+    if (path.resolve(legacyRoot) === path.resolve(this.mediaRoot) || !fs.existsSync(legacyRoot)) {
+      return;
+    }
+    const rows = this.db
+      .prepare(`
+        SELECT account_id, media_path
+        FROM quote_messages
+        WHERE media_path IS NOT NULL
+      `)
+      .all() as Array<{ account_id: string; media_path: string }>;
+    const canonicalLegacyRoot = fs.realpathSync(legacyRoot);
+    const migrated = new Map<string, string>();
+    for (const row of rows) {
+      if (migrated.has(row.media_path)) continue;
+      if (!fs.existsSync(row.media_path)) continue;
+      const canonicalLegacyPath = fs.realpathSync(row.media_path);
+      const relative = path.relative(canonicalLegacyRoot, canonicalLegacyPath);
+      if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) continue;
+      const destinationDir = path.join(this.mediaRoot, accountMediaDirName(row.account_id));
+      const destination = path.join(destinationDir, path.basename(row.media_path));
+      try {
+        fs.mkdirSync(destinationDir, { recursive: true, mode: 0o700 });
+        if (!fs.existsSync(destination)) {
+          try {
+            fs.renameSync(row.media_path, destination);
+          } catch (err) {
+            if ((err as NodeJS.ErrnoException).code !== "EXDEV") throw err;
+            fs.copyFileSync(row.media_path, destination, fs.constants.COPYFILE_EXCL);
+            fs.unlinkSync(row.media_path);
+          }
+        } else {
+          fs.unlinkSync(row.media_path);
+        }
+        migrated.set(row.media_path, destination);
+      } catch (err) {
+        logger.warn(`quote cache: failed to migrate media path=${row.media_path}: ${String(err)}`);
+      }
+    }
+    for (const [legacyPath, managedPath] of migrated) {
+      this.db
+        .prepare("UPDATE quote_messages SET media_path = ? WHERE media_path = ?")
+        .run(managedPath, legacyPath);
+    }
+  }
+
   find(accountId: string, conversationId: string, messageId: string): QuoteMessageRecord | null {
     if (this.closed || !messageId) return null;
     const row = asStoredRow(
@@ -264,7 +336,7 @@ export class QuoteStore {
   async put(input: QuoteMessageInput): Promise<void> {
     if (this.closed || !input.messageId || (!input.body && !input.sourceMediaPath)) return;
     const media = input.sourceMediaPath
-      ? await this.cacheMedia(input.accountId, input.sourceMediaPath, input.mediaMime)
+      ? await this.registerManagedMedia(input.accountId, input.sourceMediaPath, input.mediaMime)
       : null;
     this.db
       .prepare(`
@@ -334,32 +406,30 @@ export class QuoteStore {
     return typeof row?.media_path === "string" ? row.media_path : null;
   }
 
-  private async cacheMedia(
+  private async registerManagedMedia(
     accountId: string,
     sourcePath: string,
     mime?: string,
   ): Promise<{ path: string; mime?: string; name: string; size: number } | null> {
     try {
-      const stat = await fs.promises.stat(sourcePath);
-      if (!stat.isFile() || stat.size > this.policy.maxSingleMediaBytes) return null;
-      const data = await fs.promises.readFile(sourcePath);
-      const hash = crypto.createHash("sha256").update(data).digest("hex");
       const accountDir = path.join(this.mediaRoot, accountMediaDirName(accountId));
-      await fs.promises.mkdir(accountDir, { recursive: true, mode: 0o700 });
-      const destination = path.join(accountDir, `${hash}${safeMediaExtension(sourcePath)}`);
-      try {
-        await fs.promises.writeFile(destination, data, { flag: "wx", mode: 0o600 });
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      const canonicalRoot = await fs.promises.realpath(accountDir).catch(() => path.resolve(accountDir));
+      const canonicalSource = await fs.promises.realpath(sourcePath);
+      const relative = path.relative(canonicalRoot, canonicalSource);
+      if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+        logger.warn(`quote cache: refusing unmanaged media path=${sourcePath}`);
+        return null;
       }
+      const stat = await fs.promises.stat(canonicalSource);
+      if (!stat.isFile() || stat.size > this.policy.maxSingleMediaBytes) return null;
       return {
-        path: destination,
+        path: path.resolve(sourcePath),
         ...(mime ? { mime } : {}),
-        name: path.basename(sourcePath),
+        name: path.basename(canonicalSource),
         size: stat.size,
       };
     } catch (err) {
-      logger.warn(`quote cache: failed to cache media path=${sourcePath}: ${String(err)}`);
+      logger.warn(`quote cache: failed to register media path=${sourcePath}: ${String(err)}`);
       return null;
     }
   }
@@ -533,6 +603,10 @@ export function getQuoteStore(): QuoteStore | null {
   return activeStore;
 }
 
+export function getActiveQuoteMediaSubdir(accountId: string): string | undefined {
+  return activeStore ? resolveQuoteMediaSubdir(accountId) : undefined;
+}
+
 export function closeQuoteStore(): void {
   activeStore?.close();
   activeStore = null;
@@ -547,6 +621,7 @@ export function deleteQuoteCacheForAccount(accountId: string): void {
   }
 
   const rootDir = path.join(resolveStateDir(), "openclaw-weixin");
+  const mediaRoot = resolveQuoteMediaRoot();
   const dbPath = path.join(rootDir, "ref-messages.sqlite");
   if (!fs.existsSync(dbPath)) return;
   try {
@@ -555,6 +630,10 @@ export function deleteQuoteCacheForAccount(accountId: string): void {
     const db = new sqlite.DatabaseSync(dbPath);
     db.prepare("DELETE FROM quote_messages WHERE account_id = ?").run(accountId);
     db.close();
+    fs.rmSync(path.join(mediaRoot, accountMediaDirName(accountId)), {
+      recursive: true,
+      force: true,
+    });
     fs.rmSync(path.join(rootDir, "ref-media", accountMediaDirName(accountId)), {
       recursive: true,
       force: true,

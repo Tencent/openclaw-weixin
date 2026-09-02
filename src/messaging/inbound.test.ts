@@ -434,11 +434,21 @@ describe("stored quote resolution", () => {
         find: () => ({
           accountId: "acc", conversationId: "user1", messageId: "9007199254740993123",
           direction: "inbound", body: "[图片]", mediaPath: quotedPath, mediaMime: "image/png",
+          mediaName: "quoted-original.png",
           createdAt: Date.now(),
         }),
       });
       expect(ctx.MediaPaths).toEqual(["/tmp/current.pdf", quotedPath]);
       expect(ctx.MediaTypes).toEqual(["application/octet-stream", "image/png"]);
+      expect(ctx.media).toEqual([
+        { path: "/tmp/current.pdf", contentType: "application/octet-stream" },
+        {
+          path: quotedPath,
+          contentType: "image/png",
+          fileName: "quoted-original.png",
+          messageId: "9007199254740993123",
+        },
+      ]);
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }

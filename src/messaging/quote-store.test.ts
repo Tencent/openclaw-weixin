@@ -10,8 +10,10 @@ import {
   closeQuoteStore,
   deactivateQuoteStoreAccount,
   deleteQuoteCacheForAccount,
+  getActiveQuoteMediaSubdir,
   getQuoteStore,
   initializeQuoteStore,
+  resolveQuoteMediaSubdir,
   resolveQuoteCachePolicy,
 } from "./quote-store.js";
 
@@ -25,6 +27,7 @@ vi.mock("../util/logger.js", () => ({
 }));
 
 let rootDir: string;
+let mediaRoot: string;
 let stores: QuoteStore[];
 
 function policy(overrides: Partial<QuoteCachePolicy> = {}): QuoteCachePolicy {
@@ -40,14 +43,21 @@ function policy(overrides: Partial<QuoteCachePolicy> = {}): QuoteCachePolicy {
 }
 
 async function open(overrides: Partial<QuoteCachePolicy> = {}): Promise<QuoteStore> {
-  const store = await QuoteStore.open({ rootDir, policy: policy(overrides) });
+  const store = await QuoteStore.open({ rootDir, mediaRoot, policy: policy(overrides) });
   expect(store).not.toBeNull();
   stores.push(store!);
   return store!;
 }
 
+function managedMediaPath(accountId: string, fileName: string): string {
+  const accountDir = path.join(mediaRoot, path.basename(resolveQuoteMediaSubdir(accountId)));
+  fs.mkdirSync(accountDir, { recursive: true });
+  return path.join(accountDir, fileName);
+}
+
 beforeEach(() => {
   rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "weixin-quote-store-"));
+  mediaRoot = path.join(rootDir, "managed-media");
   stores = [];
 });
 
@@ -107,10 +117,10 @@ describe("QuoteStore", () => {
     expect(store.find("account", "user", "2")).toBeNull();
   });
 
-  it("copies media into managed storage, deduplicates it, and deletes it with the account", async () => {
-    const source = path.join(rootDir, "source.png");
-    fs.writeFileSync(source, "same-content");
+  it("registers one managed media copy and deletes it with the account", async () => {
     const store = await open();
+    const source = managedMediaPath("account", "source.png");
+    fs.writeFileSync(source, "same-content");
     for (const messageId of ["1", "2"]) {
       await store.put({
         accountId: "account",
@@ -126,7 +136,7 @@ describe("QuoteStore", () => {
     const first = store.find("account", "user", "1");
     const second = store.find("account", "user", "2");
     expect(first?.mediaPath).toBe(second?.mediaPath);
-    expect(first?.mediaPath).not.toBe(source);
+    expect(first?.mediaPath).toBe(source);
     expect(fs.readFileSync(first!.mediaPath!, "utf8")).toBe("same-content");
 
     const managedPath = first!.mediaPath!;
@@ -136,10 +146,10 @@ describe("QuoteStore", () => {
   });
 
   it("does not let sanitized account names share a media directory", async () => {
-    const source = path.join(rootDir, "source.png");
-    fs.writeFileSync(source, "same-content");
     const store = await open();
     for (const accountId of ["a/b", "a_b"]) {
+      const source = managedMediaPath(accountId, "source.png");
+      fs.writeFileSync(source, "same-content");
       await store.put({
         accountId,
         conversationId: "user",
@@ -159,9 +169,9 @@ describe("QuoteStore", () => {
   });
 
   it("keeps message metadata but skips oversized media", async () => {
-    const source = path.join(rootDir, "large.bin");
-    fs.writeFileSync(source, "12345");
     const store = await open({ maxSingleMediaBytes: 4 });
+    const source = managedMediaPath("account", "large.bin");
+    fs.writeFileSync(source, "12345");
     await store.put({
       accountId: "account",
       conversationId: "user",
@@ -182,11 +192,11 @@ describe("QuoteStore", () => {
   });
 
   it("enforces the per-account media byte budget oldest-first", async () => {
-    const firstSource = path.join(rootDir, "first.bin");
-    const secondSource = path.join(rootDir, "second.bin");
+    const store = await open({ maxMediaBytesPerAccount: 4 });
+    const firstSource = managedMediaPath("account", "first.bin");
+    const secondSource = managedMediaPath("account", "second.bin");
     fs.writeFileSync(firstSource, "1111");
     fs.writeFileSync(secondSource, "2222");
-    const store = await open({ maxMediaBytesPerAccount: 4 });
     const now = Date.now();
     await store.put({
       accountId: "account", conversationId: "user", messageId: "1",
@@ -201,10 +211,10 @@ describe("QuoteStore", () => {
   });
 
   it("expires managed media without discarding the message body", async () => {
-    const source = path.join(rootDir, "old.mp3");
+    const store = await open({ mediaRetentionMs: 10 });
+    const source = managedMediaPath("account", "old.mp3");
     fs.writeFileSync(source, "voice");
     const now = Date.now();
-    const store = await open({ mediaRetentionMs: 10 });
     await store.put({
       accountId: "account",
       conversationId: "user",
@@ -226,10 +236,10 @@ describe("QuoteStore", () => {
   });
 
   it("removes an expired message but preserves media shared by a newer record", async () => {
-    const source = path.join(rootDir, "shared.png");
+    const store = await open({ retentionMs: 100 });
+    const source = managedMediaPath("account", "shared.png");
     fs.writeFileSync(source, "shared");
     const now = Date.now();
-    const store = await open({ retentionMs: 100 });
     await store.put({
       accountId: "account", conversationId: "user", messageId: "old",
       direction: "inbound", body: "old", sourceMediaPath: source, createdAt: now - 1000,
@@ -256,7 +266,7 @@ describe("QuoteStore", () => {
     });
     expect(store.find("account", "user", "missing")?.mediaPath).toBeUndefined();
 
-    const orphanDir = path.join(rootDir, "ref-media", "nested");
+    const orphanDir = path.join(mediaRoot, "nested");
     fs.mkdirSync(orphanDir, { recursive: true });
     const orphan = path.join(orphanDir, "orphan.bin");
     fs.writeFileSync(orphan, "orphan");
@@ -292,10 +302,10 @@ describe("QuoteStore", () => {
     })).resolves.toBeNull();
   });
 
-  it("ignores invalid writes, normalizes unsafe paths, and substitutes invalid timestamps", async () => {
-    const source = path.join(rootDir, "media.extension-that-is-far-too-long");
-    fs.writeFileSync(source, "content");
+  it("ignores invalid writes, isolates unsafe account names, and substitutes invalid timestamps", async () => {
     const store = await open();
+    const source = managedMediaPath("   ", "media");
+    fs.writeFileSync(source, "content");
     await store.put({
       accountId: "   ", conversationId: "user", messageId: "media",
       direction: "inbound", body: "[文件]", sourceMediaPath: source, createdAt: Number.NaN,
@@ -325,15 +335,89 @@ describe("QuoteStore", () => {
     store.deleteAccount("account");
     store.runGc();
   });
+
+  it("refuses to claim media outside its account-owned directory", async () => {
+    const source = path.join(rootDir, "outside.bin");
+    fs.writeFileSync(source, "content");
+    const store = await open();
+    await store.put({
+      accountId: "account", conversationId: "user", messageId: "outside",
+      direction: "inbound", body: "[文件]", sourceMediaPath: source, createdAt: Date.now(),
+    });
+    expect(store.find("account", "user", "outside")?.mediaPath).toBeUndefined();
+    expect(fs.existsSync(source)).toBe(true);
+  });
+
+  it("moves legacy media into the OpenClaw-managed cache and rewrites its database path", async () => {
+    const legacyRoot = path.join(rootDir, "ref-media");
+    const legacyStore = await QuoteStore.open({
+      rootDir,
+      mediaRoot: legacyRoot,
+      policy: policy(),
+    });
+    expect(legacyStore).not.toBeNull();
+    stores.push(legacyStore!);
+    const legacyPath = path.join(
+      legacyRoot,
+      path.basename(resolveQuoteMediaSubdir("account")),
+      "legacy.pdf",
+    );
+    fs.mkdirSync(path.dirname(legacyPath), { recursive: true });
+    fs.writeFileSync(legacyPath, "pdf");
+    await legacyStore!.put({
+      accountId: "account", conversationId: "user", messageId: "legacy",
+      direction: "inbound", body: "[文件]", sourceMediaPath: legacyPath,
+      mediaName: "report.pdf", createdAt: Date.now(),
+    });
+    await legacyStore!.put({
+      accountId: "account", conversationId: "user", messageId: "legacy-shared",
+      direction: "inbound", body: "[文件]", sourceMediaPath: legacyPath,
+      mediaName: "report.pdf", createdAt: Date.now(),
+    });
+
+    const existingLegacyPath = path.join(path.dirname(legacyPath), "existing.pdf");
+    fs.writeFileSync(existingLegacyPath, "existing");
+    await legacyStore!.put({
+      accountId: "account", conversationId: "user", messageId: "existing",
+      direction: "inbound", body: "[文件]", sourceMediaPath: existingLegacyPath,
+      createdAt: Date.now(),
+    });
+    const existingManagedPath = managedMediaPath("account", "existing.pdf");
+    fs.writeFileSync(existingManagedPath, "existing");
+
+    const missingLegacyPath = path.join(path.dirname(legacyPath), "missing.pdf");
+    fs.writeFileSync(missingLegacyPath, "missing");
+    await legacyStore!.put({
+      accountId: "account", conversationId: "user", messageId: "missing-legacy",
+      direction: "inbound", body: "[文件]", sourceMediaPath: missingLegacyPath,
+      createdAt: Date.now(),
+    });
+    fs.unlinkSync(missingLegacyPath);
+    legacyStore!.close();
+
+    const migratedStore = await open();
+    const migrated = migratedStore.find("account", "user", "legacy");
+    expect(migrated?.mediaPath).toBe(managedMediaPath("account", "legacy.pdf"));
+    expect(migrated?.mediaName).toBe("report.pdf");
+    expect(fs.existsSync(migrated!.mediaPath!)).toBe(true);
+    expect(fs.existsSync(legacyPath)).toBe(false);
+    expect(migratedStore.find("account", "user", "legacy-shared")?.mediaPath)
+      .toBe(migrated?.mediaPath);
+    expect(migratedStore.find("account", "user", "existing")?.mediaPath)
+      .toBe(existingManagedPath);
+    expect(fs.existsSync(existingLegacyPath)).toBe(false);
+  });
 });
 
 describe("global quote store lifecycle", () => {
   it("shares one store across active accounts and closes after the last account stops", async () => {
     process.env.OPENCLAW_STATE_DIR = rootDir;
+    expect(getActiveQuoteMediaSubdir("account-a")).toBeUndefined();
     const first = await initializeQuoteStore({}, "account-a");
     const second = await initializeQuoteStore({}, "account-b");
     expect(first).toBe(second);
     expect(getQuoteStore()).toBe(first);
+    expect(getActiveQuoteMediaSubdir("account-a")).toBe(resolveQuoteMediaSubdir("account-a"));
 
     deactivateQuoteStoreAccount("account-a");
     expect(getQuoteStore()).toBe(first);

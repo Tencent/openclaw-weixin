@@ -160,6 +160,12 @@ export type WeixinMsgContext = {
   MediaType?: string;
   MediaPaths?: string[];
   MediaTypes?: string[];
+  media?: Array<{
+    path?: string;
+    contentType?: string;
+    fileName?: string;
+    messageId?: string;
+  }>;
   ReplyToId?: string;
   ReplyToBody?: string;
   ReplyToQuoteText?: string;
@@ -372,6 +378,14 @@ export function resolveStoredQuoteContext(
     ctx.MediaTypes ?? (ctx.MediaPath ? [ctx.MediaType ?? "application/octet-stream"] : []);
   ctx.MediaPaths = [...currentPaths, record.mediaPath];
   ctx.MediaTypes = [...currentTypes, record.mediaMime ?? "application/octet-stream"];
+  ctx.media = ctx.MediaPaths.map((mediaPath, index) => ({
+    path: mediaPath,
+    contentType: ctx.MediaTypes?.[index] ?? "application/octet-stream",
+    ...(index === ctx.MediaPaths!.length - 1 && record.mediaName
+      ? { fileName: record.mediaName }
+      : {}),
+    ...(index === ctx.MediaPaths!.length - 1 ? { messageId: referenceId } : {}),
+  }));
 }
 
 /** Extract the context_token from an inbound WeixinMsgContext. */

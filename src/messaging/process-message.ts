@@ -36,7 +36,7 @@ import { sendWeixinMediaFile } from "./send-media.js";
 import { StreamingMarkdownFilter } from "./markdown-filter.js";
 import { sendMessageWeixin } from "./send.js";
 import { WeixinReplyProgressSender } from "./reply-progress-sender.js";
-import { getQuoteStore } from "./quote-store.js";
+import { getActiveQuoteMediaSubdir, getQuoteStore } from "./quote-store.js";
 import { handleSlashCommand } from "./slash-commands.js";
 
 const MEDIA_OUTBOUND_TEMP_DIR = path.join(resolvePreferredOpenClawTmpDir(), "weixin/media/outbound-temp");
@@ -151,6 +151,7 @@ export async function processOneMessage(
     const downloaded = await downloadMediaFromItem(mediaItem, {
       cdnBaseUrl: deps.cdnBaseUrl,
       saveMedia: deps.channelRuntime.media.saveMediaBuffer,
+      mediaSubdir: getActiveQuoteMediaSubdir(deps.accountId),
       log: deps.log,
       errLog: deps.errLog,
       label,
