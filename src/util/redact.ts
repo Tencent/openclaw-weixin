@@ -22,7 +22,46 @@ export function redactToken(token: string | undefined, prefixLen = DEFAULT_TOKEN
 }
 
 /** Field names whose values should be masked in logged JSON bodies. */
-const SENSITIVE_FIELDS = /\b(context_token|bot_token|token|authorization|Authorization)\b/;
+const SENSITIVE_FIELD_NAMES = [
+  "authorization",
+  "token",
+  "bot_token",
+  "context_token",
+  "local_token_list",
+  "aeskey",
+  "aes_key",
+  "encrypt_query_param",
+  "upload_param",
+  "thumb_upload_param",
+  "upload_full_url",
+  "full_url",
+  "qrcode",
+  "qrcode_url",
+  "verify_code",
+] as const;
+
+const SENSITIVE_FIELDS = new Set<string>(SENSITIVE_FIELD_NAMES);
+const SENSITIVE_FIELD_PATTERN = SENSITIVE_FIELD_NAMES.join("|");
+const SENSITIVE_STRING_FIELD_RE = new RegExp(
+  `"(${SENSITIVE_FIELD_PATTERN})"\\s*:\\s*"(?:\\\\.|[^"\\\\])*"`,
+  "gi",
+);
+const SENSITIVE_COMPOSITE_FIELD_RE = new RegExp(
+  `"(${SENSITIVE_FIELD_PATTERN})"\\s*:\\s*(?:\\[[^\\]]*\\]|\\{[^}]*\\})`,
+  "gi",
+);
+
+function redactJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactJsonValue);
+  if (value === null || typeof value !== "object") return value;
+
+  return Object.fromEntries(
+    Object.entries(value).map(([key, child]) => [
+      key,
+      SENSITIVE_FIELDS.has(key.toLowerCase()) ? "<redacted>" : redactJsonValue(child),
+    ]),
+  );
+}
 
 /**
  * Truncate a JSON body string to `maxLen` chars for safe logging.
@@ -30,11 +69,15 @@ const SENSITIVE_FIELDS = /\b(context_token|bot_token|token|authorization|Authori
  */
 export function redactBody(body: string | undefined, maxLen = DEFAULT_BODY_MAX_LEN): string {
   if (!body) return "(empty)";
-  // Mask values of known sensitive JSON keys: "key":"value" → "key":"<redacted>"
-  const redacted = body.replace(
-    /"(context_token|bot_token|token|authorization|Authorization)"\s*:\s*"[^"]*"/g,
-    '"$1":"<redacted>"',
-  );
+  let redacted: string;
+  try {
+    redacted = JSON.stringify(redactJsonValue(JSON.parse(body)));
+  } catch {
+    // Best-effort fallback for malformed or partial JSON returned by an upstream service.
+    redacted = body
+      .replace(SENSITIVE_STRING_FIELD_RE, '"$1":"<redacted>"')
+      .replace(SENSITIVE_COMPOSITE_FIELD_RE, '"$1":"<redacted>"');
+  }
   if (redacted.length <= maxLen) return redacted;
   return `${redacted.slice(0, maxLen)}…(truncated, totalLen=${redacted.length})`;
 }

@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { apiGetFetch, apiPostFetch } from "../api/api.js";
 import { listIndexedWeixinAccountIds, loadWeixinAccount } from "./accounts.js";
 import { logger } from "../util/logger.js";
-import { redactToken } from "../util/redact.js";
+import { redactBody, redactToken } from "../util/redact.js";
 
 type ActiveLogin = {
   sessionKey: string;
@@ -122,7 +122,7 @@ async function pollQRStatus(apiBaseUrl: string, qrcode: string, verifyCode?: str
       timeoutMs: QR_LONG_POLL_TIMEOUT_MS,
       label: "pollQRStatus",
     });
-    logger.debug(`pollQRStatus: body=${rawText.substring(0, 200)}`);
+    logger.debug(`pollQRStatus: body=${redactBody(rawText)}`);
     return JSON.parse(rawText) as StatusResponse;
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
