@@ -125,26 +125,63 @@ messages per account; media is retained for 7 days with a 256 MiB per-account
 budget and a 25 MiB single-file limit. Cleanup runs at startup, hourly, every 100
 writes, whenever the media budget is exceeded, and when an account is deleted.
 
-If `node:sqlite` is unavailable, the plugin logs a warning and disables this
-feature; it does not fall back to an in-memory cache. You can also disable it or
-change the limits explicitly:
+The quote cache is **enabled by default**. No configuration is required after
+upgrading: this preserves the quoted-message experience that existed before
+newer WeChat clients stopped including the quoted body. Configure it under
+`channels.openclaw-weixin.quoteCache` only when you need different limits.
+
+| Option | Default | Description |
+| --- | ---: | --- |
+| `enabled` | `true` | Enables local quote reconstruction. |
+| `retentionDays` | `30` | Number of days to retain text and message metadata. |
+| `maxMessagesPerAccount` | `10000` | Maximum message records retained per account. |
+| `mediaRetentionDays` | `7` | Number of days to retain quoted media files. |
+| `maxMediaBytesPerAccount` | `268435456` | Maximum retained media per account, in bytes (256 MiB). |
+| `maxSingleMediaBytes` | `26214400` | Maximum size of one retained media file, in bytes (25 MiB). Larger files are still delivered normally but are not retained for later quote reconstruction. |
+
+Example with custom limits while keeping the feature enabled:
 
 ```json
 {
   "channels": {
     "openclaw-weixin": {
       "quoteCache": {
-        "enabled": false,
-        "retentionDays": 30,
-        "maxMessagesPerAccount": 10000,
-        "mediaRetentionDays": 7,
-        "maxMediaBytesPerAccount": 268435456,
+        "enabled": true,
+        "retentionDays": 14,
+        "maxMessagesPerAccount": 5000,
+        "mediaRetentionDays": 3,
+        "maxMediaBytesPerAccount": 134217728,
         "maxSingleMediaBytes": 26214400
       }
     }
   }
 }
 ```
+
+To disable local quote storage explicitly:
+
+```json
+{
+  "channels": {
+    "openclaw-weixin": {
+      "quoteCache": {
+        "enabled": false
+      }
+    }
+  }
+}
+```
+
+Restart the gateway after changing the configuration:
+
+```bash
+openclaw gateway restart
+```
+
+If `node:sqlite` is unavailable or the database cannot be opened, the plugin
+logs a warning and disables this feature automatically. It does not fall back to
+an in-memory cache, and quote-cache failures do not interrupt normal message
+delivery.
 
 ## Backend API Protocol
 

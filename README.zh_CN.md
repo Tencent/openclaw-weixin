@@ -117,25 +117,60 @@ openclaw config set session.dmScope per-account-channel-peer
 最多 25 MiB。淘汰在启动时、每小时、每写入 100 条及媒体超出空间上限时触发；删除账号时
 会同步删除其引用缓存。
 
-如当前 Node.js 不提供 `node:sqlite`，插件会记录警告并自动关闭此功能，不使用内存缓存降级。
-也可以显式关闭或调整限制：
+引用缓存**默认开启**，升级后无需增加任何配置。这样可以在新版微信客户端不再携带引用正文后，
+继续保持此前的引用消息体验。只有需要调整缓存限制时，才需要配置
+`channels.openclaw-weixin.quoteCache`。
+
+| 配置项 | 默认值 | 说明 |
+| --- | ---: | --- |
+| `enabled` | `true` | 是否启用本地引用消息还原。 |
+| `retentionDays` | `30` | 文本及消息元数据的保留天数。 |
+| `maxMessagesPerAccount` | `10000` | 每个账号最多保留的消息记录数。 |
+| `mediaRetentionDays` | `7` | 引用媒体文件的保留天数。 |
+| `maxMediaBytesPerAccount` | `268435456` | 每个账号最多保留的媒体总大小，单位为字节（256 MiB）。 |
+| `maxSingleMediaBytes` | `26214400` | 单个可保留媒体文件的最大大小，单位为字节（25 MiB）。超出后仍正常投递当前消息，但不会为后续引用保留文件。 |
+
+保持功能开启并自定义限制的示例：
 
 ```json
 {
   "channels": {
     "openclaw-weixin": {
       "quoteCache": {
-        "enabled": false,
-        "retentionDays": 30,
-        "maxMessagesPerAccount": 10000,
-        "mediaRetentionDays": 7,
-        "maxMediaBytesPerAccount": 268435456,
+        "enabled": true,
+        "retentionDays": 14,
+        "maxMessagesPerAccount": 5000,
+        "mediaRetentionDays": 3,
+        "maxMediaBytesPerAccount": 134217728,
         "maxSingleMediaBytes": 26214400
       }
     }
   }
 }
 ```
+
+如需明确关闭本地引用存储，只需配置：
+
+```json
+{
+  "channels": {
+    "openclaw-weixin": {
+      "quoteCache": {
+        "enabled": false
+      }
+    }
+  }
+}
+```
+
+修改配置后重启 gateway：
+
+```bash
+openclaw gateway restart
+```
+
+如当前 Node.js 不提供 `node:sqlite`，或数据库无法打开，插件会记录警告并自动关闭此功能。
+插件不会使用内存缓存降级，引用缓存异常也不会中断正常消息收发。
 
 ## 后端 API 协议
 
