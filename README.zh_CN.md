@@ -209,7 +209,7 @@ openclaw config set session.dmScope per-account-channel-peer
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `media_type` | `number` | `1` = IMAGE, `2` = VIDEO, `3` = FILE |
+| `media_type` | `number` | `1` = IMAGE, `2` = VIDEO, `3` = FILE, `4` = VOICE |
 | `rawsize` | `number` | 原文件明文大小 |
 | `rawfilemd5` | `string` | 原文件明文 MD5 |
 | `filesize` | `number` | AES-128-ECB 加密后的密文大小 |

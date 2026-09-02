@@ -129,8 +129,7 @@ export async function processOneMessage(
     full.item_list?.find(
       (i) =>
         i.type === MessageItemType.VOICE &&
-        hasDownloadableMedia(i.voice_item?.media) &&
-        !i.voice_item?.text,
+        hasDownloadableMedia(i.voice_item?.media),
     );
   const refMediaItem = !mainMediaItem
     ? full.item_list?.find(
@@ -141,6 +140,27 @@ export async function processOneMessage(
       )?.ref_msg?.message_item
     : undefined;
 
+  if (process.env.WEIXIN_DUMP_INBOUND_VOICE === "1" && full.item_list?.some((it) => Boolean(it.voice_item) || it.type === MessageItemType.VOICE)) {
+    const voiceItems = (full.item_list ?? []).filter((it) => Boolean(it.voice_item) || it.type === MessageItemType.VOICE);
+    void import("node:fs/promises").then((fs) =>
+      fs.writeFile(
+        "/tmp/oc-last-inbound-voice-msg.json",
+        JSON.stringify({
+          message_type: full.message_type,
+          message_state: full.message_state,
+          from_user_id: full.from_user_id,
+          to_user_id: full.to_user_id,
+          session_id: full.session_id,
+          seq: full.seq,
+          message_id: full.message_id,
+          client_id: full.client_id,
+          create_time_ms: full.create_time_ms,
+          keys: Object.keys(full),
+          item_list: voiceItems,
+        }),
+      ),
+    ).catch(() => undefined);
+  }
   const mediaDownloadStart = Date.now();
   const mediaItem = mainMediaItem ?? refMediaItem;
   if (mediaItem) {

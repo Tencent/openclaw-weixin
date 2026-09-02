@@ -4,6 +4,12 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/) 格式。
 
+## [Unreleased]
+
+### 新增
+
+- **出站原生语音条：** `audio/*` 会转码为 SILK_V3，并以 `VOICE` 消息发送（失败则回退为文件附件）。`forceDocument=true` 可强制走旧的文件路径。非 SILK 输入需要本机 `ffmpeg`。
+
 ## [2.4.7] - 2026-08-31
 
 ### 修复

@@ -124,6 +124,8 @@ export interface VoiceItem {
   playtime?: number;
   /** 语音转文字内容 */
   text?: string;
+  /** 语音明文大小 (字节)；部分客户端依赖此字段渲染气泡 */
+  size?: number;
 }
 
 export interface FileItem {

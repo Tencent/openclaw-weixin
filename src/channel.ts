@@ -19,6 +19,8 @@ import { notifyStop, notifyStart } from "./api/api.js";
 import { assertSessionActive } from "./api/session-guard.js";
 import { getContextToken, findAccountIdsByContextToken, restoreContextTokens, clearContextTokensForAccount } from "./messaging/inbound.js";
 import { logger } from "./util/logger.js";
+import { getMimeFromFilename } from "./media/mime.js";
+import { isWeixinAudioFilename } from "./media/silk-transcode.js";
 import {
   DEFAULT_ILINK_BOT_TYPE,
   startWeixinLoginWithQr,
@@ -195,7 +197,7 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
   },
   agentPrompt: {
     messageToolHints: () => [
-      "To send an image or file to the current user, use the message tool with action='send' and set 'media' to a local file path or a remote URL. You do not need to specify 'to' — the current conversation recipient is used automatically.",
+      "To send an image, file, or native voice bubble (语音条) to the current user, use the message tool with action='send' and set 'media' to a local file path or a remote URL. Audio (mp3/wav/ogg/silk) is sent as a WeChat voice note. You do not need to specify 'to' — the current conversation recipient is used automatically.",
       "When the user asks you to find an image from the web, use a web search or browser tool to find a suitable image URL, then send it using the message tool with 'media' set to that HTTPS image URL — do NOT download the image first.",
       "IMPORTANT: When generating or saving a file to send, always use an absolute path (e.g. /tmp/photo.png), never a relative path like ./photo.png. Relative paths cannot be resolved and the file will not be delivered.",
       "IMPORTANT: When creating a cron job (scheduled task) for the current Weixin user, you MUST set delivery.to to the user's Weixin ID (the xxx@im.wechat address from the current conversation) AND set delivery.accountId to the current AccountId. Without an explicit 'to', the cron delivery will fail with 'requires target'. Without an explicit 'accountId', the message may be sent from the wrong bot account. Example: delivery: { mode: 'announce', channel: 'openclaw-weixin', to: '<current_user_id@im.wechat>', accountId: '<current_AccountId>' }.",
@@ -267,12 +269,41 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
         }
         const contextToken = getContextToken(account.accountId, ctx.to);
         try {
+          const mediaCtx = ctx as typeof ctx & {
+            asVoice?: boolean;
+            audioAsVoice?: boolean;
+            forceDocument?: boolean;
+          };
+          const asVoice = mediaCtx.audioAsVoice ?? mediaCtx.asVoice;
+          const mime = getMimeFromFilename(filePath);
+          const isAudio =
+            asVoice === true ||
+            mime.startsWith("audio/") ||
+            isWeixinAudioFilename(filePath);
+          if (isAudio) {
+            const replyText = text.trim() || "收到语音，我用文字回复。";
+            logger.info(
+              `sendMedia: dropping outbound audio file=${filePath} mime=${mime} asVoice=${String(asVoice)} -> TEXT`,
+            );
+            const result = await sendMessageWeixin({
+              to: ctx.to,
+              text: replyText,
+              opts: { baseUrl: account.baseUrl, token: account.token, contextToken },
+            });
+            emitWeixinMessageSent({ to: ctx.to, content: replyText, success: true, accountId: account.accountId });
+            return { channel: "openclaw-weixin", messageId: result.messageId };
+          }
+          logger.info(
+            `sendMedia: file=${filePath} audioAsVoice=${String(mediaCtx.audioAsVoice)} asVoice=${String(mediaCtx.asVoice)} forceDocument=${String(mediaCtx.forceDocument)} resolvedAsVoice=${String(asVoice)}`,
+          );
           const result = await sendWeixinMediaFile({
             filePath,
             to: ctx.to,
             text,
             opts: { baseUrl: account.baseUrl, token: account.token, contextToken },
             cdnBaseUrl: account.cdnBaseUrl,
+            asVoice,
+            forceDocument: mediaCtx.forceDocument,
           });
           emitWeixinMessageSent({ to: ctx.to, content: text, success: true, accountId: account.accountId });
           return { channel: "openclaw-weixin", messageId: result.messageId };

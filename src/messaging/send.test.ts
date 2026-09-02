@@ -40,6 +40,7 @@ import {
   sendImageMessageWeixin,
   sendVideoMessageWeixin,
   sendFileMessageWeixin,
+  sendVoiceMessageWeixin,
 } from "./send.js";
 import { MessageItemType } from "../api/types.js";
 import type { UploadedFileInfo } from "../cdn/upload.js";
@@ -274,5 +275,69 @@ describe("sendFileMessageWeixin", () => {
     });
     expect(result.messageId).toBeDefined();
     expect(mockSendMessageApi).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("sendVoiceMessageWeixin", () => {
+  it("sends VOICE item with SILK metadata", async () => {
+    mockSendMessageApi.mockResolvedValue(undefined);
+    const result = await sendVoiceMessageWeixin({
+      to: "user1",
+      text: "",
+      uploaded: makeUploadedFileInfo(),
+      opts: { baseUrl: "https://api.com", contextToken: "ctx" },
+      playtimeMs: 6100,
+      encodeType: 6,
+      sampleRate: 16000,
+    });
+    expect(result.messageId).toBeDefined();
+    expect(mockSendMessageApi).toHaveBeenCalledTimes(1);
+    const item = mockSendMessageApi.mock.calls[0][0].body.msg.item_list[0];
+    expect(item.type).toBe(MessageItemType.VOICE);
+    expect(item.voice_item.encode_type).toBe(6);
+    expect(item.voice_item.playtime).toBe(6100);
+    expect(item.voice_item.sample_rate).toBe(16000);
+    expect(item.voice_item.bits_per_sample).toBe(16);
+    expect(item.voice_item.size).toBeUndefined();
+  });
+});
+
+  it("sends VOICE with caption and without contextToken", async () => {
+    mockSendMessageApi.mockResolvedValue(undefined);
+    const result = await sendVoiceMessageWeixin({
+      to: "user1",
+      text: "caption",
+      uploaded: makeUploadedFileInfo(),
+      opts: { baseUrl: "https://api.com" },
+      playtimeMs: 0,
+    });
+    expect(result.messageId).toBeDefined();
+    expect(mockSendMessageApi).toHaveBeenCalledTimes(2);
+    const voiceItem = mockSendMessageApi.mock.calls[1][0].body.msg.item_list[0];
+    expect(voiceItem.voice_item.playtime).toBe(1);
+    expect(voiceItem.voice_item.encode_type).toBe(4);
+  });
+
+describe("sendMessageItemWeixin extra", () => {
+  it("warns when contextToken is missing", async () => {
+    mockSendMessageApi.mockResolvedValueOnce(undefined);
+    const result = await sendMessageItemWeixin({
+      to: "user1",
+      item: { type: MessageItemType.TEXT, text_item: { text: "x" } },
+      opts: { baseUrl: "https://api.com" },
+    });
+    expect(result.messageId).toBeDefined();
+  });
+
+  it("sendMessageItemWeixin API failure", async () => {
+    mockSendMessageApi.mockRejectedValueOnce(new Error("item fail"));
+    await expect(
+      sendMessageItemWeixin({
+        to: "user1",
+        item: { type: MessageItemType.TEXT, text_item: { text: "x" } },
+        opts: { baseUrl: "https://api.com", contextToken: "ctx" },
+        label: "custom-label",
+      }),
+    ).rejects.toThrow("item fail");
   });
 });

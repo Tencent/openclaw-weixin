@@ -4,6 +4,15 @@
 
 This project follows the [Keep a Changelog](https://keepachangelog.com/) format.
 
+## [Unreleased]
+
+- Ensure outbound SILK is Tencent-prefixed (`\x02#!SILK_V3`) so pass-through `.silk` files match WeChat client format.
+
+### Added
+
+- **Outbound native voice bubbles (语音条):** `audio/*` (mp3/wav/ogg/silk/amr/opus/m4a) is transcoded to SILK_V3 and sent as `UploadMediaType.VOICE` + `MessageItemType.VOICE` instead of a file attachment. `asVoice=true` forces this path; `forceDocument=true` keeps the old FILE attachment. Native send failures fall back to FILE so TTS still delivers. Requires `ffmpeg` on PATH for non-SILK inputs, plus the `silk-wasm` runtime dependency.
+
+
 ## [2.4.7] - 2026-08-31
 
 ### Fixed

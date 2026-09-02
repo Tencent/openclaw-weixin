@@ -213,7 +213,7 @@ Get CDN upload pre-signed parameters. Call this endpoint before uploading a file
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `media_type` | `number` | `1` = IMAGE, `2` = VIDEO, `3` = FILE |
+| `media_type` | `number` | `1` = IMAGE, `2` = VIDEO, `3` = FILE, `4` = VOICE |
 | `rawsize` | `number` | Original file plaintext size |
 | `rawfilemd5` | `string` | Original file plaintext MD5 |
 | `filesize` | `number` | Ciphertext size after AES-128-ECB encryption |

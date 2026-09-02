@@ -26,7 +26,7 @@ const { mockFetch } = vi.hoisted(() => ({
 }));
 vi.stubGlobal("fetch", mockFetch);
 
-import { downloadRemoteImageToTemp, uploadFileToWeixin, uploadVideoToWeixin, uploadFileAttachmentToWeixin } from "./upload.js";
+import { downloadRemoteImageToTemp, uploadFileToWeixin, uploadVideoToWeixin, uploadFileAttachmentToWeixin, uploadVoiceToWeixin } from "./upload.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -289,6 +289,33 @@ describe("uploadFileAttachmentToWeixin", () => {
       });
       expect(result.filekey).toBeDefined();
       expect(result.downloadEncryptedQueryParam).toBe("dl");
+    } finally {
+      fsSync.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("uploadVoiceToWeixin", () => {
+  it("uploads with VOICE media type", async () => {
+    const tmpDir = fsSync.mkdtempSync(path.join(os.tmpdir(), "upload-voice-test-"));
+    try {
+      const filePath = path.join(tmpDir, "clip.silk");
+      await fs.writeFile(filePath, "silk-bytes-here");
+      mockGetUploadUrl.mockResolvedValueOnce({ upload_param: "up-voice" });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "x-encrypted-param": "dl-voice" }),
+      });
+      const result = await uploadVoiceToWeixin({
+        filePath,
+        toUserId: "user1",
+        opts: { baseUrl: "https://api.com" },
+        cdnBaseUrl: "https://cdn.com",
+      });
+      expect(result.downloadEncryptedQueryParam).toBe("dl-voice");
+      const req = mockGetUploadUrl.mock.calls[0][0];
+      expect(req.media_type).toBe(4);
     } finally {
       fsSync.rmSync(tmpDir, { recursive: true, force: true });
     }

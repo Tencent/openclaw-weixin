@@ -166,3 +166,17 @@ export async function uploadFileAttachmentToWeixin(params: {
     label: "uploadFileAttachmentToWeixin",
   });
 }
+
+/** Upload a local voice file to the Weixin CDN with media_type=VOICE. */
+export async function uploadVoiceToWeixin(params: {
+  filePath: string;
+  toUserId: string;
+  opts: WeixinApiOptions;
+  cdnBaseUrl: string;
+}): Promise<UploadedFileInfo> {
+  return uploadMediaToCdn({
+    ...params,
+    mediaType: UploadMediaType.VOICE,
+    label: "uploadVoiceToWeixin",
+  });
+}

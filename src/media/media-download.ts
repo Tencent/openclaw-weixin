@@ -5,7 +5,8 @@ import {
   downloadAndDecryptBuffer,
   downloadPlainCdnBuffer,
 } from "../cdn/pic-decrypt.js";
-import { silkToWav } from "./silk-transcode.js";
+import fs from "node:fs/promises";
+import { isSilkBuffer, silkToWav } from "./silk-transcode.js";
 import type { WeixinMessage } from "../api/types.js";
 import { MessageItemType } from "../api/types.js";
 
@@ -80,6 +81,35 @@ export async function downloadMediaFromItem(
         `${label} voice`,
         voice.media.full_url,
       );
+      const hex16 = silkBuf.subarray(0, 16).toString("hex");
+      logger.info(
+        `${label} inbound-voice encode_type=${voice.encode_type} sample_rate=${voice.sample_rate} playtime=${voice.playtime} bits=${voice.bits_per_sample} size=${voice.size} bytes=${silkBuf.length} hex16=${hex16} isSilk=${isSilkBuffer(silkBuf)}`,
+      );
+      if (process.env.WEIXIN_DUMP_INBOUND_VOICE === "1") {
+      await fs.writeFile("/tmp/oc-last-inbound-voice.silk", silkBuf).catch(() => undefined);
+      await fs.writeFile(
+        "/tmp/oc-last-inbound-voice.json",
+        JSON.stringify({
+          encode_type: voice.encode_type,
+          sample_rate: voice.sample_rate,
+          playtime: voice.playtime,
+          bits_per_sample: voice.bits_per_sample,
+          size: voice.size,
+          bytes: silkBuf.length,
+          hex16,
+          isSilk: isSilkBuffer(silkBuf),
+          encrypt_type: voice.media?.encrypt_type,
+          has_full_url: Boolean(voice.media?.full_url),
+          has_query_param: Boolean(voice.media?.encrypt_query_param),
+          aes_key_len: voice.media?.aes_key ? String(voice.media.aes_key).length : 0,
+          aes_key: voice.media?.aes_key,
+          encrypt_query_param: voice.media?.encrypt_query_param,
+          full_url: voice.media?.full_url,
+          media_keys: voice.media ? Object.keys(voice.media) : [],
+          voice_keys: Object.keys(voice),
+        }),
+      ).catch(() => undefined);
+      }
       logger.debug(`${label} voice: decrypted ${silkBuf.length} bytes, attempting silk transcode`);
       const wavBuf = await silkToWav(silkBuf);
       if (wavBuf) {

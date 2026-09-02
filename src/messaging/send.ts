@@ -220,7 +220,7 @@ export async function sendImageMessageWeixin(params: {
     image_item: {
       media: {
         encrypt_query_param: uploaded.downloadEncryptedQueryParam,
-        aes_key: Buffer.from(uploaded.aeskey).toString("base64"),
+        aes_key: Buffer.from(uploaded.aeskey, "hex").toString("base64"),
         encrypt_type: 1,
       },
       mid_size: uploaded.fileSizeCiphertext,
@@ -291,4 +291,52 @@ export async function sendFileMessageWeixin(params: {
   };
 
   return sendMediaItems({ to, text, mediaItem: fileItem, opts, label: "sendFileMessageWeixin" });
+}
+
+/**
+ * Send a native voice bubble (语音条) using a previously uploaded VOICE media.
+ * VoiceItem: media (CDN ref), encode_type (WeChat client uses 4 with SILK bytes at 16 kHz), playtime (ms), sample_rate, bits_per_sample.
+ * Optional text caption is sent as a separate TEXT item first.
+ */
+export async function sendVoiceMessageWeixin(params: {
+  to: string;
+  text: string;
+  uploaded: UploadedFileInfo;
+  opts: WeixinMessageSendOptions;
+  playtimeMs: number;
+  encodeType?: number;
+  sampleRate?: number;
+  bitsPerSample?: number;
+}): Promise<{ messageId: string }> {
+  const { to, text, uploaded, opts } = params;
+  if (!opts.contextToken) {
+    logger.warn(`sendVoiceMessageWeixin: contextToken missing for to=${to}, sending without context`);
+  }
+  const playtime = Math.max(1, Math.round(params.playtimeMs));
+  const encodeType = params.encodeType ?? 4;
+  const sampleRate = params.sampleRate ?? 16_000;
+  const bitsPerSample = params.bitsPerSample ?? 16;
+
+  logger.info(
+    `sendVoiceMessageWeixin: to=${to} filekey=${uploaded.filekey} fileSize=${uploaded.fileSize} playtimeMs=${playtime} encodeType=${encodeType} sampleRate=${sampleRate}`,
+  );
+
+  const voiceItem: MessageItem = {
+    type: MessageItemType.VOICE,
+    voice_item: {
+      media: {
+        encrypt_query_param: uploaded.downloadEncryptedQueryParam,
+        // Voice inbound uses base64(hex string), not base64(raw 16 bytes) — see parseAesKey.
+        aes_key: Buffer.from(uploaded.aeskey).toString("base64"),
+        // Inbound 语音条 often omit encrypt_type.
+      },
+      encode_type: encodeType,
+      bits_per_sample: bitsPerSample,
+      sample_rate: sampleRate,
+      playtime,
+      // Inbound 语音条 from personal WeChat often omit size; sending it is optional.
+    },
+  };
+
+  return sendMediaItems({ to, text, mediaItem: voiceItem, opts, label: "sendVoiceMessageWeixin" });
 }

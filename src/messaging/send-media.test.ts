@@ -9,28 +9,50 @@ vi.mock("../util/logger.js", () => ({
   },
 }));
 
-const { mockUploadFileToWeixin, mockUploadVideoToWeixin, mockUploadFileAttachmentToWeixin } = vi.hoisted(() => ({
+const {
+  mockUploadFileToWeixin,
+  mockUploadVideoToWeixin,
+  mockUploadFileAttachmentToWeixin,
+  mockUploadVoiceToWeixin,
+} = vi.hoisted(() => ({
   mockUploadFileToWeixin: vi.fn(),
   mockUploadVideoToWeixin: vi.fn(),
   mockUploadFileAttachmentToWeixin: vi.fn(),
+  mockUploadVoiceToWeixin: vi.fn(),
 }));
 
 vi.mock("../cdn/upload.js", () => ({
   uploadFileToWeixin: mockUploadFileToWeixin,
   uploadVideoToWeixin: mockUploadVideoToWeixin,
   uploadFileAttachmentToWeixin: mockUploadFileAttachmentToWeixin,
+  uploadVoiceToWeixin: mockUploadVoiceToWeixin,
 }));
 
-const { mockSendImageMessageWeixin, mockSendVideoMessageWeixin, mockSendFileMessageWeixin } = vi.hoisted(() => ({
+const {
+  mockSendImageMessageWeixin,
+  mockSendVideoMessageWeixin,
+  mockSendFileMessageWeixin,
+  mockSendVoiceMessageWeixin,
+} = vi.hoisted(() => ({
   mockSendImageMessageWeixin: vi.fn(),
   mockSendVideoMessageWeixin: vi.fn(),
   mockSendFileMessageWeixin: vi.fn(),
+  mockSendVoiceMessageWeixin: vi.fn(),
 }));
 
 vi.mock("./send.js", () => ({
   sendImageMessageWeixin: mockSendImageMessageWeixin,
   sendVideoMessageWeixin: mockSendVideoMessageWeixin,
   sendFileMessageWeixin: mockSendFileMessageWeixin,
+  sendVoiceMessageWeixin: mockSendVoiceMessageWeixin,
+}));
+
+const mockPrepareOutboundVoice = vi.hoisted(() => vi.fn());
+const mockIsWeixinAudioFilename = vi.hoisted(() => vi.fn());
+
+vi.mock("../media/silk-transcode.js", () => ({
+  prepareOutboundVoice: mockPrepareOutboundVoice,
+  isWeixinAudioFilename: mockIsWeixinAudioFilename,
 }));
 
 import { sendWeixinMediaFile } from "./send-media.js";
@@ -52,6 +74,17 @@ const fakeUploaded = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockIsWeixinAudioFilename.mockImplementation((p: string) =>
+    /\.(mp3|wav|ogg|silk|slk|amr|opus|m4a|aac)$/i.test(p),
+  );
+  mockPrepareOutboundVoice.mockResolvedValue({
+    filePath: "/tmp/out.silk",
+    playtimeMs: 6100,
+    sampleRate: 16000,
+    encodeType: 6,
+    bitsPerSample: 16,
+    cleanup: vi.fn().mockResolvedValue(undefined),
+  });
 });
 
 describe("sendWeixinMediaFile", () => {
@@ -108,4 +141,62 @@ describe("sendWeixinMediaFile", () => {
     await sendWeixinMediaFile({ ...baseParams, filePath: "/tmp/data.xyz" });
     expect(mockUploadFileAttachmentToWeixin).toHaveBeenCalledOnce();
   });
+
+  it("routes audio/mpeg to FILE attachment (native VOICE disabled)", async () => {
+    mockUploadFileAttachmentToWeixin.mockResolvedValueOnce(fakeUploaded);
+    mockSendFileMessageWeixin.mockResolvedValueOnce({ messageId: "file-audio" });
+    const result = await sendWeixinMediaFile({ ...baseParams, filePath: "/tmp/clip.mp3" });
+    expect(result.messageId).toBe("file-audio");
+    expect(mockPrepareOutboundVoice).not.toHaveBeenCalled();
+    expect(mockUploadVoiceToWeixin).not.toHaveBeenCalled();
+    expect(mockUploadFileAttachmentToWeixin).toHaveBeenCalledOnce();
+  });
+
+  it("forceDocument keeps audio as FILE attachment", async () => {
+    mockUploadFileAttachmentToWeixin.mockResolvedValueOnce(fakeUploaded);
+    mockSendFileMessageWeixin.mockResolvedValueOnce({ messageId: "file-audio" });
+    await sendWeixinMediaFile({
+      ...baseParams,
+      filePath: "/tmp/clip.mp3",
+      forceDocument: true,
+    });
+    expect(mockUploadVoiceToWeixin).not.toHaveBeenCalled();
+    expect(mockUploadFileAttachmentToWeixin).toHaveBeenCalledOnce();
+  });
+
+  it("does not call native VOICE helpers for audio", async () => {
+    mockUploadFileAttachmentToWeixin.mockResolvedValueOnce(fakeUploaded);
+    mockSendFileMessageWeixin.mockResolvedValueOnce({ messageId: "fallback" });
+    const result = await sendWeixinMediaFile({ ...baseParams, filePath: "/tmp/clip.mp3" });
+    expect(result.messageId).toBe("fallback");
+    expect(mockPrepareOutboundVoice).not.toHaveBeenCalled();
+    expect(mockSendVoiceMessageWeixin).not.toHaveBeenCalled();
+    expect(mockSendFileMessageWeixin).toHaveBeenCalledOnce();
+  });
 });
+
+  it("asVoice true still sends FILE while native VOICE is disabled", async () => {
+    mockIsWeixinAudioFilename.mockReturnValue(false);
+    mockUploadFileAttachmentToWeixin.mockResolvedValueOnce(fakeUploaded);
+    mockSendFileMessageWeixin.mockResolvedValueOnce({ messageId: "forced-file" });
+    const result = await sendWeixinMediaFile({
+      ...baseParams,
+      filePath: "/tmp/data.bin",
+      asVoice: true,
+    });
+    expect(result.messageId).toBe("forced-file");
+    expect(mockUploadVoiceToWeixin).not.toHaveBeenCalled();
+    expect(mockUploadFileAttachmentToWeixin).toHaveBeenCalledOnce();
+  });
+
+  it("asVoice false keeps audio as FILE", async () => {
+    mockUploadFileAttachmentToWeixin.mockResolvedValueOnce(fakeUploaded);
+    mockSendFileMessageWeixin.mockResolvedValueOnce({ messageId: "no-voice" });
+    await sendWeixinMediaFile({
+      ...baseParams,
+      filePath: "/tmp/clip.mp3",
+      asVoice: false,
+    });
+    expect(mockUploadVoiceToWeixin).not.toHaveBeenCalled();
+    expect(mockSendFileMessageWeixin).toHaveBeenCalledOnce();
+  });
