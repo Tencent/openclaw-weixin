@@ -166,6 +166,7 @@ export type WeixinMsgContext = {
     fileName?: string;
     messageId?: string;
   }>;
+  ChannelPromptContext?: string[];
   ReplyToId?: string;
   ReplyToBody?: string;
   ReplyToQuoteText?: string;
@@ -386,6 +387,22 @@ export function resolveStoredQuoteContext(
       : {}),
     ...(index === ctx.MediaPaths!.length - 1 ? { messageId: referenceId } : {}),
   }));
+  const quotedAttachment = {
+    message_id: referenceId,
+    original_filename: record.mediaName ?? path.basename(record.mediaPath),
+    managed_source_path: record.mediaPath,
+    workspace_directory: "media/inbound/",
+  };
+  ctx.ChannelPromptContext = [
+    ...(ctx.ChannelPromptContext ?? []),
+    [
+      "Quoted attachment tool access:",
+      JSON.stringify(quotedAttachment),
+      "The attachment is staged into the agent workspace under media/inbound/. " +
+        "If automatic extraction fails and the user asks about its contents, use the available " +
+        "file/PDF tools to locate it by original_filename and read it.",
+    ].join("\n"),
+  ];
 }
 
 /** Extract the context_token from an inbound WeixinMsgContext. */

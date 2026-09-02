@@ -430,6 +430,7 @@ describe("stored quote resolution", () => {
     try {
       const msg = quotedMessage();
       const ctx = weixinMessageToMsgContext(msg, "acc", { decryptedFilePath: "/tmp/current.pdf" });
+      ctx.ChannelPromptContext = ["existing channel context"];
       resolveStoredQuoteContext(ctx, msg, "acc", {
         find: () => ({
           accountId: "acc", conversationId: "user1", messageId: "9007199254740993123",
@@ -449,6 +450,21 @@ describe("stored quote resolution", () => {
           messageId: "9007199254740993123",
         },
       ]);
+      expect(ctx.ChannelPromptContext).toEqual([
+        "existing channel context",
+        [
+          "Quoted attachment tool access:",
+          JSON.stringify({
+            message_id: "9007199254740993123",
+            original_filename: "quoted-original.png",
+            managed_source_path: quotedPath,
+            workspace_directory: "media/inbound/",
+          }),
+          "The attachment is staged into the agent workspace under media/inbound/. " +
+            "If automatic extraction fails and the user asks about its contents, use the available " +
+            "file/PDF tools to locate it by original_filename and read it.",
+        ].join("\n"),
+      ]);
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
@@ -465,6 +481,27 @@ describe("stored quote resolution", () => {
       }),
     });
     expect(ctx.ReplyToBody).toBe("[引用的视频已过期]");
+  });
+
+  it("adds a tool-access hint and falls back to the managed basename", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "weixin-inbound-quote-hint-"));
+    const quotedPath = path.join(tempDir, "managed-document.pdf");
+    fs.writeFileSync(quotedPath, "pdf");
+    try {
+      const msg = quotedMessage();
+      const ctx = weixinMessageToMsgContext(msg, "acc");
+      resolveStoredQuoteContext(ctx, msg, "acc", {
+        find: () => ({
+          accountId: "acc", conversationId: "user1", messageId: "9007199254740993123",
+          direction: "inbound", body: "[文件]", mediaPath: quotedPath,
+          mediaMime: "application/pdf", createdAt: Date.now(),
+        }),
+      });
+      expect(ctx.ChannelPromptContext?.[0]).toContain('"original_filename":"managed-document.pdf"');
+      expect(ctx.ChannelPromptContext?.[0]).toContain('"workspace_directory":"media/inbound/"');
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });
 
