@@ -114,13 +114,16 @@ added in a future version if needed.
 ## Local quote cache
 
 Newer WeChat clients may send only a server message ID for a quoted message. The
-plugin therefore stores text and media metadata in SQLite and copies images,
-video, voice, and attachments into managed storage. Records are isolated by
-account and conversation. By default, text is retained for 30 days with a limit
-of 10,000 messages per account; media is retained for 7 days with a 256 MiB
-per-account budget and a 25 MiB single-file limit. Cleanup runs at startup,
-hourly, every 100 writes, whenever the media budget is exceeded, and when an
-account is deleted.
+plugin therefore stores text and media metadata in SQLite and writes images,
+video, voice, and attachments directly into plugin-owned OpenClaw managed
+storage, so current delivery and later quotes reuse one file. When a quoted
+attachment is restored, the agent also receives its original filename, managed
+source path, and workspace `media/inbound/` hint, allowing file/PDF tools to read
+it if automatic extraction fails. Records are isolated by account and
+conversation. By default, text is retained for 30 days with a limit of 10,000
+messages per account; media is retained for 7 days with a 256 MiB per-account
+budget and a 25 MiB single-file limit. Cleanup runs at startup, hourly, every 100
+writes, whenever the media budget is exceeded, and when an account is deleted.
 
 If `node:sqlite` is unavailable, the plugin logs a warning and disables this
 feature; it does not fall back to an in-memory cache. You can also disable it or

@@ -8,7 +8,7 @@ This project follows the [Keep a Changelog](https://keepachangelog.com/) format.
 
 ### Added
 
-- **Quote reconstruction for newer WeChat clients:** Losslessly parse message IDs and resolve ID-only `svr_id` text and partial quotes through a per-account, per-conversation SQLite side store. Images, video, voice, and attachments are copied into managed storage with time, count, byte-budget, and single-file eviction limits.
+- **Quote reconstruction for newer WeChat clients:** Losslessly parse message IDs and resolve ID-only `svr_id` text and partial quotes through a per-account, per-conversation SQLite side store. Images, video, voice, and attachments are written directly into plugin-owned OpenClaw managed storage, using one retained file with time, count, byte-budget, and single-file eviction limits. Restored attachments include tool-access hints so agents can locate and read the file when automatic extraction fails.
 - **Compatible degradation:** Disable quote caching when `node:sqlite` is unavailable or `quoteCache.enabled=false`, with no in-memory fallback. Cache failures never interrupt normal message delivery.
 
 ## [2.4.7] - 2026-08-31
