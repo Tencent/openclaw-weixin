@@ -500,6 +500,31 @@ export async function getUploadUrl(
 }
 
 /** Send a single message downstream. */
+/**
+ * Build an actionable error string for a non-zero `sendMessage` `ret`.
+ *
+ * The server frequently reports a business-level failure with an empty
+ * `errmsg` (commonly `ret=-2`), which is hard to diagnose. The most common
+ * cause on agent-initiated outbound delivery is an expired or missing
+ * `context_token`: it is only refreshed by a recent inbound message from the
+ * recipient, so a bot that sends after a long idle period (cron reminders,
+ * scheduled digests) fails until the user messages it again. Surface that
+ * likely cause instead of an opaque empty message.
+ */
+export function describeSendMessageFailure(
+  resp: SendMessageResp,
+  body: SendMessageReq,
+): string {
+  const errmsg = resp.errmsg?.trim();
+  if (errmsg) {
+    return `sendMessage ret=${resp.ret} errmsg=${errmsg}`;
+  }
+  const hint = body.msg?.context_token
+    ? "context_token was included but the server returned no detail; it has most likely expired — a fresh inbound message from the recipient refreshes it"
+    : "no context_token was included; agent-initiated outbound requires one, refreshed by a recent inbound message from the recipient";
+  return `sendMessage ret=${resp.ret} errmsg=(empty); ${hint}`;
+}
+
 export async function sendMessage(
   params: WeixinApiOptions & { body: SendMessageReq },
 ): Promise<void> {
@@ -513,9 +538,7 @@ export async function sendMessage(
   });
   const resp: SendMessageResp = JSON.parse(rawText);
   if (resp.ret && resp.ret !== 0) {
-    throw new Error(
-      `sendMessage ret=${resp.ret} errmsg=${resp.errmsg ?? "(none)"}`,
-    );
+    throw new Error(describeSendMessageFailure(resp, params.body));
   }
 }
 

@@ -32,6 +32,7 @@ import {
   getUpdates,
   getUploadUrl,
   sendMessage,
+  describeSendMessageFailure,
   getConfig,
   sendTyping,
   sanitizeBotAgent,
@@ -187,6 +188,42 @@ describe("sendMessage", () => {
     await expect(
       sendMessage({ baseUrl: "https://api.example.com/", body: { msg: {} } }),
     ).rejects.toThrow("sendMessage 403");
+  });
+
+  it("throws an actionable error when ret is non-zero with empty errmsg and a context_token was sent", async () => {
+    mockFetch.mockResolvedValueOnce(mockResponse({ ret: -2, errmsg: "" }));
+    await expect(
+      sendMessage({
+        baseUrl: "https://api.example.com/",
+        body: { msg: { to_user_id: "u", context_token: "tok" } },
+      }),
+    ).rejects.toThrow(/ret=-2.*context_token.*expired/);
+  });
+
+  it("explains the missing context_token when none was sent", async () => {
+    mockFetch.mockResolvedValueOnce(mockResponse({ ret: -2 }));
+    await expect(
+      sendMessage({ baseUrl: "https://api.example.com/", body: { msg: { to_user_id: "u" } } }),
+    ).rejects.toThrow(/agent-initiated outbound requires one/);
+  });
+});
+
+describe("describeSendMessageFailure", () => {
+  it("passes through a non-empty server errmsg", () => {
+    expect(
+      describeSendMessageFailure({ ret: -2, errmsg: "rate limited" }, { msg: {} }),
+    ).toBe("sendMessage ret=-2 errmsg=rate limited");
+  });
+
+  it("flags a likely expired context_token when one was present", () => {
+    const msg = describeSendMessageFailure({ ret: -2, errmsg: "" }, { msg: { context_token: "tok" } });
+    expect(msg).toContain("ret=-2");
+    expect(msg).toContain("expired");
+  });
+
+  it("flags a missing context_token when none was present", () => {
+    const msg = describeSendMessageFailure({ ret: -2 }, { msg: {} });
+    expect(msg).toContain("agent-initiated outbound requires one");
   });
 });
 
