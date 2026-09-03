@@ -63,6 +63,35 @@ describe("resolveFrameworkAllowFromPath", () => {
   });
 });
 
+describe("readFrameworkAllowFromList", () => {
+  it("returns empty array when file does not exist", async () => {
+    const { readFrameworkAllowFromList } = await loadModule();
+    expect(readFrameworkAllowFromList("missing-account")).toEqual([]);
+  });
+
+  it("returns filtered allowFrom list from valid file", async () => {
+    const { readFrameworkAllowFromList, resolveFrameworkAllowFromPath } = await loadModule();
+    const filePath = resolveFrameworkAllowFromPath("read-ok");
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(
+      filePath,
+      JSON.stringify({ version: 1, allowFrom: ["user-a", "", "  ", 123, "user-b"] }),
+      "utf-8",
+    );
+
+    expect(readFrameworkAllowFromList("read-ok")).toEqual(["user-a", "user-b"]);
+  });
+
+  it("returns empty array when file is unreadable or invalid", async () => {
+    const { readFrameworkAllowFromList, resolveFrameworkAllowFromPath } = await loadModule();
+    const filePath = resolveFrameworkAllowFromPath("read-bad");
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, "{not-json", "utf-8");
+
+    expect(readFrameworkAllowFromList("read-bad")).toEqual([]);
+  });
+});
+
 describe("registerUserInFrameworkStore", () => {
   it("creates file and adds userId when file does not exist", async () => {
     const { registerUserInFrameworkStore, resolveFrameworkAllowFromPath } =
