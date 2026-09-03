@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { apiGetFetch, apiPostFetch } from "../api/api.js";
-import { listIndexedWeixinAccountIds, loadWeixinAccount } from "./accounts.js";
+import { DEFAULT_BASE_URL, listIndexedWeixinAccountIds, loadWeixinAccount } from "./accounts.js";
 import { logger } from "../util/logger.js";
 import { redactToken } from "../util/redact.js";
 
@@ -26,9 +26,6 @@ const QR_LONG_POLL_TIMEOUT_MS = 35_000;
 
 /** Default `bot_type` for ilink get_bot_qrcode / get_qrcode_status (this channel build). */
 export const DEFAULT_ILINK_BOT_TYPE = "3";
-
-/** Fixed API base URL for all QR code requests. */
-const FIXED_BASE_URL = "https://ilinkai.weixin.qq.com";
 
 const activeLogins = new Map<string, ActiveLogin>();
 
@@ -198,7 +195,8 @@ export async function startWeixinLoginWithQr(opts: {
     const botType = opts.botType || DEFAULT_ILINK_BOT_TYPE;
     logger.info(`Starting Weixin login with bot_type=${botType}`);
 
-    const qrResponse = await fetchQRCode(FIXED_BASE_URL, botType);
+    const apiBaseUrl = opts.apiBaseUrl.trim() || DEFAULT_BASE_URL;
+    const qrResponse = await fetchQRCode(apiBaseUrl, botType);
     logger.info(
       `QR code received, qrcode=${redactToken(qrResponse.qrcode)} imgContentLen=${qrResponse.qrcode_img_content?.length ?? 0}`,
     );
@@ -210,6 +208,7 @@ export async function startWeixinLoginWithQr(opts: {
       qrcode: qrResponse.qrcode,
       qrcodeUrl: qrResponse.qrcode_img_content,
       startedAt: Date.now(),
+      currentApiBaseUrl: apiBaseUrl,
     };
 
     activeLogins.set(sessionKey, login);
@@ -236,6 +235,7 @@ const MAX_QR_REFRESH_COUNT = 3;
  */
 async function refreshQRCode(
   activeLogin: ActiveLogin,
+  apiBaseUrl: string,
   botType: string,
   qrRefreshCount: number,
   onScannedReset: () => void,
@@ -243,7 +243,7 @@ async function refreshQRCode(
   process.stdout.write(`\n⏳ 正在刷新二维码...(${qrRefreshCount}/${MAX_QR_REFRESH_COUNT})\n`);
   logger.info(`waitForWeixinLogin: refreshing QR code (${qrRefreshCount}/${MAX_QR_REFRESH_COUNT})`);
   try {
-    const qrResponse = await fetchQRCode(FIXED_BASE_URL, botType);
+    const qrResponse = await fetchQRCode(apiBaseUrl, botType);
     activeLogin.qrcode = qrResponse.qrcode;
     activeLogin.qrcodeUrl = qrResponse.qrcode_img_content;
     activeLogin.startedAt = Date.now();
@@ -289,14 +289,15 @@ export async function waitForWeixinLogin(opts: {
   let scannedPrinted = false;
   let qrRefreshCount = 1;
 
+  const configuredBaseUrl = opts.apiBaseUrl.trim() || DEFAULT_BASE_URL;
   // Initialize the effective polling base URL; may be updated on IDC redirect.
-  activeLogin.currentApiBaseUrl = FIXED_BASE_URL;
+  activeLogin.currentApiBaseUrl = activeLogin.currentApiBaseUrl ?? configuredBaseUrl;
 
   logger.info("Starting to poll QR code status...");
 
   while (Date.now() < deadline) {
     try {
-      const currentBaseUrl = activeLogin.currentApiBaseUrl ?? FIXED_BASE_URL;
+      const currentBaseUrl = activeLogin.currentApiBaseUrl ?? configuredBaseUrl;
       const statusResponse = await pollQRStatus(currentBaseUrl, activeLogin.qrcode, activeLogin.pendingVerifyCode);
       logger.debug(`pollQRStatus: status=${statusResponse.status} hasBotToken=${Boolean(statusResponse.bot_token)} hasBotId=${Boolean(statusResponse.ilink_bot_id)}`);
       activeLogin.status = statusResponse.status;
@@ -344,6 +345,7 @@ export async function waitForWeixinLogin(opts: {
           process.stdout.write(`\n⏳ 二维码已过期，正在刷新...\n`);
           const expiredRefreshResult = await refreshQRCode(
             activeLogin,
+            configuredBaseUrl,
             opts.botType || DEFAULT_ILINK_BOT_TYPE,
             qrRefreshCount,
             () => { scannedPrinted = false; },
@@ -376,6 +378,7 @@ export async function waitForWeixinLogin(opts: {
 
           const blockedRefreshResult = await refreshQRCode(
             activeLogin,
+            configuredBaseUrl,
             opts.botType || DEFAULT_ILINK_BOT_TYPE,
             qrRefreshCount,
             () => { scannedPrinted = false; },
