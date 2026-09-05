@@ -340,6 +340,8 @@ npm run test:coverage
 
 Pull requests automatically run the same quality, unit test, coverage, build, and package smoke checks in GitHub Actions.
 
+For CI design and maintenance details, see the [CI Guide](./docs/ci.md).
+
 ## Uninstall
 
 ```bash
