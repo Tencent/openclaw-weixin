@@ -253,6 +253,114 @@ describe("weixinMessageToMsgContext", () => {
   });
 });
 
+describe("ReplyTo fields (ref_msg → inbound_meta)", () => {
+  it("populates ReplyToIsQuote, ReplyToSender, ReplyToId, ReplyToBody from ref_msg", () => {
+    const msg: WeixinMessage = {
+      from_user_id: "u",
+      item_list: [
+        {
+          type: MessageItemType.TEXT,
+          text_item: { text: "my reply" },
+          ref_msg: {
+            title: "Author",
+            message_item: {
+              type: MessageItemType.TEXT,
+              msg_id: "quoted-msg-123",
+              text_item: { text: "original text" },
+            },
+          },
+        },
+      ],
+    };
+    const ctx = weixinMessageToMsgContext(msg, "acc");
+    expect(ctx.ReplyToIsQuote).toBe(true);
+    expect(ctx.ReplyToSender).toBe("Author");
+    expect(ctx.ReplyToId).toBe("quoted-msg-123");
+    expect(ctx.ReplyToBody).toBe("original text");
+  });
+
+  it("ReplyToBody excludes the title (ReplyToSender handles it separately)", () => {
+    const msg: WeixinMessage = {
+      from_user_id: "u",
+      item_list: [
+        {
+          type: MessageItemType.TEXT,
+          text_item: { text: "reply" },
+          ref_msg: {
+            title: "Sender Name",
+            message_item: {
+              type: MessageItemType.TEXT,
+              msg_id: "msg-456",
+              text_item: { text: "quoted body only" },
+            },
+          },
+        },
+      ],
+    };
+    const ctx = weixinMessageToMsgContext(msg, "acc");
+    expect(ctx.ReplyToSender).toBe("Sender Name");
+    // Body includes title for display, but ReplyToBody is body-only
+    expect(ctx.ReplyToBody).toBe("quoted body only");
+    expect(ctx.Body).toBe("[引用: Sender Name | quoted body only]\nreply");
+  });
+
+  it("does not set ReplyTo* when no ref_msg", () => {
+    const msg: WeixinMessage = {
+      from_user_id: "u",
+      item_list: [
+        { type: MessageItemType.TEXT, text_item: { text: "plain msg" } },
+      ],
+    };
+    const ctx = weixinMessageToMsgContext(msg, "acc");
+    expect(ctx.ReplyToIsQuote).toBeUndefined();
+    expect(ctx.ReplyToSender).toBeUndefined();
+    expect(ctx.ReplyToId).toBeUndefined();
+    expect(ctx.ReplyToBody).toBeUndefined();
+  });
+
+  it("ReplyToBody is undefined when ref_msg is a media item", () => {
+    const msg: WeixinMessage = {
+      from_user_id: "u",
+      item_list: [
+        {
+          type: MessageItemType.TEXT,
+          text_item: { text: "check this" },
+          ref_msg: {
+            title: "Author",
+            message_item: { type: MessageItemType.IMAGE },
+          },
+        },
+      ],
+    };
+    const ctx = weixinMessageToMsgContext(msg, "acc");
+    expect(ctx.ReplyToIsQuote).toBe(true);
+    expect(ctx.ReplyToSender).toBe("Author");
+    expect(ctx.ReplyToBody).toBeUndefined(); // media → no extractable body
+  });
+
+  it("ReplyToId is undefined when quoted message_item has no msg_id", () => {
+    const msg: WeixinMessage = {
+      from_user_id: "u",
+      item_list: [
+        {
+          type: MessageItemType.TEXT,
+          text_item: { text: "reply" },
+          ref_msg: {
+            title: "Author",
+            message_item: {
+              type: MessageItemType.TEXT,
+              text_item: { text: "no msg id" },
+              // no msg_id field
+            },
+          },
+        },
+      ],
+    };
+    const ctx = weixinMessageToMsgContext(msg, "acc");
+    expect(ctx.ReplyToId).toBeUndefined();
+  });
+});
+
 describe("getContextTokenFromMsgContext", () => {
   it("returns context_token when present", () => {
     const ctx = { context_token: "tok123" } as WeixinMsgContext;
