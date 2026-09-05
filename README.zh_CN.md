@@ -336,7 +336,7 @@ npm run test:coverage
 
 提交 Pull Request 后，GitHub Actions 会自动执行质量检查、单元测试、覆盖率、构建和 npm 包冒烟检查。
 
-CI 的设计和维护说明见 [CI 指南](./docs/ci.md)。
+CI 的设计和维护说明见 [CI 指南](./docs/ci_zh_CN.md)。
 
 ## 卸载
 
