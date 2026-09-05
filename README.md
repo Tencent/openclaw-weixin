@@ -1,5 +1,7 @@
 # WeChat
 
+[![CI](https://github.com/Tencent/openclaw-weixin/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Tencent/openclaw-weixin/actions/workflows/ci.yml)
+
 [简体中文](./README.zh_CN.md)
 
 OpenClaw's WeChat channel plugin, supporting login authorization via QR code scanning.
@@ -318,6 +320,25 @@ All media types (image/voice/file/video) are transferred via CDN using AES-128-E
 6. Use the returned `encrypt_query_param` to construct a `CDNMedia` reference, include it in the `MessageItem`, and send
 
 > For complete type definitions, see [`src/api/types.ts`](src/api/types.ts). For API call implementations, see [`src/api/api.ts`](src/api/api.ts).
+
+## Development
+
+This project requires Node.js >= 22.
+
+Install the locked dependencies and run the local CI checks:
+
+```bash
+npm ci --ignore-scripts
+npm run ci
+```
+
+Run the coverage check separately:
+
+```bash
+npm run test:coverage
+```
+
+Pull requests automatically run the same quality, unit test, coverage, build, and package smoke checks in GitHub Actions.
 
 ## Uninstall
 
