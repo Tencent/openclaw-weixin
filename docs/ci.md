@@ -1,22 +1,22 @@
-# CI 指南
+# CI Guide
 
-本文说明本项目的本地质量检查和 GitHub Actions CI 流程，供贡献者排查问题和维护 CI 配置时参考。
+This document describes the local quality checks and GitHub Actions workflow for contributors and maintainers.
 
-## 本地检查
+## Local checks
 
-项目要求 Node.js `>=22`。首次获取代码或依赖发生变化后，先安装 lockfile 中锁定的依赖：
+The project requires Node.js `>=22`. After cloning the repository or changing dependencies, install the locked dependencies first:
 
 ```bash
 npm ci --ignore-scripts
 ```
 
-运行本地质量检查：
+Run the local quality checks:
 
 ```bash
 npm run ci
 ```
 
-`npm run ci` 包含格式检查、Lint、TypeScript 类型检查、单元测试和构建。覆盖率检查单独执行：
+`npm run ci` runs the format check, lint, TypeScript typecheck, unit tests, and build. Run the coverage check separately:
 
 ```bash
 npm run test:coverage
@@ -24,29 +24,29 @@ npm run test:coverage
 
 ## GitHub Actions
 
-workflow 文件位于 [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)，会在以下场景运行：
+The workflow is defined in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) and runs for:
 
-- Pull Request；
-- 推送到 `main`；
-- 手动触发。
+- Pull requests;
+- pushes to `main`;
+- manual dispatches.
 
-每个 job 都会在干净环境中执行 `npm ci --ignore-scripts`。workflow 使用 npm cache，但依赖版本以 `package-lock.json` 为准。
+Each job installs dependencies in a clean environment with `npm ci --ignore-scripts`. npm caching is enabled, but dependency versions are determined by `package-lock.json`.
 
 ### CI jobs
 
-| Job | 主要检查 |
+| Job | Checks |
 | --- | --- |
-| `quality` | format check、Lint、typecheck、build |
-| `unit-node-22` | Node.js 22 单元测试 |
-| `unit-node-24` | Node.js 24 单元测试 |
-| `coverage` | 覆盖率门槛和报告上传 |
-| `package-smoke` | 构建产物和 npm 包文件清单 |
+| `quality` | Format check, lint, typecheck, and build |
+| `unit-node-22` | Unit tests on Node.js 22 |
+| `unit-node-24` | Unit tests on Node.js 24 |
+| `coverage` | Coverage thresholds and report upload |
+| `package-smoke` | Build output and npm package contents |
 
-包冒烟检查会确认 npm 包包含 `dist/index.js`，并且不包含测试源码等开发文件。
+The package smoke test verifies that the npm package contains `dist/index.js` and does not contain test source files or other development-only files.
 
 ### Required checks
 
-仓库维护者可以在 GitHub main 分支 ruleset 中将以下稳定检查设置为 required：
+Repository maintainers can configure the following stable checks as required checks in the GitHub ruleset for the `main` branch:
 
 ```text
 quality
@@ -56,11 +56,11 @@ coverage
 package-smoke
 ```
 
-修改 job 的 `name` 时，应同步检查 ruleset 中的 required check，避免分支保护引用失效的名称。
+If a job's `name` changes, review the required checks in the ruleset as well so branch protection does not reference an obsolete check name.
 
-## 依赖升级
+## Dependency upgrades
 
-依赖升级应在独立分支中进行，并同时审查 `package.json` 和 `package-lock.json`：
+Upgrade dependencies in a separate branch and review both `package.json` and `package-lock.json`:
 
 ```bash
 npm outdated
@@ -70,32 +70,32 @@ npm run ci
 npm run test:coverage
 ```
 
-不要手动编辑 `package-lock.json`，也不要在 CI 中使用 `npm update`。依赖升级通过 Pull Request 提交，由 CI 验证后再合并。
+Do not edit `package-lock.json` manually or run `npm update` in CI. Submit dependency upgrades through a pull request so CI can validate them before merging.
 
-## 安全边界
+## Security boundaries
 
-- CI 默认只授予 `contents: read` 权限；
-- 普通 Pull Request 使用 `pull_request` 触发器；
-- CI 不读取真实微信账号、Token 或线上环境 secrets；
-- 第三方 GitHub Actions 固定到完整 commit SHA；
-- 真实微信链路和 live E2E 不属于普通 PR 门禁。
+- CI has only `contents: read` permissions by default;
+- Regular pull requests use the `pull_request` trigger;
+- CI does not read real WeChat accounts, tokens, or production secrets;
+- Third-party GitHub Actions are pinned to full commit SHAs;
+- Live WeChat flows and live E2E tests are not part of the regular pull request gate.
 
-## 常见问题
+## Troubleshooting
 
-### `npm ci` 报 lockfile 不一致
+### `npm ci` reports a lockfile mismatch
 
-确认 `package.json` 和 `package-lock.json` 一起提交。如果只是修改了 `package.json`，可以先在本地执行 `npm install` 更新 lockfile，再运行完整 CI 检查。
+Make sure `package.json` and `package-lock.json` are committed together. If only `package.json` was changed, run `npm install` locally to update the lockfile, then run the complete CI checks.
 
-### `npm run ci` 找不到 `oxlint` 或 `vitest`
+### `npm run ci` cannot find `oxlint` or `vitest`
 
-先执行：
+Run the dependency installation first:
 
 ```bash
 npm ci --ignore-scripts
 ```
 
-项目脚本会优先使用本地 `node_modules/.bin` 中的工具，不依赖全局安装版本。
+Project scripts use the tools in the local `node_modules/.bin` directory and do not depend on globally installed versions.
 
-### 覆盖率检查失败
+### Coverage checks fail
 
-运行 `npm run test:coverage` 查看未覆盖分支。优先补充有业务价值的测试，不要通过降低全局覆盖率门槛隐藏缺失测试。
+Run `npm run test:coverage` to inspect uncovered branches. Prefer adding tests with business value instead of lowering the global coverage thresholds.
