@@ -47,7 +47,10 @@ describe("listIndexedWeixinAccountIds", () => {
     const { listIndexedWeixinAccountIds } = await loadModule();
     const dir = path.join(tmpDir, "openclaw-weixin");
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, "accounts.json"), JSON.stringify(["acc1", 42, "", "  ", "acc2"]));
+    fs.writeFileSync(
+      path.join(dir, "accounts.json"),
+      JSON.stringify(["acc1", 42, "", "  ", "acc2"]),
+    );
     expect(listIndexedWeixinAccountIds()).toEqual(["acc1", "acc2"]);
   });
 

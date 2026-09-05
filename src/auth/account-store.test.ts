@@ -64,7 +64,10 @@ describe("loadWeixinAccount", () => {
     const { loadWeixinAccount } = await loadModule();
     const legacyDir = path.join(tmpDir, "credentials", "openclaw-weixin");
     fs.mkdirSync(legacyDir, { recursive: true });
-    fs.writeFileSync(path.join(legacyDir, "credentials.json"), JSON.stringify({ token: "legacy-tk" }));
+    fs.writeFileSync(
+      path.join(legacyDir, "credentials.json"),
+      JSON.stringify({ token: "legacy-tk" }),
+    );
     const result = loadWeixinAccount("some-acc");
     expect(result).toEqual({ token: "legacy-tk" });
   });

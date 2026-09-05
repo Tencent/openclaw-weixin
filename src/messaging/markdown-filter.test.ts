@@ -72,7 +72,6 @@ describe("markdown filtering (migrated from markdownToPlainText)", () => {
 // ---------------------------------------------------------------------------
 
 describe("StreamingMarkdownFilter", () => {
-
   // ---- Plain text -----------------------------------------------------------
 
   describe("plain text passthrough", () => {
@@ -105,7 +104,9 @@ describe("StreamingMarkdownFilter", () => {
     });
 
     it("preserves fence with language tag (one-shot)", () => {
-      expect(oneShot("```typescript\nconst x = 1;\n```\n")).toBe("```typescript\nconst x = 1;\n```\n");
+      expect(oneShot("```typescript\nconst x = 1;\n```\n")).toBe(
+        "```typescript\nconst x = 1;\n```\n",
+      );
     });
 
     it("preserves text before and after fence (one-shot)", () => {
@@ -113,13 +114,15 @@ describe("StreamingMarkdownFilter", () => {
     });
 
     it("preserves markdown inside a code fence verbatim (one-shot)", () => {
-      expect(oneShot("```\n**bold** *italic* ~~strike~~\n```\n"))
-        .toBe("```\n**bold** *italic* ~~strike~~\n```\n");
+      expect(oneShot("```\n**bold** *italic* ~~strike~~\n```\n")).toBe(
+        "```\n**bold** *italic* ~~strike~~\n```\n",
+      );
     });
 
     it("handles multiple fenced blocks (one-shot)", () => {
-      expect(oneShot("```\nblock1\n```\ntext\n```\nblock2\n```\n"))
-        .toBe("```\nblock1\n```\ntext\n```\nblock2\n```\n");
+      expect(oneShot("```\nblock1\n```\ntext\n```\nblock2\n```\n")).toBe(
+        "```\nblock1\n```\ntext\n```\nblock2\n```\n",
+      );
     });
 
     it("code fence at end of input (one-shot)", () => {
@@ -140,7 +143,8 @@ describe("StreamingMarkdownFilter", () => {
 
     it("code fence with language tag in single chunk", () => {
       const f = new StreamingMarkdownFilter();
-      const out = f.feed("```typescript\n") + f.feed("const x = 1;\n") + f.feed("```\n") + f.flush();
+      const out =
+        f.feed("```typescript\n") + f.feed("const x = 1;\n") + f.feed("```\n") + f.flush();
       expect(out).toBe("```typescript\nconst x = 1;\n```\n");
     });
   });
@@ -506,22 +510,15 @@ describe("StreamingMarkdownFilter", () => {
 
   describe("combined patterns", () => {
     it("heading + bold + inline code", () => {
-      expectFilter(
-        "## **Title**\nUse `code` here.",
-        "## **Title**\nUse `code` here.",
-      );
+      expectFilter("## **Title**\nUse `code` here.", "## **Title**\nUse `code` here.");
     });
 
     it("blockquote + italic + strikethrough", () => {
-      expectFilter(
-        "> *italic* and ~~strike~~",
-        "> *italic* and ~~strike~~",
-      );
+      expectFilter("> *italic* and ~~strike~~", "> *italic* and ~~strike~~");
     });
 
     it("code fence + inline code + image (one-shot)", () => {
-      expect(oneShot("```\nfenced\n```\n`inline` ![img](url)"))
-        .toBe("```\nfenced\n```\n`inline` ");
+      expect(oneShot("```\nfenced\n```\n`inline` ![img](url)")).toBe("```\nfenced\n```\n`inline` ");
     });
 
     it("mixed bold and bold-italic (non-CJK)", () => {
@@ -715,7 +712,8 @@ describe("StreamingMarkdownFilter", () => {
       const input = "```\nfenced\n```\nafter";
       expect(oneShot(input)).toBe("```\nfenced\n```\nafter");
       const f = new StreamingMarkdownFilter();
-      const out = f.feed("```\n") + f.feed("fenced\n") + f.feed("```\n") + f.feed("after") + f.flush();
+      const out =
+        f.feed("```\n") + f.feed("fenced\n") + f.feed("```\n") + f.feed("after") + f.flush();
       expect(out).toBe("```\nfenced\n```\nafter");
     });
 
@@ -758,10 +756,7 @@ describe("StreamingMarkdownFilter", () => {
     });
 
     it("multiple images on same line", () => {
-      expectFilter(
-        "see ![a](u1) and ![b](u2) end",
-        "see  and  end",
-      );
+      expectFilter("see ![a](u1) and ![b](u2) end", "see  and  end");
     });
 
     it("bold inside code fence is not processed (one-shot)", () => {
@@ -774,10 +769,7 @@ describe("StreamingMarkdownFilter", () => {
     });
 
     it("alternating italic and bold (non-CJK)", () => {
-      expectFilter(
-        "*a* **b** *c* **d**",
-        "*a* **b** *c* **d**",
-      );
+      expectFilter("*a* **b** *c* **d**", "*a* **b** *c* **d**");
     });
 
     it("horizontal rule vs list item at SOL", () => {

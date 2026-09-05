@@ -29,7 +29,8 @@ export class StreamingMarkdownFilter {
   private buf = "";
   private fence = false;
   private sol = true;
-  private inl: { type: "image" | "bold3" | "italic" | "ubold3" | "uitalic"; acc: string } | null = null;
+  private inl: { type: "image" | "bold3" | "italic" | "ubold3" | "uitalic"; acc: string } | null =
+    null;
 
   feed(delta: string): string {
     this.buf += delta;
@@ -53,12 +54,23 @@ export class StreamingMarkdownFilter {
       else if (this.sol) out += this.pumpSOL(eof);
       else out += this.pumpBody(eof);
 
-      if (this.buf.length === sLen && this.sol === sSol &&
-          this.fence === sFence && this.inl === sInl) break;
+      if (
+        this.buf.length === sLen &&
+        this.sol === sSol &&
+        this.fence === sFence &&
+        this.inl === sInl
+      )
+        break;
     }
 
     if (eof && this.inl) {
-      const markers: Record<string, string> = { image: "![", bold3: "***", italic: "*", ubold3: "___", uitalic: "_" };
+      const markers: Record<string, string> = {
+        image: "![",
+        bold3: "***",
+        italic: "*",
+        ubold3: "___",
+        uitalic: "_",
+      };
       out += (markers[this.inl.type] ?? "") + this.inl.acc;
       this.inl = null;
     }

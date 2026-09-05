@@ -1,10 +1,7 @@
 import type { WeixinInboundMediaOpts } from "../messaging/inbound.js";
 import { logger } from "../util/logger.js";
 import { getMimeFromFilename } from "./mime.js";
-import {
-  downloadAndDecryptBuffer,
-  downloadPlainCdnBuffer,
-} from "../cdn/pic-decrypt.js";
+import { downloadAndDecryptBuffer, downloadPlainCdnBuffer } from "../cdn/pic-decrypt.js";
 import { silkToWav } from "./silk-transcode.js";
 import type { WeixinMessage } from "../api/types.js";
 import { MessageItemType } from "../api/types.js";
@@ -99,7 +96,10 @@ export async function downloadMediaFromItem(
     }
   } else if (item.type === MessageItemType.FILE) {
     const fileItem = item.file_item;
-    if ((!fileItem?.media?.encrypt_query_param && !fileItem?.media?.full_url) || !fileItem?.media?.aes_key)
+    if (
+      (!fileItem?.media?.encrypt_query_param && !fileItem?.media?.full_url) ||
+      !fileItem?.media?.aes_key
+    )
       return result;
     try {
       const buf = await downloadAndDecryptBuffer(
@@ -126,7 +126,10 @@ export async function downloadMediaFromItem(
     }
   } else if (item.type === MessageItemType.VIDEO) {
     const videoItem = item.video_item;
-    if ((!videoItem?.media?.encrypt_query_param && !videoItem?.media?.full_url) || !videoItem?.media?.aes_key)
+    if (
+      (!videoItem?.media?.encrypt_query_param && !videoItem?.media?.full_url) ||
+      !videoItem?.media?.aes_key
+    )
       return result;
     try {
       const buf = await downloadAndDecryptBuffer(

@@ -60,9 +60,7 @@ export async function uploadBufferToCdn(params: {
       }
       downloadParam = res.headers.get("x-encrypted-param") ?? undefined;
       if (!downloadParam) {
-        logger.error(
-          `${label}: CDN response missing x-encrypted-param header attempt=${attempt}`,
-        );
+        logger.error(`${label}: CDN response missing x-encrypted-param header attempt=${attempt}`);
         throw new Error("CDN upload response missing x-encrypted-param header");
       }
       logger.debug(`${label}: CDN upload success attempt=${attempt}`);

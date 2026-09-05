@@ -61,12 +61,16 @@ describe("resolveFrameworkAllowFromPath", () => {
     // Only [\\/:*?"<>|] and ".." are replaced; @ and dots are preserved
     expect(result).toContain("openclaw-weixin-abc@im.bot-allowFrom.json");
   });
+
+  it("rejects an accountId that sanitizes to an underscore", async () => {
+    const { resolveFrameworkAllowFromPath } = await loadModule();
+    expect(() => resolveFrameworkAllowFromPath("/")).toThrow("invalid key");
+  });
 });
 
 describe("registerUserInFrameworkStore", () => {
   it("creates file and adds userId when file does not exist", async () => {
-    const { registerUserInFrameworkStore, resolveFrameworkAllowFromPath } =
-      await loadModule();
+    const { registerUserInFrameworkStore, resolveFrameworkAllowFromPath } = await loadModule();
     const result = await registerUserInFrameworkStore({
       accountId: "acc1",
       userId: "user-abc",
@@ -79,8 +83,7 @@ describe("registerUserInFrameworkStore", () => {
   });
 
   it("appends userId to existing allowFrom list", async () => {
-    const { registerUserInFrameworkStore, resolveFrameworkAllowFromPath } =
-      await loadModule();
+    const { registerUserInFrameworkStore, resolveFrameworkAllowFromPath } = await loadModule();
     const filePath = resolveFrameworkAllowFromPath("acc2");
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(
@@ -100,15 +103,10 @@ describe("registerUserInFrameworkStore", () => {
   });
 
   it("returns changed=false when userId already exists", async () => {
-    const { registerUserInFrameworkStore, resolveFrameworkAllowFromPath } =
-      await loadModule();
+    const { registerUserInFrameworkStore, resolveFrameworkAllowFromPath } = await loadModule();
     const filePath = resolveFrameworkAllowFromPath("acc3");
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(
-      filePath,
-      JSON.stringify({ version: 1, allowFrom: ["user-abc"] }),
-      "utf-8",
-    );
+    fs.writeFileSync(filePath, JSON.stringify({ version: 1, allowFrom: ["user-abc"] }), "utf-8");
 
     const result = await registerUserInFrameworkStore({
       accountId: "acc3",
@@ -130,8 +128,7 @@ describe("registerUserInFrameworkStore", () => {
   });
 
   it("trims userId before storing", async () => {
-    const { registerUserInFrameworkStore, resolveFrameworkAllowFromPath } =
-      await loadModule();
+    const { registerUserInFrameworkStore, resolveFrameworkAllowFromPath } = await loadModule();
     await registerUserInFrameworkStore({
       accountId: "acc5",
       userId: "  user-trimmed  ",
@@ -158,8 +155,7 @@ describe("registerUserInFrameworkStore", () => {
   });
 
   it("handles corrupted file gracefully", async () => {
-    const { registerUserInFrameworkStore, resolveFrameworkAllowFromPath } =
-      await loadModule();
+    const { registerUserInFrameworkStore, resolveFrameworkAllowFromPath } = await loadModule();
     const filePath = resolveFrameworkAllowFromPath("acc7");
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, "not-valid-json{{{", "utf-8");

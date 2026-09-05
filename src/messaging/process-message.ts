@@ -36,7 +36,10 @@ import { sendMessageWeixin } from "./send.js";
 import { WeixinReplyProgressSender } from "./reply-progress-sender.js";
 import { handleSlashCommand } from "./slash-commands.js";
 
-const MEDIA_OUTBOUND_TEMP_DIR = path.join(resolvePreferredOpenClawTmpDir(), "weixin/media/outbound-temp");
+const MEDIA_OUTBOUND_TEMP_DIR = path.join(
+  resolvePreferredOpenClawTmpDir(),
+  "weixin/media/outbound-temp",
+);
 
 /** Dependencies for processOneMessage, injected by the monitor loop. */
 export type ProcessMessageDeps = {
@@ -85,15 +88,20 @@ export async function processOneMessage(
 
   const textBody = extractTextBody(full.item_list);
   if (textBody.startsWith("/")) {
-    const slashResult = await handleSlashCommand(textBody, {
-      to: full.from_user_id ?? "",
-      contextToken: full.context_token,
-      baseUrl: deps.baseUrl,
-      token: deps.token,
-      accountId: deps.accountId,
-      log: deps.log,
-      errLog: deps.errLog,
-    }, receivedAt, full.create_time_ms);
+    const slashResult = await handleSlashCommand(
+      textBody,
+      {
+        to: full.from_user_id ?? "",
+        contextToken: full.context_token,
+        baseUrl: deps.baseUrl,
+        token: deps.token,
+        accountId: deps.accountId,
+        log: deps.log,
+        errLog: deps.errLog,
+      },
+      receivedAt,
+      full.create_time_ms,
+    );
     if (slashResult.handled) {
       logger.info(`[weixin] Slash command handled, skipping AI pipeline`);
       return;
@@ -157,9 +165,10 @@ export async function processOneMessage(
   const mediaDownloadMs = Date.now() - mediaDownloadStart;
 
   if (debug) {
-    debugTrace.push(mediaItem
-      ? `│ mediaDownload: type=${mediaItem.type} cost=${mediaDownloadMs}ms`
-      : "│ mediaDownload: none",
+    debugTrace.push(
+      mediaItem
+        ? `│ mediaDownload: type=${mediaItem.type} cost=${mediaDownloadMs}ms`
+        : "│ mediaDownload: none",
     );
   }
 
@@ -198,9 +207,7 @@ export async function processOneMessage(
   });
 
   if (directDmOutcome === "disabled" || directDmOutcome === "unauthorized") {
-    logger.info(
-      `authorization: dropping message from=${senderId} outcome=${directDmOutcome}`,
-    );
+    logger.info(`authorization: dropping message from=${senderId} outcome=${directDmOutcome}`);
     return;
   }
 
@@ -320,7 +327,8 @@ export async function processOneMessage(
   });
 
   /** Delivery records populated synchronously at deliver() entry, safe to read in finally. */
-  const debugDeliveries: Array<{ textLen: number; media: string; preview: string; ts: number }> = [];
+  const debugDeliveries: Array<{ textLen: number; media: string; preview: string; ts: number }> =
+    [];
 
   const { dispatcher, replyOptions, markDispatchIdle } =
     deps.channelRuntime.reply.createReplyDispatcherWithTyping({
@@ -381,13 +389,23 @@ export async function processOneMessage(
               logger.warn(
                 `outbound: unrecognized mediaUrl scheme, sending text only mediaUrl=${mediaUrl.slice(0, 80)}`,
               );
-              await sendMessageWeixin({ to: ctx.To, text, opts: {
-                baseUrl: deps.baseUrl,
-                token: deps.token,
-                contextToken,
+              await sendMessageWeixin({
+                to: ctx.To,
+                text,
+                opts: {
+                  baseUrl: deps.baseUrl,
+                  token: deps.token,
+                  contextToken,
+                  runId,
+                },
+              });
+              emitWeixinMessageSent({
+                to: ctx.To,
+                content: text,
+                success: true,
+                accountId: deps.accountId,
                 runId,
-              }});
-              emitWeixinMessageSent({ to: ctx.To, content: text, success: true, accountId: deps.accountId, runId });
+              });
               logger.info(`outbound: text sent to=${ctx.To}`);
               return;
             }
@@ -398,21 +416,44 @@ export async function processOneMessage(
               opts: { baseUrl: deps.baseUrl, token: deps.token, contextToken, runId },
               cdnBaseUrl: deps.cdnBaseUrl,
             });
-            emitWeixinMessageSent({ to: ctx.To, content: text, success: true, accountId: deps.accountId, runId });
+            emitWeixinMessageSent({
+              to: ctx.To,
+              content: text,
+              success: true,
+              accountId: deps.accountId,
+              runId,
+            });
             logger.info(`outbound: media sent OK to=${ctx.To}`);
           } else {
             logger.debug(`outbound: sending text message to=${ctx.To}`);
-            await sendMessageWeixin({ to: ctx.To, text, opts: {
-              baseUrl: deps.baseUrl,
-              token: deps.token,
-              contextToken,
+            await sendMessageWeixin({
+              to: ctx.To,
+              text,
+              opts: {
+                baseUrl: deps.baseUrl,
+                token: deps.token,
+                contextToken,
+                runId,
+              },
+            });
+            emitWeixinMessageSent({
+              to: ctx.To,
+              content: text,
+              success: true,
+              accountId: deps.accountId,
               runId,
-            }});
-            emitWeixinMessageSent({ to: ctx.To, content: text, success: true, accountId: deps.accountId, runId });
+            });
             logger.info(`outbound: text sent OK to=${ctx.To}`);
           }
         } catch (err) {
-          emitWeixinMessageSent({ to: ctx.To, content: text, success: false, error: String(err), accountId: deps.accountId, runId });
+          emitWeixinMessageSent({
+            to: ctx.To,
+            content: text,
+            success: false,
+            error: String(err),
+            accountId: deps.accountId,
+            runId,
+          });
           logger.error(
             `outbound: FAILED to=${ctx.To} mediaUrl=${mediaUrl ?? "none"} err=${String(err)} stack=${(err as Error).stack ?? ""}`,
           );
@@ -482,15 +523,13 @@ export async function processOneMessage(
       const platformDelay = eventTs > 0 ? `${receivedAt - eventTs}ms` : "N/A";
       const inboundProcessMs = (debugTs.preDispatch ?? receivedAt) - receivedAt;
       const aiMs = dispatchDoneAt - (debugTs.preDispatch ?? receivedAt);
-      const totalTime = eventTs > 0 ? `${dispatchDoneAt - eventTs}ms` : `${dispatchDoneAt - receivedAt}ms`;
+      const totalTime =
+        eventTs > 0 ? `${dispatchDoneAt - eventTs}ms` : `${dispatchDoneAt - receivedAt}ms`;
 
       if (debugDeliveries.length > 0) {
         debugTrace.push("── 回复 ──");
         for (const d of debugDeliveries) {
-          debugTrace.push(
-            `│ textLen=${d.textLen} media=${d.media}`,
-            `│ text="${d.preview}"`,
-          );
+          debugTrace.push(`│ textLen=${d.textLen} media=${d.media}`, `│ text="${d.preview}"`);
         }
         const firstTs = debugDeliveries[0].ts;
         debugTrace.push(`│ deliver耗时: ${dispatchDoneAt - firstTs}ms`);

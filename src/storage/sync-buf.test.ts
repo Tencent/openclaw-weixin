@@ -58,7 +58,10 @@ describe("loadGetUpdatesBuf", () => {
     // Write at old raw-ID filename
     const dir = path.join(tmpDir, "openclaw-weixin", "accounts");
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, "abc@im.bot.sync.json"), JSON.stringify({ get_updates_buf: "compat-buf" }));
+    fs.writeFileSync(
+      path.join(dir, "abc@im.bot.sync.json"),
+      JSON.stringify({ get_updates_buf: "compat-buf" }),
+    );
     expect(loadGetUpdatesBuf(fp)).toBe("compat-buf");
   });
 
@@ -68,7 +71,10 @@ describe("loadGetUpdatesBuf", () => {
     // Write at legacy path
     const legacyDir = path.join(tmpDir, "agents", "default", "sessions", ".openclaw-weixin-sync");
     fs.mkdirSync(legacyDir, { recursive: true });
-    fs.writeFileSync(path.join(legacyDir, "default.json"), JSON.stringify({ get_updates_buf: "legacy-buf" }));
+    fs.writeFileSync(
+      path.join(legacyDir, "default.json"),
+      JSON.stringify({ get_updates_buf: "legacy-buf" }),
+    );
     expect(loadGetUpdatesBuf(fp)).toBe("legacy-buf");
   });
 
