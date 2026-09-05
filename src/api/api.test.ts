@@ -72,7 +72,9 @@ describe("getUpdates", () => {
 
   it("throws on non-ok response", async () => {
     mockFetch.mockResolvedValueOnce(mockResponse("err", 500, false));
-    await expect(getUpdates({ baseUrl: "https://api.example.com" })).rejects.toThrow("getUpdates 500");
+    await expect(getUpdates({ baseUrl: "https://api.example.com" })).rejects.toThrow(
+      "getUpdates 500",
+    );
   });
 
   it("returns empty response on abort/timeout", async () => {
@@ -90,7 +92,9 @@ describe("getUpdates", () => {
 
   it("re-throws non-abort errors", async () => {
     mockFetch.mockRejectedValueOnce(new Error("network error"));
-    await expect(getUpdates({ baseUrl: "https://api.example.com" })).rejects.toThrow("network error");
+    await expect(getUpdates({ baseUrl: "https://api.example.com" })).rejects.toThrow(
+      "network error",
+    );
   });
 
   it("adds trailing slash to baseUrl", async () => {
@@ -168,15 +172,19 @@ describe("getUploadUrl", () => {
 
   it("throws on non-ok response", async () => {
     mockFetch.mockResolvedValueOnce(mockResponse("fail", 400, false));
-    await expect(
-      getUploadUrl({ baseUrl: "https://api.example.com/" }),
-    ).rejects.toThrow("getUploadUrl 400");
+    await expect(getUploadUrl({ baseUrl: "https://api.example.com/" })).rejects.toThrow(
+      "getUploadUrl 400",
+    );
   });
 });
 
 describe("sendMessage", () => {
   it("succeeds on ok response", async () => {
-    mockFetch.mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve("{}") } as Response);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve("{}"),
+    } as Response);
     await expect(
       sendMessage({ baseUrl: "https://api.example.com/", body: { msg: { to_user_id: "u" } } }),
     ).resolves.toBeUndefined();
@@ -222,9 +230,9 @@ describe("sendTyping", () => {
 
   it("throws on non-ok response", async () => {
     mockFetch.mockResolvedValueOnce(mockResponse("err", 500, false));
-    await expect(
-      sendTyping({ baseUrl: "https://api.example.com/", body: {} }),
-    ).rejects.toThrow("sendTyping 500");
+    await expect(sendTyping({ baseUrl: "https://api.example.com/", body: {} })).rejects.toThrow(
+      "sendTyping 500",
+    );
   });
 });
 
@@ -241,9 +249,7 @@ describe("sanitizeBotAgent", () => {
   });
 
   it("passes through multiple space-separated products", () => {
-    expect(sanitizeBotAgent("MyBot/1.2.0 LangChain/0.3.5")).toBe(
-      "MyBot/1.2.0 LangChain/0.3.5",
-    );
+    expect(sanitizeBotAgent("MyBot/1.2.0 LangChain/0.3.5")).toBe("MyBot/1.2.0 LangChain/0.3.5");
   });
 
   it("preserves a (comment) attached to a product", () => {
@@ -253,15 +259,11 @@ describe("sanitizeBotAgent", () => {
   });
 
   it("supports multi-word comments", () => {
-    expect(sanitizeBotAgent("MyBot/1.2.0 (built on linux)")).toBe(
-      "MyBot/1.2.0 (built on linux)",
-    );
+    expect(sanitizeBotAgent("MyBot/1.2.0 (built on linux)")).toBe("MyBot/1.2.0 (built on linux)");
   });
 
   it("accepts semver pre-release and build metadata", () => {
-    expect(sanitizeBotAgent("MyBot/1.2.0-rc.1+build.5")).toBe(
-      "MyBot/1.2.0-rc.1+build.5",
-    );
+    expect(sanitizeBotAgent("MyBot/1.2.0-rc.1+build.5")).toBe("MyBot/1.2.0-rc.1+build.5");
   });
 
   it("drops tokens that fail to parse, keeps valid ones", () => {

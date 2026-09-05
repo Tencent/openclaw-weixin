@@ -18,6 +18,11 @@
     "CHANGELOG.zh_CN.md"
   ],
   "scripts": {
+    "format:check": "oxfmt --check src index.ts",
+    "lint": "oxlint src index.ts",
+    "test:unit": "vitest run --coverage=false",
+    "test:coverage": "vitest run --coverage",
+    "ci": "npm run format:check && npm run lint && npm run typecheck && npm run test:unit && npm run build",
     "test": "vitest run --coverage",
     "typecheck": "tsc --noEmit",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
@@ -37,6 +42,8 @@
   "devDependencies": {
     "@vitest/coverage-v8": "^3.1.0",
     "openclaw": "2026.5.12",
+    "oxfmt": "0.60.0",
+    "oxlint": "1.80.0",
     "silk-wasm": "^3.7.1",
     "typescript": "^5.8.0",
     "vitest": "^3.1.0"

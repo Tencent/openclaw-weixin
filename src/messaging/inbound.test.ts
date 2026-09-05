@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { isMediaItem, weixinMessageToMsgContext, getContextTokenFromMsgContext } from "./inbound.js";
+import {
+  isMediaItem,
+  weixinMessageToMsgContext,
+  getContextTokenFromMsgContext,
+} from "./inbound.js";
 import type { WeixinMsgContext } from "./inbound.js";
 import { MessageItemType } from "../api/types.js";
 import type { WeixinMessage, MessageItem } from "../api/types.js";
@@ -54,9 +58,7 @@ describe("weixinMessageToMsgContext", () => {
 
   const baseMsg: WeixinMessage = {
     from_user_id: "user123",
-    item_list: [
-      { type: MessageItemType.TEXT, text_item: { text: "hello" } },
-    ],
+    item_list: [{ type: MessageItemType.TEXT, text_item: { text: "hello" } }],
     create_time_ms: 1700000000000,
     context_token: "ctx-token-abc",
   };
@@ -244,9 +246,7 @@ describe("weixinMessageToMsgContext", () => {
   it("returns empty body when item_list has only non-text items", () => {
     const msg: WeixinMessage = {
       from_user_id: "u",
-      item_list: [
-        { type: MessageItemType.IMAGE },
-      ],
+      item_list: [{ type: MessageItemType.IMAGE }],
     };
     const ctx = weixinMessageToMsgContext(msg, "acc");
     expect(ctx.Body).toBe("");

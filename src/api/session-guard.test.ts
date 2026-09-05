@@ -53,6 +53,12 @@ describe("session-guard", () => {
     expect(getRemainingPauseMs("acc1")).toBe(0);
   });
 
+  it("returns zero remaining pause time when the stored pause expires", () => {
+    pauseSession("acc1");
+    vi.advanceTimersByTime(60 * 60 * 1000);
+    expect(getRemainingPauseMs("acc1")).toBe(0);
+  });
+
   it("pause is still active at 59 minutes", () => {
     pauseSession("acc1");
     vi.advanceTimersByTime(59 * 60 * 1000);

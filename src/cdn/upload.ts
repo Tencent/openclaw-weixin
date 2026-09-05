@@ -34,8 +34,7 @@ export async function downloadRemoteImageToTemp(url: string, destDir: string): P
   try {
     res = await fetch(url);
   } catch (err) {
-    const cause =
-      (err as NodeJS.ErrnoException).cause ?? (err as NodeJS.ErrnoException).code ?? "";
+    const cause = (err as NodeJS.ErrnoException).cause ?? (err as NodeJS.ErrnoException).code ?? "";
     logger.error(
       `downloadRemoteImageToTemp: fetch network error url=${redactUrl(url)} error=${String(err)}${cause ? ` cause=${cause}` : ""}`,
     );

@@ -37,8 +37,8 @@ describe("WeixinConfigSchema", () => {
   it("accepts accounts map", () => {
     const result = WeixinConfigSchema.parse({
       accounts: {
-        "acc1": { name: "Bot 1", enabled: true },
-        "acc2": { name: "Bot 2" },
+        acc1: { name: "Bot 1", enabled: true },
+        acc2: { name: "Bot 2" },
       },
     });
     expect(result.accounts?.acc1?.name).toBe("Bot 1");

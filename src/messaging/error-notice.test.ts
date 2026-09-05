@@ -54,6 +54,28 @@ describe("sendWeixinErrorNotice", () => {
     expect(mockSendMessageWeixin).toHaveBeenCalledOnce();
   });
 
+  it("includes runId when provided", async () => {
+    mockSendMessageWeixin.mockResolvedValueOnce({ messageId: "m3" });
+    await sendWeixinErrorNotice({
+      to: "user1",
+      contextToken: "ctx-tok",
+      message: "err",
+      baseUrl: "https://api.com",
+      runId: "run-1",
+      errLog: vi.fn(),
+    });
+    expect(mockSendMessageWeixin).toHaveBeenCalledWith({
+      to: "user1",
+      text: "err",
+      opts: {
+        baseUrl: "https://api.com",
+        token: undefined,
+        contextToken: "ctx-tok",
+        runId: "run-1",
+      },
+    });
+  });
+
   it("catches and logs errors from sendMessageWeixin", async () => {
     mockSendMessageWeixin.mockRejectedValueOnce(new Error("send failed"));
     const errLog = vi.fn();
@@ -65,8 +87,6 @@ describe("sendWeixinErrorNotice", () => {
       errLog,
     });
     // Should not throw
-    expect(errLog).toHaveBeenCalledWith(
-      expect.stringContaining("sendWeixinErrorNotice failed"),
-    );
+    expect(errLog).toHaveBeenCalledWith(expect.stringContaining("sendWeixinErrorNotice failed"));
   });
 });

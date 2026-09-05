@@ -32,9 +32,7 @@ describe("WeixinReplyProgressSender", () => {
       opts: { baseUrl: "https://api.example.com", contextToken: "ctx-1" },
     });
 
-    vi.spyOn(Date, "now")
-      .mockReturnValueOnce(1700000000000)
-      .mockReturnValueOnce(1700000000100);
+    vi.spyOn(Date, "now").mockReturnValueOnce(1700000000000).mockReturnValueOnce(1700000000100);
 
     sender.replyOptions.onItemEvent({
       itemId: "tool:call-1",

@@ -46,6 +46,18 @@ describe("encryptAesEcb", () => {
 describe("uploadBufferToCdn", () => {
   const aeskey = crypto.randomBytes(16);
 
+  it("throws when upload URL is missing", async () => {
+    await expect(
+      uploadBufferToCdn({
+        buf: Buffer.from("payload"),
+        filekey: "file-key",
+        cdnBaseUrl: "https://cdn.example.com",
+        label: "image",
+        aeskey,
+      }),
+    ).rejects.toThrow("URL missing");
+  });
+
   it("uploads successfully and returns downloadParam", async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -81,10 +93,7 @@ describe("uploadBufferToCdn", () => {
       aeskey,
     });
     expect(result.downloadParam).toBe("dl-full");
-    expect(mockFetch).toHaveBeenCalledWith(
-      fullUrl,
-      expect.objectContaining({ method: "POST" }),
-    );
+    expect(mockFetch).toHaveBeenCalledWith(fullUrl, expect.objectContaining({ method: "POST" }));
   });
 
   it("retries on server error then succeeds", async () => {
