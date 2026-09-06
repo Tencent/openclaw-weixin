@@ -66,8 +66,8 @@ function extractTextBody(itemList?: import("../api/types.js").MessageItem[]): st
 }
 
 /**
- * Process a single inbound message: route → download media → dispatch reply.
- * Extracted from the monitor loop to keep monitoring and message handling separate.
+ * Process a single inbound message: resolve route → download media → authorize → dispatch reply.
+ * Route is resolved first so agentId can isolate media per-agent in the media store.
  */
 export async function processOneMessage(
   full: WeixinMessage,
@@ -118,6 +118,35 @@ export async function processOneMessage(
     );
   }
 
+  // Resolve agent route early so we can use agentId for per-agent media isolation.
+  const senderId = full.from_user_id ?? "";
+  const route = deps.channelRuntime.routing.resolveAgentRoute({
+    cfg: deps.config,
+    channel: "openclaw-weixin",
+    accountId: deps.accountId,
+    peer: { kind: "direct", id: senderId },
+  });
+  logger.debug(
+    `resolveAgentRoute: agentId=${route.agentId ?? "(none)"} sessionKey=${route.sessionKey ?? "(none)"} mainSessionKey=${route.mainSessionKey ?? "(none)"}`,
+  );
+  if (!route.agentId) {
+    logger.error(
+      `resolveAgentRoute: no agentId resolved for peer=${senderId} accountId=${deps.accountId} — message will not be dispatched`,
+    );
+  }
+
+  if (debug) {
+    debugTrace.push(
+      "── 路由 ──",
+      `│ route: agent=${route.agentId ?? "none"} session=${route.sessionKey ?? "none"}`,
+    );
+  }
+
+  // Per-agent media isolation: wecom/<agentId>/inbound
+  const mediaSubdir = route.agentId
+    ? `wecom/${route.agentId}/inbound`
+    : "inbound";
+
   const mediaOpts: WeixinInboundMediaOpts = {};
 
   // Find the first downloadable media item (priority: IMAGE > VIDEO > FILE > VOICE).
@@ -156,6 +185,7 @@ export async function processOneMessage(
     const downloaded = await downloadMediaFromItem(mediaItem, {
       cdnBaseUrl: deps.cdnBaseUrl,
       saveMedia: deps.channelRuntime.media.saveMediaBuffer,
+      subdir: mediaSubdir,
       log: deps.log,
       errLog: deps.errLog,
       label,
@@ -177,8 +207,6 @@ export async function processOneMessage(
   // --- Framework command authorization ---
   const rawBody = ctx.Body?.trim() ?? "";
   ctx.CommandBody = rawBody;
-
-  const senderId = full.from_user_id ?? "";
 
   const { senderAllowedForCommands, commandAuthorized } =
     await resolveSenderCommandAuthorizationWithRuntime({
@@ -218,29 +246,8 @@ export async function processOneMessage(
 
   if (debug) {
     debugTrace.push(
-      "── 鉴权 & 路由 ──",
+      "── 鉴权 ──",
       `│ auth: cmdAuthorized=${String(commandAuthorized)} senderAllowed=${String(senderAllowedForCommands)}`,
-    );
-  }
-
-  const route = deps.channelRuntime.routing.resolveAgentRoute({
-    cfg: deps.config,
-    channel: "openclaw-weixin",
-    accountId: deps.accountId,
-    peer: { kind: "direct", id: ctx.To },
-  });
-  logger.debug(
-    `resolveAgentRoute: agentId=${route.agentId ?? "(none)"} sessionKey=${route.sessionKey ?? "(none)"} mainSessionKey=${route.mainSessionKey ?? "(none)"}`,
-  );
-  if (!route.agentId) {
-    logger.error(
-      `resolveAgentRoute: no agentId resolved for peer=${ctx.To} accountId=${deps.accountId} — message will not be dispatched`,
-    );
-  }
-
-  if (debug) {
-    debugTrace.push(
-      `│ route: agent=${route.agentId ?? "none"} session=${route.sessionKey ?? "none"}`,
     );
     debugTs.preDispatch = Date.now();
   }
