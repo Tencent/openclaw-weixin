@@ -10,8 +10,8 @@ OpenClaw's WeChat channel plugin, supporting login authorization via QR code sca
 
 | Plugin Version | OpenClaw Version       | npm dist-tag | Status      |
 |---------------|------------------------|--------------|-------------|
-| 2.0.x         | >=2026.3.22            | `latest`     | Active      |
-| 1.0.x         | >=2026.1.0 <2026.3.22  | `legacy`     | Maintenance |
+| 2.x           | >=2026.5.12            | `latest`     | Active      |
+| 1.x           | >=2026.1.0 <2026.3.22  | `legacy`     | Maintenance |
 
 > The plugin checks the host version at startup and will refuse to load if the
 > running OpenClaw version is outside the supported range.
@@ -350,7 +350,7 @@ openclaw plugins uninstall @tencent-weixin/openclaw-weixin
 
 ## Troubleshooting
 
-### "requires OpenClaw >=2026.3.22" error
+### "requires OpenClaw >=2026.5.12" error
 
 Your OpenClaw version is too old for this plugin version. Check with:
 

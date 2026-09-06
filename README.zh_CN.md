@@ -10,8 +10,8 @@ OpenClaw 的微信渠道插件，支持通过扫码完成登录授权。
 
 | 插件版本 | OpenClaw 版本            | npm dist-tag | 状态   |
 |---------|--------------------------|--------------|--------|
-| 2.0.x   | >=2026.3.22              | `latest`     | 活跃   |
-| 1.0.x   | >=2026.1.0 <2026.3.22    | `legacy`     | 维护中 |
+| 2.x     | >=2026.5.12              | `latest`     | 活跃   |
+| 1.x     | >=2026.1.0 <2026.3.22    | `legacy`     | 维护中 |
 
 > 插件在启动时会检查宿主版本，如果运行的 OpenClaw 版本超出支持范围，插件将拒绝加载。
 
@@ -346,7 +346,7 @@ openclaw plugins uninstall @tencent-weixin/openclaw-weixin
 
 ## 故障排查
 
-### "requires OpenClaw >=2026.3.22" 报错
+### "requires OpenClaw >=2026.5.12" 报错
 
 你的 OpenClaw 版本太旧，不兼容当前插件版本。检查版本：
 
