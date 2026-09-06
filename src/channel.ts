@@ -300,6 +300,11 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
             text,
             opts: { baseUrl: account.baseUrl, token: account.token, contextToken },
             cdnBaseUrl: account.cdnBaseUrl,
+            // Pass the original URL as the stable dedup key when the file was
+            // downloaded from a remote source. Without this, each download lands
+            // at a different temp path and the filePath-based dedup misses the
+            // duplicate (issue #74 edge case — reviewer Re-Ch-X).
+            sourceUrl: isRemoteUrl(mediaUrl) ? mediaUrl : undefined,
           });
           emitWeixinMessageSent({
             to: ctx.to,
