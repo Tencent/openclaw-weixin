@@ -2,7 +2,21 @@
 
 本文描述 `openclaw-weixin` 渠道插件使用的 HTTP JSON 协议，面向实现或对接兼容微信后端的开发者。普通用户只需阅读[项目 README](../README.zh_CN.md)。
 
-协议文档以 TypeScript 实现为事实来源。协议发生变化时，请同时检查 [`src/api/api.ts`](../src/api/api.ts)、[`src/api/types.ts`](../src/api/types.ts) 和 [`src/auth/login-qr.ts`](../src/auth/login-qr.ts)。
+[English](./protocol.md)
+
+## 阅读约定
+
+本文依据当前仓库的客户端代码编写，区分以下三类信息：
+
+- **字段与示例**：说明客户端类型和请求构造代码体现的数据格式。
+- **客户端行为**：说明当前插件实际发送、接受或重试的内容。
+- **接入建议**：为其他实现提供参考建议。
+
+客户端类型和行为不能代表完整的服务端契约。尤其是，TypeScript 字段标记为可选，不代表服务端一定接受省略该字段的请求；类型中定义了某个字段，也不代表插件已经实现所有相关能力。
+
+除非另有说明，JSON 示例用于展示部分字段，不代表经过验证的最小可用请求或完整响应。使用时需要替换占位符。`channel_version` 来自包元数据，示例中的 `2.4.8` 仅为示例值。
+
+源码依据：[`src/api/api.ts`](../src/api/api.ts)、[`src/api/types.ts`](../src/api/types.ts) 和 [`src/auth/login-qr.ts`](../src/auth/login-qr.ts)。超出这些源码所体现范围的服务端要求，需要另行验证。
 
 ## 协议范围和传输方式
 
@@ -31,7 +45,7 @@
 | `iLink-App-ClientVersion` | 插件版本按 `0x00MMNNPP` 编码后转成十进制字符串 |
 | `SKRouteTag` | 可选，由部署配置的路由标签 |
 
-二维码状态轮询使用公共应用请求头，但不使用 Bot token。获取二维码的请求同样不需要鉴权。
+客户端行为：二维码状态轮询发送应用请求头（`iLink-App-Id`、`iLink-App-ClientVersion` 和可选的 `SKRouteTag`），不添加 `AuthorizationType`、`Authorization` 或 `X-WECHAT-UIN`。获取二维码的 POST 请求使用 JSON POST 请求头，包括 `AuthorizationType` 和 `X-WECHAT-UIN`，但不携带 `Authorization` 和 `base_info`。
 
 ### `base_info`
 
@@ -48,13 +62,26 @@
 
 `channel_version` 是插件版本。`bot_agent` 是通过 `channels.openclaw-weixin.botAgent` 配置、经过清洗的观测标识，仅用于日志和监控归因，不参与鉴权或路由。
 
+客户端行为：`buildBaseInfo()` 总是填充这两个字段。`bot_agent` 默认为 `OpenClaw`。自定义值采用 ASCII `Name/Version` token，可附带注释，清洗后最多 256 字节。不合法的 token 会被丢弃，结果为空时回退到 `OpenClaw`。插件实例中的各账号共享该声明。
+
 ### 返回值和错误
 
-成功的 JSON 响应通常使用 `ret: 0`。当响应包含非零 `ret` 或 `errcode` 时，应结合 `errmsg` 判断是否重试或报告错误。
+响应类型中包含 `ret`、`errcode`、`errmsg` 等字段，但并非每个接口都包含这些字段。使用 `ret` 的响应以 `ret: 0` 表示成功。
 
-- HTTP 错误属于传输层失败，应与应用层 `ret` 分开处理。
-- `getUpdates` 的客户端超时属于正常的长轮询控制流程，客户端会返回空消息列表并重试。
-- 错误响应和日志不得包含 Bot token、二维码值或其他凭证。
+当前客户端按接口分别处理：
+
+| 接口 | 业务响应处理 |
+| --- | --- |
+| `getUpdates` | monitor 检查非零 `ret` 或 `errcode`。任一字段为 `-14` 时触发一小时的账号会话暂停；其他失败按照 monitor 的重试和退避逻辑处理。 |
+| `sendMessage` | 非零 `ret` 抛出错误；缺少 `ret` 不触发该检查。 |
+| `getUploadUrl` | 上传调用方要求非空的 `upload_full_url` 或 `upload_param`，不显式检查 `ret`。 |
+| `getConfig` | 缓存层只在 `ret === 0` 时接受配置；失败时使用缓存或默认配置，并安排再次尝试。 |
+| `sendTyping` | 包装函数不解析响应体，也不检查其中的业务返回码。 |
+| `notifyStart` / `notifyStop` | 渠道生命周期处理函数对非零 `ret` 或请求失败记录警告，不阻断启动或停止。 |
+
+JSON fetch 包装函数会在 HTTP 状态不成功时抛出错误。`getUpdates` 将超时或外部取消转换为空结果；外部取消用于让 monitor 退出，而非继续轮询。二维码状态轮询将请求失败转换为 `wait`。
+
+接入建议：分别处理 HTTP 状态和业务返回码，按接口定义重试策略，并对诊断输出中的凭证做脱敏。这些是建议，不表示当前客户端具有统一的错误处理或脱敏策略。
 
 ## 二维码登录
 
@@ -68,7 +95,7 @@ POST /ilink/bot/get_bot_qrcode?bot_type=3
 
 ```json
 {
-  "local_token_list": ["<之前获取的 token>" ]
+  "local_token_list": []
 }
 ```
 
@@ -176,7 +203,7 @@ POST /ilink/bot/getupdates
 | `get_updates_buf` | `string` | 下次请求需要回传的游标 |
 | `longpolling_timeout_ms` | `number` | 服务端建议的下次超时时间，单位为 ms |
 
-`sync_buf` 仅为兼容旧实现保留，新接入应使用 `get_updates_buf`。
+`sync_buf` 在 TypeScript 类型中保留并标记为废弃。当前请求构造只发送 `get_updates_buf`，monitor 也不会回退读取响应中的 `sync_buf`。只有返回的 `get_updates_buf` 非空时，才保存并更新游标。
 
 ### `sendMessage`
 
@@ -184,12 +211,16 @@ POST /ilink/bot/getupdates
 POST /ilink/bot/sendmessage
 ```
 
-请求：
+以下示例对应当前文本消息构造器在存在上下文令牌时的请求（传入 `run_id` 时还会携带该字段）：
 
 ```json
 {
   "msg": {
+    "from_user_id": "",
     "to_user_id": "<目标用户 ID>",
+    "client_id": "<客户端生成的 ID>",
+    "message_type": 2,
+    "message_state": 2,
     "context_token": "<会话上下文令牌>",
     "item_list": [
       {
@@ -214,7 +245,7 @@ POST /ilink/bot/sendmessage
 }
 ```
 
-如果回复属于某条入站消息对应的会话，必须把入站消息中的 `context_token` 回传。
+接入建议：回复对应会话时回传入站消息中的 `context_token`。客户端行为：发送函数在缺少令牌时记录警告并继续发送，这不能证明服务端一定接受该请求。当前媒体发送流程将说明文本和媒体内容拆成独立请求，每个请求有独立的 `client_id`。
 
 ### `getUploadUrl`
 
@@ -264,6 +295,8 @@ POST /ilink/bot/getuploadurl
 ```
 
 客户端优先使用 `upload_full_url`。如果没有该字段，则根据 `upload_param` 和 `filekey` 构造 CDN 上传 URL。
+
+类型定义包含缩略图请求字段和 `thumb_upload_param`。当前客户端行为：公共上传流程固定发送 `no_need_thumb: true`，只上传原文件，不消费 `thumb_upload_param`。这些字段不表示缩略图上传能力已经实现。同样，类型中定义了 `media_type: 4`，但当前文件发送流程只选择图片、视频或文件上传。
 
 ### `getConfig`
 
@@ -346,6 +379,8 @@ POST /ilink/bot/msg/notifystop
 
 ## 消息模型
 
+以下表格概述客户端类型。TypeScript 定义中，`WeixinMessage`、`MessageItem` 和媒体对象的属性均为可选；表格不声明服务端必填字段。`group_id` 等字段只表示类型定义包含该字段，不保证插件支持对应功能。
+
 ### `WeixinMessage`
 
 | 字段 | 类型 | 说明 |
@@ -382,6 +417,21 @@ POST /ilink/bot/msg/notifystop
 
 `voice_item` 可以在 `text` 中携带语音转写文本。媒体消息可以包含 `media`，图片和视频还可以包含 `thumb_media`。
 
+### 客户端使用的媒体字段
+
+| 字段 | 类型 | 当前用途 |
+| --- | --- | --- |
+| `image_item.aeskey` | `string` | 入站 AES 密钥，32 位十六进制字符串，优先于 `media.aes_key`。 |
+| `image_item.mid_size` | `number` | 图片发送器填入的密文字节数。 |
+| `video_item.video_size` | `number` | 视频发送器填入的密文字节数。 |
+| `file_item.file_name` | `string` | 附件文件名。 |
+| `file_item.len` | `string` | 文件发送器填入的明文字节数，编码为十进制字符串。 |
+| `voice_item.text` | `string` | 存在时表示语音转写文本。 |
+| `voice_item.encode_type` | `number` | 类型定义中的编码标识，不代表客户端能解码其中所有格式。 |
+| `voice_item.sample_rate` / `playtime` | `number` | 采样率（Hz）/ 时长（毫秒）。 |
+
+其他字段见[协议类型](../src/api/types.ts)，出站消息的构造见[消息发送实现](../src/messaging/send.ts)。
+
 ### CDN 媒体引用
 
 ```json
@@ -399,7 +449,7 @@ POST /ilink/bot/msg/notifystop
 <cdn_base_url>/download?encrypted_query_param=<URL 编码后的 encrypt_query_param>
 ```
 
-根据媒体类型不同，`aes_key` 可能是 16 字节原始密钥的 base64 编码，也可能是 32 位十六进制密钥字符串的 base64 编码。
+下载解码器接受两种形式：16 字节原始密钥的 base64 编码，或 32 位十六进制密钥字符串的 base64 编码。当前图片、视频和文件发送器均对十六进制密钥字符串进行 base64 编码。这分别描述接收兼容范围和实际发送行为，不表示各媒体类型必须使用不同编码。
 
 ## CDN 媒体流程
 
@@ -414,14 +464,16 @@ POST /ilink/bot/msg/notifystop
 7. 读取响应头中的 `x-encrypted-param`。
 8. 将下载参数和 AES 密钥放入媒体引用，再通过 `sendMessage` 发送。
 
-当前客户端使用 HTTP `POST` 上传密文，不是 `PUT`。如果后端要求缩略图，图片和视频缩略图也遵循相同流程。
+当前客户端行为：使用 HTTP `POST` 上传，固定传入 `no_need_thumb: true`，只上传原文件，没有缩略图上传步骤。
+
+上传成功必须同时满足 HTTP 状态为 `200`、响应头 `x-encrypted-param` 非空。HTTP 4xx 立即终止；其他失败（包括缺少该响应头）最多尝试三次。这是当前插件的成功判定和重试策略。
 
 ### 下载
 
-1. 使用 `full_url`，或根据 `encrypt_query_param` 构造兼容的 CDN 下载地址。
-2. 使用 HTTP `GET` 下载密文。
-3. 从 `aes_key` 或媒体专用的 AES key 字段解码 AES 密钥。
-4. 使用 AES-128-ECB 解密并移除 PKCS#7 填充。
+1. 优先使用 `full_url`。当前客户端启用了 URL 回退，缺少完整 URL 时根据 `encrypt_query_param` 构造 CDN 下载地址。
+2. 使用 HTTP `GET` 下载文件字节。
+3. 图片优先使用 `image_item.aeskey` 中的十六进制密钥，其次使用 `image_item.media.aes_key`。两者都不存在时，直接将下载内容作为明文图片使用。
+4. 对加密图片、语音、文件和视频，解码密钥后使用 AES-128-ECB 和 PKCS#7 填充解密。当前媒体下载器会跳过缺少 `media.aes_key` 的语音、文件和视频。
 
 ## 源码索引
 
@@ -430,3 +482,9 @@ POST /ilink/bot/msg/notifystop
 - [二维码登录流程](../src/auth/login-qr.ts)
 - [CDN 上传实现](../src/cdn/upload.ts)
 - [CDN 加密工具](../src/cdn/aes-ecb.ts)
+- [消息发送实现](../src/messaging/send.ts)
+- [入站媒体处理](../src/media/media-download.ts)
+- [CDN 上传传输](../src/cdn/cdn-upload.ts)
+- [消息轮询与重试](../src/monitor/monitor.ts)
+- [配置缓存](../src/api/config-cache.ts)
+- [渠道生命周期](../src/channel.ts)

@@ -2,7 +2,21 @@
 
 This document describes the HTTP JSON protocol used by the `openclaw-weixin` channel plugin. It is intended for developers implementing or integrating a compatible Weixin backend. Normal plugin users only need the [main README](../README.md).
 
-The TypeScript implementation is the source of truth. See [`src/api/api.ts`](../src/api/api.ts), [`src/api/types.ts`](../src/api/types.ts), and [`src/auth/login-qr.ts`](../src/auth/login-qr.ts) when this document needs to be updated.
+[简体中文](./protocol_zh_CN.md)
+
+## How to read this reference
+
+This reference is based on the current repository's client code. It distinguishes three kinds of information:
+
+- **Fields and examples** describe the wire format represented by the client types and request builders.
+- **Client behavior** describes what this plugin currently sends, accepts, or retries.
+- **Integration guidance** gives recommendations for other implementations.
+
+Client types and behavior do not establish the complete server contract. In particular, a TypeScript optional field does not prove that the server accepts requests without it, and a field defined in a type does not imply that the plugin implements every associated feature.
+
+Unless otherwise stated, JSON examples illustrate selected fields and are not verified minimal requests or exhaustive responses. Replace placeholders with actual values. `channel_version` is populated from package metadata; `2.4.8` is an example value.
+
+Source references: [`src/api/api.ts`](../src/api/api.ts), [`src/api/types.ts`](../src/api/types.ts), and [`src/auth/login-qr.ts`](../src/auth/login-qr.ts). Server requirements beyond what these sources show need separate verification.
 
 ## Scope and transport
 
@@ -31,7 +45,7 @@ The following headers are added by the plugin where applicable:
 | `iLink-App-ClientVersion` | Plugin version encoded as `0x00MMNNPP` and sent as a decimal string |
 | `SKRouteTag` | Optional route tag configured by the deployment |
 
-QR-code status polling uses the common application headers but does not use a bot token. The QR-code request is also unauthenticated.
+Client behavior: QR-code status polling sends the application headers (`iLink-App-Id`, `iLink-App-ClientVersion`, and optional `SKRouteTag`). It does not add `AuthorizationType`, `Authorization`, or `X-WECHAT-UIN`. The QR-code POST request uses the JSON POST headers, including `AuthorizationType` and `X-WECHAT-UIN`, but omits `Authorization` and `base_info`.
 
 ### `base_info`
 
@@ -48,13 +62,26 @@ Authenticated bot POST requests include a `base_info` object:
 
 `channel_version` is the plugin version. `bot_agent` is an optional, sanitized observability identifier configured through `channels.openclaw-weixin.botAgent`; it is not used for authentication or routing.
 
+Client behavior: `buildBaseInfo()` always supplies both fields. `bot_agent` defaults to `OpenClaw`. Custom values use ASCII `Name/Version` tokens with optional comments, with a maximum of 256 bytes after sanitization. Invalid tokens are dropped; an empty result falls back to `OpenClaw`. This declaration is shared across accounts in the plugin instance.
+
 ### Return values and errors
 
-Successful JSON responses generally use `ret: 0`. When a response contains a non-zero `ret` or an `errcode`, the client should inspect `errmsg` and decide whether to retry or report the error.
+The response types use fields such as `ret`, `errcode`, and `errmsg`; they are not present on every endpoint. `ret: 0` represents success where used.
 
-- HTTP errors are transport failures and should be handled separately from application-level `ret` values.
-- `getUpdates` uses client-side timeout as normal long-poll control flow and returns an empty message list for a retry.
-- Error responses must not include or log bot tokens, QR-code values, or other credentials.
+Current client behavior differs by operation:
+
+| Operation | Application response handling |
+| --- | --- |
+| `getUpdates` | The monitor checks non-zero `ret` or `errcode`. Either field equal to `-14` triggers a one-hour account session pause; other failures follow the monitor's retry/backoff policy. |
+| `sendMessage` | A non-zero `ret` throws; an absent `ret` does not trigger this check. |
+| `getUploadUrl` | The upload caller requires a nonempty `upload_full_url` or `upload_param`; it does not explicitly check `ret`. |
+| `getConfig` | The cache layer accepts configuration only when `ret === 0`; failures use cached/default configuration and schedule another attempt. |
+| `sendTyping` | The wrapper does not parse the response body or check its business return code. |
+| `notifyStart` / `notifyStop` | Non-zero `ret` or request failures are logged as warnings by channel lifecycle handlers, without blocking startup/shutdown. |
+
+The JSON fetch wrappers throw on non-successful HTTP status. `getUpdates` converts a timeout or external cancellation into an empty result; cancellation lets the monitor exit rather than continue polling. QR status polling converts request failures into `wait`.
+
+Integration guidance: handle HTTP status separately from business return codes, define retry behavior per operation, and redact credentials in diagnostic output. These are recommendations, not a claim that the current client applies a single uniform error or redaction policy.
 
 ## QR-code login
 
@@ -68,7 +95,7 @@ Request body:
 
 ```json
 {
-  "local_token_list": ["<previously issued token>" ]
+  "local_token_list": []
 }
 ```
 
@@ -176,7 +203,7 @@ Response:
 | `get_updates_buf` | `string` | Cursor to send in the next request |
 | `longpolling_timeout_ms` | `number` | Optional server-suggested timeout in milliseconds |
 
-`sync_buf` is retained only for compatibility with older implementations. New integrations should use `get_updates_buf`.
+`sync_buf` remains deprecated in the TypeScript types. The current request builder sends only `get_updates_buf`, and the monitor does not use `sync_buf` as a response fallback. It saves a returned cursor only when `get_updates_buf` is nonempty.
 
 ### `sendMessage`
 
@@ -184,12 +211,16 @@ Response:
 POST /ilink/bot/sendmessage
 ```
 
-Request:
+Example matching the current text-message builder when a context token is available (`run_id` is additionally included when supplied):
 
 ```json
 {
   "msg": {
+    "from_user_id": "",
     "to_user_id": "<target user id>",
+    "client_id": "<client-generated id>",
+    "message_type": 2,
+    "message_state": 2,
     "context_token": "<conversation context token>",
     "item_list": [
       {
@@ -214,7 +245,7 @@ Response:
 }
 ```
 
-The `context_token` received with an inbound message must be passed back when the reply belongs to that conversation.
+Integration guidance: pass back the inbound `context_token` when replying to that conversation. Client behavior: the send helper logs a warning and still sends if the token is missing; this does not establish whether the server will accept that request. Media captions and media items are currently sent in separate requests, each with its own `client_id`.
 
 ### `getUploadUrl`
 
@@ -264,6 +295,8 @@ Response:
 ```
 
 The client prefers `upload_full_url`. If it is absent, it constructs a CDN upload URL from `upload_param` and `filekey`.
+
+The types expose thumbnail request fields and `thumb_upload_param`. Current client behavior: the shared upload pipeline always sends `no_need_thumb: true`, uploads only the original file, and does not consume `thumb_upload_param`. These fields do not indicate implemented thumbnail upload support. Likewise, `media_type: 4` is defined in the types, while the current file-send pipeline selects image, video, or file upload.
 
 ### `getConfig`
 
@@ -346,6 +379,8 @@ The plugin sends `notifyStart` when a channel client starts and `notifyStop` whe
 
 ## Message model
 
+These tables summarize client-side types. `WeixinMessage`, `MessageItem`, and media-object properties are optional in the TypeScript definitions; the tables do not declare server-required fields. Fields such as `group_id` describe the type surface, not a guarantee of plugin feature support.
+
 ### `WeixinMessage`
 
 | Field | Type | Description |
@@ -382,6 +417,21 @@ Common item fields include `create_time_ms`, `update_time_ms`, `is_completed`, `
 
 `voice_item` may include a transcript in `text`. Media items can include a `media` object, and images and videos can additionally include `thumb_media`.
 
+### Media fields used by the client
+
+| Field | Type | Current use |
+| --- | --- | --- |
+| `image_item.aeskey` | `string` | Inbound AES key as 32 hex characters; takes precedence over `media.aes_key`. |
+| `image_item.mid_size` | `number` | Ciphertext byte count set by the image sender. |
+| `video_item.video_size` | `number` | Ciphertext byte count set by the video sender. |
+| `file_item.file_name` | `string` | Attachment filename. |
+| `file_item.len` | `string` | Plaintext byte count encoded as a decimal string by the file sender. |
+| `voice_item.text` | `string` | Transcript when present. |
+| `voice_item.encode_type` | `number` | Codec identifier in the types; does not imply decoding support for every codec. |
+| `voice_item.sample_rate` / `playtime` | `number` | Sample rate in Hz / duration in milliseconds. |
+
+See [protocol types](../src/api/types.ts) for the remaining fields and [message builders](../src/messaging/send.ts) for outgoing payloads.
+
 ### CDN media reference
 
 ```json
@@ -399,7 +449,7 @@ The client prefers `full_url`. When a full URL is unavailable, a compatible depl
 <cdn_base_url>/download?encrypted_query_param=<url-encoded encrypt_query_param>
 ```
 
-The AES key may be encoded as base64 of 16 raw bytes or as base64 of a 32-character hexadecimal key, depending on the media type.
+The download decoder accepts base64 of either 16 raw bytes or a 32-character hexadecimal key. Current image, video, and file senders all encode the hexadecimal key string as base64. These describe accepted encodings and outgoing behavior, respectively; they are not a mandatory encoding split by media type.
 
 ## CDN media flow
 
@@ -414,14 +464,16 @@ The AES key may be encoded as base64 of 16 raw bytes or as base64 of a 32-charac
 7. Read the `x-encrypted-param` response header.
 8. Put the returned download parameter and AES key into the media reference sent through `sendMessage`.
 
-The current client uploads encrypted bytes with HTTP `POST`, not `PUT`. Image and video thumbnails follow the same flow when the backend requests them.
+Current client behavior: uploads use HTTP `POST`. Only original files are uploaded, with `no_need_thumb: true`; there is no thumbnail upload step.
+
+Success requires HTTP `200` and a nonempty `x-encrypted-param` response header. HTTP 4xx errors abort immediately. Other failures, including a missing response header, are attempted up to three times total. This is the plugin's current acceptance and retry policy.
 
 ### Download
 
-1. Read `full_url` or construct a compatible CDN download URL from `encrypt_query_param`.
+1. Prefer `full_url`. The current client enables URL fallback and constructs a CDN download URL from `encrypt_query_param` when a full URL is absent.
 2. Download the bytes with HTTP `GET`.
-3. Decode the AES key from `aes_key` or the media-specific AES key field.
-4. Decrypt with AES-128-ECB and remove PKCS#7 padding.
+3. For images, prefer the hex key in `image_item.aeskey`, then `image_item.media.aes_key`. If neither is available, use the downloaded image bytes as plaintext.
+4. For encrypted images, voice, files, and videos, decode the key and decrypt with AES-128-ECB and PKCS#7 padding. Voice, file, and video items without `media.aes_key` are skipped by the current media downloader.
 
 ## Source references
 
@@ -430,3 +482,9 @@ The current client uploads encrypted bytes with HTTP `POST`, not `PUT`. Image an
 - [QR-code login flow](../src/auth/login-qr.ts)
 - [CDN upload implementation](../src/cdn/upload.ts)
 - [CDN encryption utilities](../src/cdn/aes-ecb.ts)
+- [Message builders](../src/messaging/send.ts)
+- [Inbound media handling](../src/media/media-download.ts)
+- [CDN upload transport](../src/cdn/cdn-upload.ts)
+- [Message polling and retries](../src/monitor/monitor.ts)
+- [Configuration cache](../src/api/config-cache.ts)
+- [Channel lifecycle](../src/channel.ts)
