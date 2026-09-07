@@ -33,6 +33,7 @@ import type { WeixinInboundMediaOpts } from "./inbound.js";
 import { sendWeixinMediaFile } from "./send-media.js";
 import { StreamingMarkdownFilter } from "./markdown-filter.js";
 import { sendMessageWeixin } from "./send.js";
+import { isInterimTextOnlyWeixinReply } from "./interim-reply-policy.js";
 import { WeixinReplyProgressSender } from "./reply-progress-sender.js";
 import { handleSlashCommand } from "./slash-commands.js";
 
@@ -334,7 +335,13 @@ export async function processOneMessage(
     deps.channelRuntime.reply.createReplyDispatcherWithTyping({
       humanDelay,
       typingCallbacks,
-      deliver: async (payload) => {
+      deliver: async (payload, info) => {
+        if (isInterimTextOnlyWeixinReply(payload, info)) {
+          logger.debug(
+            `outbound: skipped interim text-only payload kind=${info?.kind} to=${ctx.To} textLen=${(payload.text ?? "").length}`,
+          );
+          return;
+        }
         const rawText = payload.text ?? "";
         let text = (() => {
           const f = new StreamingMarkdownFilter();
