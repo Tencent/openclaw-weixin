@@ -76,7 +76,8 @@ export async function handleSlashCommand(
   }
 
   const spaceIdx = trimmed.indexOf(" ");
-  const command = spaceIdx === -1 ? trimmed.toLowerCase() : trimmed.slice(0, spaceIdx).toLowerCase();
+  const command =
+    spaceIdx === -1 ? trimmed.toLowerCase() : trimmed.slice(0, spaceIdx).toLowerCase();
   const args = spaceIdx === -1 ? "" : trimmed.slice(spaceIdx + 1);
 
   logger.info(`[weixin] Slash command: ${command}, args: ${args.slice(0, 50)}`);
@@ -88,12 +89,7 @@ export async function handleSlashCommand(
         return { handled: true };
       case "/toggle-debug": {
         const enabled = toggleDebugMode(ctx.accountId);
-        await sendReply(
-          ctx,
-          enabled
-            ? "Debug 模式已开启"
-            : "Debug 模式已关闭",
-        );
+        await sendReply(ctx, enabled ? "Debug 模式已开启" : "Debug 模式已关闭");
         return { handled: true };
       }
       default:

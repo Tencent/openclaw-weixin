@@ -9,11 +9,12 @@ vi.mock("../util/logger.js", () => ({
   },
 }));
 
-const { mockUploadFileToWeixin, mockUploadVideoToWeixin, mockUploadFileAttachmentToWeixin } = vi.hoisted(() => ({
-  mockUploadFileToWeixin: vi.fn(),
-  mockUploadVideoToWeixin: vi.fn(),
-  mockUploadFileAttachmentToWeixin: vi.fn(),
-}));
+const { mockUploadFileToWeixin, mockUploadVideoToWeixin, mockUploadFileAttachmentToWeixin } =
+  vi.hoisted(() => ({
+    mockUploadFileToWeixin: vi.fn(),
+    mockUploadVideoToWeixin: vi.fn(),
+    mockUploadFileAttachmentToWeixin: vi.fn(),
+  }));
 
 vi.mock("../cdn/upload.js", () => ({
   uploadFileToWeixin: mockUploadFileToWeixin,
@@ -21,11 +22,12 @@ vi.mock("../cdn/upload.js", () => ({
   uploadFileAttachmentToWeixin: mockUploadFileAttachmentToWeixin,
 }));
 
-const { mockSendImageMessageWeixin, mockSendVideoMessageWeixin, mockSendFileMessageWeixin } = vi.hoisted(() => ({
-  mockSendImageMessageWeixin: vi.fn(),
-  mockSendVideoMessageWeixin: vi.fn(),
-  mockSendFileMessageWeixin: vi.fn(),
-}));
+const { mockSendImageMessageWeixin, mockSendVideoMessageWeixin, mockSendFileMessageWeixin } =
+  vi.hoisted(() => ({
+    mockSendImageMessageWeixin: vi.fn(),
+    mockSendVideoMessageWeixin: vi.fn(),
+    mockSendFileMessageWeixin: vi.fn(),
+  }));
 
 vi.mock("./send.js", () => ({
   sendImageMessageWeixin: mockSendImageMessageWeixin,

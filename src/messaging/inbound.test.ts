@@ -75,9 +75,7 @@ describe("weixinMessageToMsgContext", () => {
 
   const baseMsg: WeixinMessage = {
     from_user_id: "user123",
-    item_list: [
-      { type: MessageItemType.TEXT, text_item: { text: "hello" } },
-    ],
+    item_list: [{ type: MessageItemType.TEXT, text_item: { text: "hello" } }],
     create_time_ms: 1700000000000,
     context_token: "ctx-token-abc",
   };
@@ -164,10 +162,13 @@ describe("weixinMessageToMsgContext", () => {
   });
 
   it("uses transcribed voice text as the body", () => {
-    const ctx = weixinMessageToMsgContext({
-      from_user_id: "u",
-      item_list: [{ type: MessageItemType.VOICE, voice_item: { text: "voice transcript" } }],
-    }, "acc");
+    const ctx = weixinMessageToMsgContext(
+      {
+        from_user_id: "u",
+        item_list: [{ type: MessageItemType.VOICE, voice_item: { text: "voice transcript" } }],
+      },
+      "acc",
+    );
     expect(ctx.Body).toBe("voice transcript");
   });
 
@@ -289,29 +290,34 @@ describe("weixinMessageToMsgContext", () => {
   it("uses a stable label when item_list has only a media item", () => {
     const msg: WeixinMessage = {
       from_user_id: "u",
-      item_list: [
-        { type: MessageItemType.IMAGE },
-      ],
+      item_list: [{ type: MessageItemType.IMAGE }],
     };
     const ctx = weixinMessageToMsgContext(msg, "acc");
     expect(ctx.Body).toBe("[图片]");
   });
 
   it("keeps the provider uint64 ID separately from the generated MessageSid", () => {
-    const ctx = weixinMessageToMsgContext({ ...baseMsg, message_id: "18446744073709551615" }, "acc");
+    const ctx = weixinMessageToMsgContext(
+      { ...baseMsg, message_id: "18446744073709551615" },
+      "acc",
+    );
     expect(ctx.MessageSidFull).toBe("18446744073709551615");
     expect(ctx.MessageSid).not.toBe(ctx.MessageSidFull);
   });
 });
 
 describe("stored quote resolution", () => {
-  const quotedMessage = (partial_text?: NonNullable<NonNullable<MessageItem["ref_msg"]>["partial_text"]>): WeixinMessage => ({
+  const quotedMessage = (
+    partial_text?: NonNullable<NonNullable<MessageItem["ref_msg"]>["partial_text"]>,
+  ): WeixinMessage => ({
     from_user_id: "user1",
-    item_list: [{
-      type: MessageItemType.TEXT,
-      text_item: { text: "reply" },
-      ref_msg: { svr_id: "9007199254740993123", ...(partial_text ? { partial_text } : {}) },
-    }],
+    item_list: [
+      {
+        type: MessageItemType.TEXT,
+        text_item: { text: "reply" },
+        ref_msg: { svr_id: "9007199254740993123", ...(partial_text ? { partial_text } : {}) },
+      },
+    ],
   });
 
   it("looks up an ID-only quote in the account and conversation scope", () => {
@@ -346,17 +352,23 @@ describe("stored quote resolution", () => {
   it("resolves the legacy nested message ID", () => {
     const msg: WeixinMessage = {
       from_user_id: "user1",
-      item_list: [{
-        type: MessageItemType.TEXT,
-        text_item: { text: "reply" },
-        ref_msg: { message_item: { type: MessageItemType.TEXT, msg_id: "legacy-id" } },
-      }],
+      item_list: [
+        {
+          type: MessageItemType.TEXT,
+          text_item: { text: "reply" },
+          ref_msg: { message_item: { type: MessageItemType.TEXT, msg_id: "legacy-id" } },
+        },
+      ],
     };
     const ctx = weixinMessageToMsgContext(msg, "acc");
     resolveStoredQuoteContext(ctx, msg, "acc", {
       find: () => ({
-        accountId: "acc", conversationId: "user1", messageId: "legacy-id",
-        direction: "inbound", body: "legacy body", createdAt: Date.now(),
+        accountId: "acc",
+        conversationId: "user1",
+        messageId: "legacy-id",
+        direction: "inbound",
+        body: "legacy body",
+        createdAt: Date.now(),
       }),
     });
     expect(ctx.ReplyToId).toBe("legacy-id");
@@ -366,14 +378,16 @@ describe("stored quote resolution", () => {
   it("keeps complete inline quote content instead of replacing it from storage", () => {
     const msg: WeixinMessage = {
       from_user_id: "user1",
-      item_list: [{
-        type: MessageItemType.TEXT,
-        text_item: { text: "reply" },
-        ref_msg: {
-          svr_id: "id",
-          message_item: { type: MessageItemType.TEXT, text_item: { text: "inline body" } },
+      item_list: [
+        {
+          type: MessageItemType.TEXT,
+          text_item: { text: "reply" },
+          ref_msg: {
+            svr_id: "id",
+            message_item: { type: MessageItemType.TEXT, text_item: { text: "inline body" } },
+          },
         },
-      }],
+      ],
     };
     const ctx = weixinMessageToMsgContext(msg, "acc");
     const find = vi.fn();
@@ -415,8 +429,13 @@ describe("stored quote resolution", () => {
     const ctx = weixinMessageToMsgContext(msg, "acc");
     resolveStoredQuoteContext(ctx, msg, "acc", {
       find: () => ({
-        accountId: "acc", conversationId: "user1", messageId: "9007199254740993123",
-        direction: "inbound", body: "[媒体]", mediaMime, ...(mediaName ? { mediaName } : {}),
+        accountId: "acc",
+        conversationId: "user1",
+        messageId: "9007199254740993123",
+        direction: "inbound",
+        body: "[媒体]",
+        mediaMime,
+        ...(mediaName ? { mediaName } : {}),
         createdAt: Date.now(),
       }),
     });
@@ -433,8 +452,13 @@ describe("stored quote resolution", () => {
       ctx.ChannelPromptContext = ["existing channel context"];
       resolveStoredQuoteContext(ctx, msg, "acc", {
         find: () => ({
-          accountId: "acc", conversationId: "user1", messageId: "9007199254740993123",
-          direction: "inbound", body: "[图片]", mediaPath: quotedPath, mediaMime: "image/png",
+          accountId: "acc",
+          conversationId: "user1",
+          messageId: "9007199254740993123",
+          direction: "inbound",
+          body: "[图片]",
+          mediaPath: quotedPath,
+          mediaMime: "image/png",
           mediaName: "quoted-original.png",
           createdAt: Date.now(),
         }),
@@ -475,9 +499,14 @@ describe("stored quote resolution", () => {
     const ctx = weixinMessageToMsgContext(msg, "acc");
     resolveStoredQuoteContext(ctx, msg, "acc", {
       find: () => ({
-        accountId: "acc", conversationId: "user1", messageId: "9007199254740993123",
-        direction: "inbound", body: "[视频]", mediaPath: "/definitely/missing/video.mp4",
-        mediaMime: "video/mp4", createdAt: Date.now(),
+        accountId: "acc",
+        conversationId: "user1",
+        messageId: "9007199254740993123",
+        direction: "inbound",
+        body: "[视频]",
+        mediaPath: "/definitely/missing/video.mp4",
+        mediaMime: "video/mp4",
+        createdAt: Date.now(),
       }),
     });
     expect(ctx.ReplyToBody).toBe("[引用的视频已过期]");
@@ -492,9 +521,14 @@ describe("stored quote resolution", () => {
       const ctx = weixinMessageToMsgContext(msg, "acc");
       resolveStoredQuoteContext(ctx, msg, "acc", {
         find: () => ({
-          accountId: "acc", conversationId: "user1", messageId: "9007199254740993123",
-          direction: "inbound", body: "[文件]", mediaPath: quotedPath,
-          mediaMime: "application/pdf", createdAt: Date.now(),
+          accountId: "acc",
+          conversationId: "user1",
+          messageId: "9007199254740993123",
+          direction: "inbound",
+          body: "[文件]",
+          mediaPath: quotedPath,
+          mediaMime: "application/pdf",
+          createdAt: Date.now(),
         }),
       });
       expect(ctx.ChannelPromptContext?.[0]).toContain('"original_filename":"managed-document.pdf"');

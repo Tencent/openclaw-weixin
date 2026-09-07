@@ -1,5 +1,7 @@
 # 微信
 
+[![CI](https://github.com/Tencent/openclaw-weixin/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Tencent/openclaw-weixin/actions/workflows/ci.yml)
+
 [English](./README.md)
 
 OpenClaw 的微信渠道插件，支持通过扫码完成登录授权。
@@ -379,6 +381,27 @@ openclaw gateway restart
 6. 使用返回的 `encrypt_query_param` 构造 `CDNMedia` 引用，放入 `MessageItem` 发送
 
 > 完整的类型定义见 [`src/api/types.ts`](src/api/types.ts)，API 调用实现见 [`src/api/api.ts`](src/api/api.ts)。
+
+## 开发与 CI
+
+本项目要求 Node.js >= 22。
+
+安装锁定版本的依赖并执行本地 CI 检查：
+
+```bash
+npm ci --ignore-scripts
+npm run ci
+```
+
+覆盖率检查单独执行：
+
+```bash
+npm run test:coverage
+```
+
+提交 Pull Request 后，GitHub Actions 会自动执行质量检查、单元测试、覆盖率、构建和 npm 包冒烟检查。
+
+CI 的设计和维护说明见 [CI 指南](./docs/ci_zh_CN.md)。
 
 ## 卸载
 

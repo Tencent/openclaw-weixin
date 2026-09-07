@@ -67,7 +67,9 @@ export class WeixinReplyProgressSender {
         });
       })
       .catch((err) => {
-        logger.warn(`${label}: failed to=${this.to} accountId=${this.accountId} runId=${this.runId} err=${String(err)}`);
+        logger.warn(
+          `${label}: failed to=${this.to} accountId=${this.accountId} runId=${this.runId} err=${String(err)}`,
+        );
       });
   }
 
@@ -117,7 +119,9 @@ export class WeixinReplyProgressSender {
     try {
       await this.sendChain;
     } catch (err) {
-      logger.warn(`WeixinReplyProgressSender.finalize: send drain failed runId=${this.runId} err=${String(err)}`);
+      logger.warn(
+        `WeixinReplyProgressSender.finalize: send drain failed runId=${this.runId} err=${String(err)}`,
+      );
     }
   }
 }

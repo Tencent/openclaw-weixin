@@ -123,10 +123,7 @@ export function getContextToken(accountId: string, userId: string): string | und
  * Returns all matching accountIds (not just the first) so the caller can
  * detect ambiguity when multiple accounts have sessions with the same user.
  */
-export function findAccountIdsByContextToken(
-  accountIds: string[],
-  userId: string,
-): string[] {
+export function findAccountIdsByContextToken(accountIds: string[], userId: string): string[] {
   return accountIds.filter((id) => contextTokenStore.has(contextTokenKey(id, userId)));
 }
 

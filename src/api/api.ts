@@ -272,16 +272,32 @@ export function classifyFetchError(err: unknown): {
   const matchedCode = causeCode || (typeof cause === "string" ? cause : "");
 
   if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(causeStr)) {
-    return { type: "dns", description: "DNS resolution failed, check DNS configuration", ...(matchedCode ? { code: matchedCode } : {}) };
+    return {
+      type: "dns",
+      description: "DNS resolution failed, check DNS configuration",
+      ...(matchedCode ? { code: matchedCode } : {}),
+    };
   }
   if (/ECONNREFUSED/i.test(causeStr)) {
-    return { type: "tcp", description: "TCP connection refused", ...(matchedCode ? { code: matchedCode } : {}) };
+    return {
+      type: "tcp",
+      description: "TCP connection refused",
+      ...(matchedCode ? { code: matchedCode } : {}),
+    };
   }
   if (/UND_ERR_CONNECT_TIMEOUT|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH/i.test(causeStr)) {
-    return { type: "tcp", description: "TCP connection timeout or unreachable", ...(matchedCode ? { code: matchedCode } : {}) };
+    return {
+      type: "tcp",
+      description: "TCP connection timeout or unreachable",
+      ...(matchedCode ? { code: matchedCode } : {}),
+    };
   }
   if (/UND_ERR_SOCKET|SSL|TLS|CERT|UNABLE_TO_VERIFY|DEPTH_ZERO/i.test(causeStr)) {
-    return { type: "tls", description: "TLS handshake error", ...(matchedCode ? { code: matchedCode } : {}) };
+    return {
+      type: "tls",
+      description: "TLS handshake error",
+      ...(matchedCode ? { code: matchedCode } : {}),
+    };
   }
 
   return { type: "unknown", description: "network request failed" };
@@ -305,8 +321,7 @@ export async function apiGetFetch(params: {
   logger.debug(`GET ${redactUrl(url.toString())}`);
 
   const timeoutMs = params.timeoutMs;
-  const controller =
-    timeoutMs != null && timeoutMs > 0 ? new AbortController() : undefined;
+  const controller = timeoutMs != null && timeoutMs > 0 ? new AbortController() : undefined;
   const t =
     controller != null && timeoutMs != null
       ? setTimeout(() => controller.abort(), timeoutMs)
@@ -339,10 +354,10 @@ export async function apiGetFetch(params: {
  * This lets gateway channel-stop aborts cancel in-flight long-poll requests
  * immediately while preserving the existing timeout-driven AbortError path.
  */
-function combineAbortSignals(params: {
-  internal?: AbortController;
-  external?: AbortSignal;
-}): { signal?: AbortSignal; cleanup: () => void } {
+function combineAbortSignals(params: { internal?: AbortController; external?: AbortSignal }): {
+  signal?: AbortSignal;
+  cleanup: () => void;
+} {
   const { internal, external } = params;
   if (!external) {
     return { signal: internal?.signal, cleanup: () => {} };
@@ -385,8 +400,7 @@ export async function apiPostFetch(params: {
   const hdrs = buildHeaders({ token: params.token });
   logger.debug(`POST ${redactUrl(url.toString())} body=${redactBody(params.body)}`);
 
-  const controller =
-    params.timeoutMs !== undefined ? new AbortController() : undefined;
+  const controller = params.timeoutMs !== undefined ? new AbortController() : undefined;
   const t =
     controller != null && params.timeoutMs !== undefined
       ? setTimeout(() => controller.abort(), params.timeoutMs)
@@ -462,7 +476,9 @@ export async function getUpdates(
       if (params.abortSignal?.aborted) {
         logger.debug(`getUpdates: aborted by external signal`);
       } else {
-        logger.debug(`getUpdates: client-side timeout after ${timeout}ms, returning empty response`);
+        logger.debug(
+          `getUpdates: client-side timeout after ${timeout}ms, returning empty response`,
+        );
       }
       return { ret: 0, msgs: [], get_updates_buf: params.get_updates_buf };
     }
@@ -574,9 +590,7 @@ export async function sendMessage(
   });
   const resp = parseWeixinApiJson<SendMessageResp>(rawText);
   if (resp.ret && resp.ret !== 0) {
-    throw new Error(
-      `sendMessage ret=${resp.ret} errmsg=${resp.errmsg ?? "(none)"}`,
-    );
+    throw new Error(`sendMessage ret=${resp.ret} errmsg=${resp.errmsg ?? "(none)"}`);
   }
   return resp;
 }

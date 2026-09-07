@@ -29,14 +29,15 @@ vi.mock("node:crypto", () => ({
 }));
 
 vi.mock("openclaw/plugin-sdk", () => ({
-  stripMarkdown: (text: string) => text
-    .replace(/\*\*([^*]+)\*\*/g, "$1")
-    .replace(/\*([^*]+)\*/g, "$1")
-    .replace(/_([^_]+)_/g, "$1")
-    .replace(/~~([^~]+)~~/g, "$1")
-    .replace(/^#{1,6}\s+/gm, "")
-    .replace(/^[*-]\s+/gm, "")
-    .replace(/^\d+\.\s+/gm, ""),
+  stripMarkdown: (text: string) =>
+    text
+      .replace(/\*\*([^*]+)\*\*/g, "$1")
+      .replace(/\*([^*]+)\*/g, "$1")
+      .replace(/_([^_]+)_/g, "$1")
+      .replace(/~~([^~]+)~~/g, "$1")
+      .replace(/^#{1,6}\s+/gm, "")
+      .replace(/^[*-]\s+/gm, "")
+      .replace(/^\d+\.\s+/gm, ""),
 }));
 
 import {
@@ -58,7 +59,9 @@ describe("sendMessageWeixin", () => {
   it("sends without contextToken (no throw)", async () => {
     mockSendMessageApi.mockResolvedValueOnce(undefined);
     const result = await sendMessageWeixin({
-      to: "user1", text: "hello", opts: { baseUrl: "https://api.com" },
+      to: "user1",
+      text: "hello",
+      opts: { baseUrl: "https://api.com" },
     });
     expect(result.messageId).toBeDefined();
   });
@@ -120,23 +123,27 @@ describe("sendMessageWeixin", () => {
     });
     expect(result.serverMessageId).toBe("18446744073709551615");
     expect(result.messageId).not.toBe(result.serverMessageId);
-    expect(mockQuotePut).toHaveBeenCalledWith(expect.objectContaining({
-      accountId: "account1",
-      conversationId: "user1",
-      messageId: "18446744073709551615",
-      body: "hello",
-      direction: "outbound",
-    }));
+    expect(mockQuotePut).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountId: "account1",
+        conversationId: "user1",
+        messageId: "18446744073709551615",
+        body: "hello",
+        direction: "outbound",
+      }),
+    );
   });
 
   it("does not turn a successful send into a failure when caching fails", async () => {
     mockSendMessageApi.mockResolvedValueOnce({ message_id: "99" });
     mockQuotePut.mockRejectedValueOnce(new Error("disk full"));
-    await expect(sendMessageWeixin({
-      to: "user1",
-      text: "hello",
-      opts: { baseUrl: "https://api.com", accountId: "account1" },
-    })).resolves.toMatchObject({ serverMessageId: "99" });
+    await expect(
+      sendMessageWeixin({
+        to: "user1",
+        text: "hello",
+        opts: { baseUrl: "https://api.com", accountId: "account1" },
+      }),
+    ).resolves.toMatchObject({ serverMessageId: "99" });
   });
 });
 
@@ -178,10 +185,12 @@ describe("sendMessageItemWeixin", () => {
       clientId: "explicit-client-id",
     });
     expect(result).toEqual({ messageId: "explicit-client-id", serverMessageId: "123" });
-    expect(mockQuotePut).toHaveBeenCalledWith(expect.objectContaining({
-      messageId: "123",
-      body: "structured text",
-    }));
+    expect(mockQuotePut).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageId: "123",
+        body: "structured text",
+      }),
+    );
   });
 
   it("returns the client ID when a structured item has no server ID", async () => {
@@ -196,11 +205,13 @@ describe("sendMessageItemWeixin", () => {
 
   it("rethrows structured-item API errors", async () => {
     mockSendMessageApi.mockRejectedValueOnce(new Error("structured fail"));
-    await expect(sendMessageItemWeixin({
-      to: "user1",
-      item: { type: MessageItemType.TEXT, text_item: { text: "hello" } },
-      opts: { baseUrl: "https://api.com" },
-    })).rejects.toThrow("structured fail");
+    await expect(
+      sendMessageItemWeixin({
+        to: "user1",
+        item: { type: MessageItemType.TEXT, text_item: { text: "hello" } },
+        opts: { baseUrl: "https://api.com" },
+      }),
+    ).rejects.toThrow("structured fail");
   });
 });
 
@@ -219,7 +230,9 @@ describe("sendImageMessageWeixin", () => {
   it("sends without contextToken (no throw)", async () => {
     mockSendMessageApi.mockResolvedValueOnce(undefined);
     const result = await sendImageMessageWeixin({
-      to: "u", text: "", uploaded: makeUploadedFileInfo(),
+      to: "u",
+      text: "",
+      uploaded: makeUploadedFileInfo(),
       opts: { baseUrl: "https://api.com" },
     });
     expect(result.messageId).toBeDefined();
@@ -241,7 +254,9 @@ describe("sendImageMessageWeixin", () => {
       },
     });
     const result = await sendImageMessageWeixin({
-      to: "user1", text: "caption", uploaded,
+      to: "user1",
+      text: "caption",
+      uploaded,
       opts: { baseUrl: "https://api.com", contextToken: "ctx" },
     });
     expect(result.messageId).toBeDefined();
@@ -264,7 +279,9 @@ describe("sendImageMessageWeixin", () => {
   it("sends image message without caption (single call)", async () => {
     mockSendMessageApi.mockResolvedValue(undefined);
     const result = await sendImageMessageWeixin({
-      to: "user1", text: "", uploaded: makeUploadedFileInfo(),
+      to: "user1",
+      text: "",
+      uploaded: makeUploadedFileInfo(),
       opts: { baseUrl: "https://api.com", contextToken: "ctx" },
     });
     expect(result.messageId).toBeDefined();
@@ -275,7 +292,9 @@ describe("sendImageMessageWeixin", () => {
     mockSendMessageApi.mockRejectedValueOnce(new Error("cdn fail"));
     await expect(
       sendImageMessageWeixin({
-        to: "user1", text: "", uploaded: makeUploadedFileInfo(),
+        to: "user1",
+        text: "",
+        uploaded: makeUploadedFileInfo(),
         opts: { baseUrl: "https://api.com", contextToken: "ctx" },
       }),
     ).rejects.toThrow("cdn fail");
@@ -291,13 +310,15 @@ describe("sendImageMessageWeixin", () => {
       filePath: "/tmp/photo.png",
       mediaMime: "image/png",
     });
-    expect(mockQuotePut).toHaveBeenCalledWith(expect.objectContaining({
-      messageId: "image-server-id",
-      body: "[图片]",
-      sourceMediaPath: "/tmp/photo.png",
-      mediaMime: "image/png",
-      mediaName: "photo.png",
-    }));
+    expect(mockQuotePut).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageId: "image-server-id",
+        body: "[图片]",
+        sourceMediaPath: "/tmp/photo.png",
+        mediaMime: "image/png",
+        mediaName: "photo.png",
+      }),
+    );
   });
 });
 
@@ -305,7 +326,9 @@ describe("sendVideoMessageWeixin", () => {
   it("sends without contextToken (no throw)", async () => {
     mockSendMessageApi.mockResolvedValueOnce(undefined);
     const result = await sendVideoMessageWeixin({
-      to: "u", text: "", uploaded: makeUploadedFileInfo(),
+      to: "u",
+      text: "",
+      uploaded: makeUploadedFileInfo(),
       opts: { baseUrl: "https://api.com" },
     });
     expect(result.messageId).toBeDefined();
@@ -314,7 +337,9 @@ describe("sendVideoMessageWeixin", () => {
   it("sends video message", async () => {
     mockSendMessageApi.mockResolvedValue(undefined);
     const result = await sendVideoMessageWeixin({
-      to: "user1", text: "", uploaded: makeUploadedFileInfo({ playLength: 30 }),
+      to: "user1",
+      text: "",
+      uploaded: makeUploadedFileInfo({ playLength: 30 }),
       opts: { baseUrl: "https://api.com", contextToken: "ctx" },
     });
     expect(result.messageId).toBeDefined();
@@ -335,7 +360,9 @@ describe("sendVideoMessageWeixin", () => {
       },
     });
     const result = await sendVideoMessageWeixin({
-      to: "user1", text: "", uploaded,
+      to: "user1",
+      text: "",
+      uploaded,
       opts: { baseUrl: "https://api.com", contextToken: "ctx" },
     });
     expect(result.messageId).toBeDefined();
@@ -346,7 +373,10 @@ describe("sendFileMessageWeixin", () => {
   it("sends without contextToken (no throw)", async () => {
     mockSendMessageApi.mockResolvedValueOnce(undefined);
     const result = await sendFileMessageWeixin({
-      to: "u", text: "", fileName: "file.pdf", uploaded: makeUploadedFileInfo(),
+      to: "u",
+      text: "",
+      fileName: "file.pdf",
+      uploaded: makeUploadedFileInfo(),
       opts: { baseUrl: "https://api.com" },
     });
     expect(result.messageId).toBeDefined();
@@ -355,7 +385,10 @@ describe("sendFileMessageWeixin", () => {
   it("sends file message", async () => {
     mockSendMessageApi.mockResolvedValue(undefined);
     const result = await sendFileMessageWeixin({
-      to: "user1", text: "see attached", fileName: "doc.pdf", uploaded: makeUploadedFileInfo(),
+      to: "user1",
+      text: "see attached",
+      fileName: "doc.pdf",
+      uploaded: makeUploadedFileInfo(),
       opts: { baseUrl: "https://api.com", contextToken: "ctx" },
     });
     expect(result.messageId).toBeDefined();

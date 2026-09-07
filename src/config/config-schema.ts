@@ -19,8 +19,16 @@ const quoteCacheSchema = z.object({
   retentionDays: z.number().positive().default(30),
   maxMessagesPerAccount: z.number().int().positive().default(10_000),
   mediaRetentionDays: z.number().positive().default(7),
-  maxMediaBytesPerAccount: z.number().int().positive().default(256 * 1024 * 1024),
-  maxSingleMediaBytes: z.number().int().positive().default(25 * 1024 * 1024),
+  maxMediaBytesPerAccount: z
+    .number()
+    .int()
+    .positive()
+    .default(256 * 1024 * 1024),
+  maxSingleMediaBytes: z
+    .number()
+    .int()
+    .positive()
+    .default(25 * 1024 * 1024),
 });
 
 /** Top-level weixin config schema (token is stored in credentials file, not config). */

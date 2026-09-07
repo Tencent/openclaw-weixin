@@ -199,12 +199,22 @@ describe("QuoteStore", () => {
     fs.writeFileSync(secondSource, "2222");
     const now = Date.now();
     await store.put({
-      accountId: "account", conversationId: "user", messageId: "1",
-      direction: "inbound", body: "[文件]", sourceMediaPath: firstSource, createdAt: now,
+      accountId: "account",
+      conversationId: "user",
+      messageId: "1",
+      direction: "inbound",
+      body: "[文件]",
+      sourceMediaPath: firstSource,
+      createdAt: now,
     });
     await store.put({
-      accountId: "account", conversationId: "user", messageId: "2",
-      direction: "inbound", body: "[文件]", sourceMediaPath: secondSource, createdAt: now + 1,
+      accountId: "account",
+      conversationId: "user",
+      messageId: "2",
+      direction: "inbound",
+      body: "[文件]",
+      sourceMediaPath: secondSource,
+      createdAt: now + 1,
     });
     expect(store.find("account", "user", "1")?.mediaPath).toBeUndefined();
     expect(store.find("account", "user", "2")?.mediaPath).toBeDefined();
@@ -241,12 +251,22 @@ describe("QuoteStore", () => {
     fs.writeFileSync(source, "shared");
     const now = Date.now();
     await store.put({
-      accountId: "account", conversationId: "user", messageId: "old",
-      direction: "inbound", body: "old", sourceMediaPath: source, createdAt: now - 1000,
+      accountId: "account",
+      conversationId: "user",
+      messageId: "old",
+      direction: "inbound",
+      body: "old",
+      sourceMediaPath: source,
+      createdAt: now - 1000,
     });
     await store.put({
-      accountId: "account", conversationId: "user", messageId: "new",
-      direction: "inbound", body: "new", sourceMediaPath: source, createdAt: now,
+      accountId: "account",
+      conversationId: "user",
+      messageId: "new",
+      direction: "inbound",
+      body: "new",
+      sourceMediaPath: source,
+      createdAt: now,
     });
     const managedPath = store.find("account", "user", "new")!.mediaPath!;
     expect(store.find("account", "user", "old")).toBeNull();
@@ -279,8 +299,12 @@ describe("QuoteStore", () => {
     const now = Date.now();
     for (const messageId of ["1", "2"]) {
       await store.put({
-        accountId: "account", conversationId: "user", messageId,
-        direction: "inbound", body: messageId, createdAt: now,
+        accountId: "account",
+        conversationId: "user",
+        messageId,
+        direction: "inbound",
+        body: messageId,
+        createdAt: now,
       });
     }
     store.updatePolicy(policy({ maxMessagesPerAccount: 1 }));
@@ -290,16 +314,20 @@ describe("QuoteStore", () => {
   });
 
   it("does not open when explicitly disabled", async () => {
-    await expect(QuoteStore.open({ rootDir, policy: policy({ enabled: false }) })).resolves.toBeNull();
+    await expect(
+      QuoteStore.open({ rootDir, policy: policy({ enabled: false }) }),
+    ).resolves.toBeNull();
   });
 
   it("returns null when the database directory cannot be created", async () => {
     const fileInsteadOfDirectory = path.join(rootDir, "plain-file");
     fs.writeFileSync(fileInsteadOfDirectory, "not a directory");
-    await expect(QuoteStore.open({
-      rootDir: path.join(fileInsteadOfDirectory, "child"),
-      policy: policy(),
-    })).resolves.toBeNull();
+    await expect(
+      QuoteStore.open({
+        rootDir: path.join(fileInsteadOfDirectory, "child"),
+        policy: policy(),
+      }),
+    ).resolves.toBeNull();
   });
 
   it("ignores invalid writes, isolates unsafe account names, and substitutes invalid timestamps", async () => {
@@ -307,8 +335,13 @@ describe("QuoteStore", () => {
     const source = managedMediaPath("   ", "media");
     fs.writeFileSync(source, "content");
     await store.put({
-      accountId: "   ", conversationId: "user", messageId: "media",
-      direction: "inbound", body: "[文件]", sourceMediaPath: source, createdAt: Number.NaN,
+      accountId: "   ",
+      conversationId: "user",
+      messageId: "media",
+      direction: "inbound",
+      body: "[文件]",
+      sourceMediaPath: source,
+      createdAt: Number.NaN,
     });
     const record = store.find("   ", "user", "media");
     expect(record?.createdAt).toBeGreaterThan(0);
@@ -316,20 +349,32 @@ describe("QuoteStore", () => {
     expect(path.extname(record!.mediaPath!)).toBe("");
 
     await store.put({
-      accountId: "account", conversationId: "user", messageId: "",
-      direction: "inbound", body: "ignored", createdAt: Date.now(),
+      accountId: "account",
+      conversationId: "user",
+      messageId: "",
+      direction: "inbound",
+      body: "ignored",
+      createdAt: Date.now(),
     });
     await store.put({
-      accountId: "account", conversationId: "user", messageId: "empty",
-      direction: "inbound", body: "", createdAt: Date.now(),
+      accountId: "account",
+      conversationId: "user",
+      messageId: "empty",
+      direction: "inbound",
+      body: "",
+      createdAt: Date.now(),
     });
     expect(store.find("account", "user", "")).toBeNull();
     expect(store.find("account", "user", "empty")).toBeNull();
 
     store.close();
     await store.put({
-      accountId: "account", conversationId: "user", messageId: "closed",
-      direction: "inbound", body: "ignored", createdAt: Date.now(),
+      accountId: "account",
+      conversationId: "user",
+      messageId: "closed",
+      direction: "inbound",
+      body: "ignored",
+      createdAt: Date.now(),
     });
     expect(store.find("account", "user", "closed")).toBeNull();
     store.deleteAccount("account");
@@ -341,8 +386,13 @@ describe("QuoteStore", () => {
     fs.writeFileSync(source, "content");
     const store = await open();
     await store.put({
-      accountId: "account", conversationId: "user", messageId: "outside",
-      direction: "inbound", body: "[文件]", sourceMediaPath: source, createdAt: Date.now(),
+      accountId: "account",
+      conversationId: "user",
+      messageId: "outside",
+      direction: "inbound",
+      body: "[文件]",
+      sourceMediaPath: source,
+      createdAt: Date.now(),
     });
     expect(store.find("account", "user", "outside")?.mediaPath).toBeUndefined();
     expect(fs.existsSync(source)).toBe(true);
@@ -365,21 +415,35 @@ describe("QuoteStore", () => {
     fs.mkdirSync(path.dirname(legacyPath), { recursive: true });
     fs.writeFileSync(legacyPath, "pdf");
     await legacyStore!.put({
-      accountId: "account", conversationId: "user", messageId: "legacy",
-      direction: "inbound", body: "[文件]", sourceMediaPath: legacyPath,
-      mediaName: "report.pdf", createdAt: Date.now(),
+      accountId: "account",
+      conversationId: "user",
+      messageId: "legacy",
+      direction: "inbound",
+      body: "[文件]",
+      sourceMediaPath: legacyPath,
+      mediaName: "report.pdf",
+      createdAt: Date.now(),
     });
     await legacyStore!.put({
-      accountId: "account", conversationId: "user", messageId: "legacy-shared",
-      direction: "inbound", body: "[文件]", sourceMediaPath: legacyPath,
-      mediaName: "report.pdf", createdAt: Date.now(),
+      accountId: "account",
+      conversationId: "user",
+      messageId: "legacy-shared",
+      direction: "inbound",
+      body: "[文件]",
+      sourceMediaPath: legacyPath,
+      mediaName: "report.pdf",
+      createdAt: Date.now(),
     });
 
     const existingLegacyPath = path.join(path.dirname(legacyPath), "existing.pdf");
     fs.writeFileSync(existingLegacyPath, "existing");
     await legacyStore!.put({
-      accountId: "account", conversationId: "user", messageId: "existing",
-      direction: "inbound", body: "[文件]", sourceMediaPath: existingLegacyPath,
+      accountId: "account",
+      conversationId: "user",
+      messageId: "existing",
+      direction: "inbound",
+      body: "[文件]",
+      sourceMediaPath: existingLegacyPath,
       createdAt: Date.now(),
     });
     const existingManagedPath = managedMediaPath("account", "existing.pdf");
@@ -388,8 +452,12 @@ describe("QuoteStore", () => {
     const missingLegacyPath = path.join(path.dirname(legacyPath), "missing.pdf");
     fs.writeFileSync(missingLegacyPath, "missing");
     await legacyStore!.put({
-      accountId: "account", conversationId: "user", messageId: "missing-legacy",
-      direction: "inbound", body: "[文件]", sourceMediaPath: missingLegacyPath,
+      accountId: "account",
+      conversationId: "user",
+      messageId: "missing-legacy",
+      direction: "inbound",
+      body: "[文件]",
+      sourceMediaPath: missingLegacyPath,
       createdAt: Date.now(),
     });
     fs.unlinkSync(missingLegacyPath);
@@ -401,10 +469,10 @@ describe("QuoteStore", () => {
     expect(migrated?.mediaName).toBe("report.pdf");
     expect(fs.existsSync(migrated!.mediaPath!)).toBe(true);
     expect(fs.existsSync(legacyPath)).toBe(false);
-    expect(migratedStore.find("account", "user", "legacy-shared")?.mediaPath)
-      .toBe(migrated?.mediaPath);
-    expect(migratedStore.find("account", "user", "existing")?.mediaPath)
-      .toBe(existingManagedPath);
+    expect(migratedStore.find("account", "user", "legacy-shared")?.mediaPath).toBe(
+      migrated?.mediaPath,
+    );
+    expect(migratedStore.find("account", "user", "existing")?.mediaPath).toBe(existingManagedPath);
     expect(fs.existsSync(existingLegacyPath)).toBe(false);
   });
 });
@@ -427,18 +495,28 @@ describe("global quote store lifecycle", () => {
 
   it("honors explicit disablement", async () => {
     process.env.OPENCLAW_STATE_DIR = rootDir;
-    await expect(initializeQuoteStore({
-      channels: { "openclaw-weixin": { quoteCache: { enabled: false } } },
-    }, "account")).resolves.toBeNull();
+    await expect(
+      initializeQuoteStore(
+        {
+          channels: { "openclaw-weixin": { quoteCache: { enabled: false } } },
+        },
+        "account",
+      ),
+    ).resolves.toBeNull();
     expect(getQuoteStore()).toBeNull();
   });
 
   it("closes an already-active store when the feature is disabled", async () => {
     process.env.OPENCLAW_STATE_DIR = rootDir;
     expect(await initializeQuoteStore({}, "account")).not.toBeNull();
-    await expect(initializeQuoteStore({
-      channels: { "openclaw-weixin": { quoteCache: { enabled: false } } },
-    }, "account")).resolves.toBeNull();
+    await expect(
+      initializeQuoteStore(
+        {
+          channels: { "openclaw-weixin": { quoteCache: { enabled: false } } },
+        },
+        "account",
+      ),
+    ).resolves.toBeNull();
     expect(getQuoteStore()).toBeNull();
   });
 
@@ -446,8 +524,12 @@ describe("global quote store lifecycle", () => {
     process.env.OPENCLAW_STATE_DIR = rootDir;
     const store = await initializeQuoteStore({}, "account");
     await store!.put({
-      accountId: "account", conversationId: "user", messageId: "1",
-      direction: "inbound", body: "hello", createdAt: Date.now(),
+      accountId: "account",
+      conversationId: "user",
+      messageId: "1",
+      direction: "inbound",
+      body: "hello",
+      createdAt: Date.now(),
     });
     deleteQuoteCacheForAccount("account");
     expect(store!.find("account", "user", "1")).toBeNull();
@@ -459,8 +541,12 @@ describe("global quote store lifecycle", () => {
     const store = await QuoteStore.open({ rootDir: managedRoot, policy: policy() });
     expect(store).not.toBeNull();
     await store!.put({
-      accountId: "account", conversationId: "user", messageId: "1",
-      direction: "inbound", body: "hello", createdAt: Date.now(),
+      accountId: "account",
+      conversationId: "user",
+      messageId: "1",
+      direction: "inbound",
+      body: "hello",
+      createdAt: Date.now(),
     });
     store!.close();
 
@@ -478,36 +564,50 @@ describe("resolveQuoteCachePolicy", () => {
       maxMessagesPerAccount: 10_000,
       maxMediaBytesPerAccount: 256 * 1024 * 1024,
     });
-    expect(resolveQuoteCachePolicy({
-      channels: { "openclaw-weixin": { quoteCache: { enabled: false } } },
-    })).toMatchObject({ enabled: false });
+    expect(
+      resolveQuoteCachePolicy({
+        channels: { "openclaw-weixin": { quoteCache: { enabled: false } } },
+      }),
+    ).toMatchObject({ enabled: false });
   });
 
   it("accepts positive limits and replaces invalid values with defaults", () => {
-    expect(resolveQuoteCachePolicy({
-      channels: { "openclaw-weixin": { quoteCache: {
-        retentionDays: 2,
-        maxMessagesPerAccount: 3.9,
-        mediaRetentionDays: 4,
-        maxMediaBytesPerAccount: 5,
-        maxSingleMediaBytes: 6,
-      } } },
-    })).toMatchObject({
+    expect(
+      resolveQuoteCachePolicy({
+        channels: {
+          "openclaw-weixin": {
+            quoteCache: {
+              retentionDays: 2,
+              maxMessagesPerAccount: 3.9,
+              mediaRetentionDays: 4,
+              maxMediaBytesPerAccount: 5,
+              maxSingleMediaBytes: 6,
+            },
+          },
+        },
+      }),
+    ).toMatchObject({
       retentionMs: 2 * 24 * 60 * 60 * 1000,
       maxMessagesPerAccount: 3,
       mediaRetentionMs: 4 * 24 * 60 * 60 * 1000,
       maxMediaBytesPerAccount: 5,
       maxSingleMediaBytes: 6,
     });
-    expect(resolveQuoteCachePolicy({
-      channels: { "openclaw-weixin": { quoteCache: {
-        retentionDays: Number.NaN,
-        maxMessagesPerAccount: 0,
-        mediaRetentionDays: -1,
-        maxMediaBytesPerAccount: Number.POSITIVE_INFINITY,
-        maxSingleMediaBytes: 0,
-      } } },
-    })).toMatchObject({
+    expect(
+      resolveQuoteCachePolicy({
+        channels: {
+          "openclaw-weixin": {
+            quoteCache: {
+              retentionDays: Number.NaN,
+              maxMessagesPerAccount: 0,
+              mediaRetentionDays: -1,
+              maxMediaBytesPerAccount: Number.POSITIVE_INFINITY,
+              maxSingleMediaBytes: 0,
+            },
+          },
+        },
+      }),
+    ).toMatchObject({
       maxMessagesPerAccount: 10_000,
       maxMediaBytesPerAccount: 256 * 1024 * 1024,
       maxSingleMediaBytes: 25 * 1024 * 1024,

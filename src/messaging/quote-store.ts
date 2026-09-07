@@ -102,18 +102,13 @@ export function resolveQuoteCachePolicy(cfg: OpenClawConfig): QuoteCachePolicy {
   const quote = section?.quoteCache;
   return {
     enabled: quote?.enabled !== false,
-    retentionMs:
-      positiveNumber(quote?.retentionDays, DEFAULT_RETENTION_DAYS) * 24 * 60 * 60 * 1000,
+    retentionMs: positiveNumber(quote?.retentionDays, DEFAULT_RETENTION_DAYS) * 24 * 60 * 60 * 1000,
     maxMessagesPerAccount: positiveInteger(
       quote?.maxMessagesPerAccount,
       DEFAULT_MAX_MESSAGES_PER_ACCOUNT,
     ),
     mediaRetentionMs:
-      positiveNumber(quote?.mediaRetentionDays, DEFAULT_MEDIA_RETENTION_DAYS) *
-      24 *
-      60 *
-      60 *
-      1000,
+      positiveNumber(quote?.mediaRetentionDays, DEFAULT_MEDIA_RETENTION_DAYS) * 24 * 60 * 60 * 1000,
     maxMediaBytesPerAccount: positiveInteger(
       quote?.maxMediaBytesPerAccount,
       DEFAULT_MAX_MEDIA_BYTES_PER_ACCOUNT,
@@ -126,7 +121,11 @@ export function resolveQuoteCachePolicy(cfg: OpenClawConfig): QuoteCachePolicy {
 }
 
 function safePathSegment(raw: string): string {
-  const safe = raw.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "_").replace(/\.\.+/g, "_");
+  const safe = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "_")
+    .replace(/\.\.+/g, "_");
   return safe && safe !== "." && safe !== ".." ? safe : "default";
 }
 
@@ -397,7 +396,11 @@ export class QuoteStore {
     if (existing) this.removeMediaIfOrphaned(existing);
   }
 
-  private findMediaPath(accountId: string, conversationId: string, messageId: string): string | null {
+  private findMediaPath(
+    accountId: string,
+    conversationId: string,
+    messageId: string,
+  ): string | null {
     const row = this.db
       .prepare(
         "SELECT media_path FROM quote_messages WHERE account_id = ? AND conversation_id = ? AND message_id = ?",
@@ -413,7 +416,9 @@ export class QuoteStore {
   ): Promise<{ path: string; mime?: string; name: string; size: number } | null> {
     try {
       const accountDir = path.join(this.mediaRoot, accountMediaDirName(accountId));
-      const canonicalRoot = await fs.promises.realpath(accountDir).catch(() => path.resolve(accountDir));
+      const canonicalRoot = await fs.promises
+        .realpath(accountDir)
+        .catch(() => path.resolve(accountDir));
       const canonicalSource = await fs.promises.realpath(sourcePath);
       const relative = path.relative(canonicalRoot, canonicalSource);
       if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
@@ -542,9 +547,11 @@ export class QuoteStore {
   private pruneOrphanMediaFiles(): void {
     if (!fs.existsSync(this.mediaRoot)) return;
     const known = new Set(
-      (this.db
-        .prepare("SELECT DISTINCT media_path FROM quote_messages WHERE media_path IS NOT NULL")
-        .all() as Array<{ media_path: string }>).map((row) => row.media_path),
+      (
+        this.db
+          .prepare("SELECT DISTINCT media_path FROM quote_messages WHERE media_path IS NOT NULL")
+          .all() as Array<{ media_path: string }>
+      ).map((row) => row.media_path),
     );
     const visit = (dir: string) => {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {

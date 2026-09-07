@@ -42,10 +42,7 @@ function candidate(
  * it disambiguates the protocol variants; without a hash, global indexes match
  * the examples supplied with the newer Weixin payload definition.
  */
-export function resolvePartialQuote(
-  fullText: string,
-  partial: PartialText,
-): PartialQuoteResult {
+export function resolvePartialQuote(fullText: string, partial: PartialText): PartialQuoteResult {
   if (!fullText || !partial.start || !partial.end) {
     return { resolved: null, fallback: true };
   }
