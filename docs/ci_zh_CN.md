@@ -4,7 +4,7 @@
 
 ## 本地检查
 
-项目要求 Node.js `>=22`。首次获取代码或依赖发生变化后，先安装 lockfile 中锁定的依赖：
+项目要求 Node.js `>=22.13.0`。首次获取代码或依赖发生变化后，先安装 lockfile 中锁定的依赖：
 
 ```bash
 npm ci --ignore-scripts

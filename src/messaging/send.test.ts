@@ -28,18 +28,6 @@ vi.mock("node:crypto", () => ({
   },
 }));
 
-vi.mock("openclaw/plugin-sdk", () => ({
-  stripMarkdown: (text: string) =>
-    text
-      .replace(/\*\*([^*]+)\*\*/g, "$1")
-      .replace(/\*([^*]+)\*/g, "$1")
-      .replace(/_([^_]+)_/g, "$1")
-      .replace(/~~([^~]+)~~/g, "$1")
-      .replace(/^#{1,6}\s+/gm, "")
-      .replace(/^[*-]\s+/gm, "")
-      .replace(/^\d+\.\s+/gm, ""),
-}));
-
 import {
   sendMessageWeixin,
   sendMessageItemWeixin,

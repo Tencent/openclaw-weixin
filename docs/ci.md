@@ -4,7 +4,7 @@ This document describes the local quality checks and GitHub Actions workflow for
 
 ## Local checks
 
-The project requires Node.js `>=22`. After cloning the repository or changing dependencies, install the locked dependencies first:
+The project requires Node.js `>=22.13.0`. After cloning the repository or changing dependencies, install the locked dependencies first:
 
 ```bash
 npm ci --ignore-scripts

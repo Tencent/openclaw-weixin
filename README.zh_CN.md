@@ -1,37 +1,47 @@
-# 微信
+# OpenClaw 微信渠道
 
 [![CI](https://github.com/Tencent/openclaw-weixin/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Tencent/openclaw-weixin/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@tencent-weixin/openclaw-weixin)](https://www.npmjs.com/package/@tencent-weixin/openclaw-weixin)
+[![Node.js](https://img.shields.io/node/v/@tencent-weixin/openclaw-weixin)](https://nodejs.org/)
+[![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
 [English](./README.md)
 
-OpenClaw 的微信渠道插件，支持通过扫码完成登录授权。
+OpenClaw 的微信渠道插件。通过扫码登录将 OpenClaw Gateway 连接到微信，并通过微信后端收发消息。
 
-## 兼容性
+## 主要能力
 
-| 插件版本 | OpenClaw 版本            | npm dist-tag | 状态   |
-|---------|--------------------------|--------------|--------|
-| 2.0.x   | >=2026.3.22              | `latest`     | 活跃   |
-| 1.0.x   | >=2026.1.0 <2026.3.22    | `legacy`     | 维护中 |
+- 扫码登录并自动保存登录凭证。
+- 一个 OpenClaw Gateway 同时运行多个微信账号。
+- 支持文本、图片、语音、文件和视频消息。
+- 长轮询收取消息，并支持输入状态提示。
+- 集成 OpenClaw 渠道路由、配对和会话隔离能力。
 
-> 插件在启动时会检查宿主版本，如果运行的 OpenClaw 版本超出支持范围，插件将拒绝加载。
+## 环境要求
 
-## 前提条件
+| 组件 | 要求 |
+| --- | --- |
+| Node.js | `>=22.13.0` |
+| OpenClaw 运行时检查 | `>=2026.3.22` |
+| npm peer dependency | `>=2026.5.12` |
 
-已安装 [OpenClaw](https://docs.openclaw.ai/install)（需要 `openclaw` CLI 可用）。
+建议尽量使用 `OpenClaw >=2026.5.12`。当前运行时兼容检查接受 `>=2026.3.22`；如果 npm 使用严格的 peer dependency 校验，则需要满足 peer dependency 要求的版本。
 
-查看版本：`openclaw --version`
+必须先安装 OpenClaw，并确保 `openclaw` 命令可用。请参阅 [OpenClaw 安装指南](https://docs.openclaw.ai/install)。
 
-## 一键安装
+```bash
+openclaw --version
+```
+
+## 快速开始
+
+### 1. 安装插件
 
 ```bash
 npx -y @tencent-weixin/openclaw-weixin-cli install
 ```
 
-## 手动安装
-
-如果一键安装不适用，可以按以下步骤手动操作：
-
-### 1. 安装插件
+如果当前环境不适合使用安装器，也可以直接安装插件：
 
 ```bash
 openclaw plugins install "@tencent-weixin/openclaw-weixin"
@@ -43,43 +53,40 @@ openclaw plugins install "@tencent-weixin/openclaw-weixin"
 openclaw config set plugins.entries.openclaw-weixin.enabled true
 ```
 
-### 3. 扫码登录
+### 3. 使用微信扫码登录
 
 ```bash
 openclaw channels login --channel openclaw-weixin
 ```
 
-终端会显示一个二维码，用手机扫码并在手机上确认授权。确认后，登录凭证会自动保存到本地，无需额外操作。
+使用微信扫描二维码并确认授权。登录成功后，凭证会自动保存到本地。
 
-### 4. 重启 gateway
+### 4. 重启并检查 Gateway
 
 ```bash
 openclaw gateway restart
+openclaw channels status
 ```
 
-## 添加更多微信账号
+## 配置
+
+### 多账号
+
+每个账号再次执行登录命令：
 
 ```bash
 openclaw channels login --channel openclaw-weixin
 ```
 
-每次扫码登录都会创建一个新的账号条目，支持多个微信号同时在线。
-
-## 多账号上下文隔离
-
-默认情况下，私聊可能共用同一会话桶。**多个微信号同时登录**时，建议按「账号 + 渠道 + 对端」隔离：
+同时登录多个账号时，建议按账号、渠道和对端隔离私聊会话：
 
 ```bash
 openclaw config set session.dmScope per-account-channel-peer
 ```
 
-## 自定义 BotAgent（可选）
+### 自定义 BotAgent
 
-每条出站请求会带一个自我声明的 `bot_agent` 字段——类似 HTTP `User-Agent`——用于
-后台日志归因和监控聚合。**默认值为 `OpenClaw`**。声明自己的应用名能让你的流量
-在后台日志中更容易识别。
-
-在 `openclaw.json` 中加一行即可：
+可以设置一个用于后台日志归因和监控的标识：
 
 ```json
 {
@@ -90,6 +97,8 @@ openclaw config set session.dmScope per-account-channel-peer
   }
 }
 ```
+
+`botAgent` 仅用于观测，不是鉴权凭证，也不控制消息路由。
 
 **格式规范**（UA 风格）：
 
@@ -111,297 +120,12 @@ openclaw config set session.dmScope per-account-channel-peer
 
 ## 引用消息本地缓存
 
-新版微信的引用消息可能只携带服务端消息 ID。插件默认使用 SQLite 保存文本和媒体元数据，
-并将图片、视频、语音及附件首次直接写入插件专属的 OpenClaw 受管目录，让当前消息和后续引用
-复用同一份文件。命中引用附件时，还会向 agent 提供原文件名、受管源路径及工作区
-`media/inbound/` 提示；自动抽取失败时，agent 可调用文件/PDF 工具读取。缓存按账号和会话隔离；
-文本默认保留 30 天且每账号最多 10,000 条，媒体默认保留 7 天、每账号最多 256 MiB、单文件
-最多 25 MiB。淘汰在启动时、每小时、每写入 100 条及媒体超出空间上限时触发；删除账号时
-会同步删除其引用缓存。
-
-引用缓存**默认开启**，升级后无需增加任何配置。这样可以在新版微信客户端不再携带引用正文后，
-继续保持此前的引用消息体验。只有需要调整缓存限制时，才需要配置
-`channels.openclaw-weixin.quoteCache`。
-
-| 配置项 | 默认值 | 说明 |
-| --- | ---: | --- |
-| `enabled` | `true` | 是否启用本地引用消息还原。 |
-| `retentionDays` | `30` | 文本及消息元数据的保留天数。 |
-| `maxMessagesPerAccount` | `10000` | 每个账号最多保留的消息记录数。 |
-| `mediaRetentionDays` | `7` | 引用媒体文件的保留天数。 |
-| `maxMediaBytesPerAccount` | `268435456` | 每个账号最多保留的媒体总大小，单位为字节（256 MiB）。 |
-| `maxSingleMediaBytes` | `26214400` | 单个可保留媒体文件的最大大小，单位为字节（25 MiB）。超出后仍正常投递当前消息，但不会为后续引用保留文件。 |
-
-保持功能开启并自定义限制的示例：
-
-```json
-{
-  "channels": {
-    "openclaw-weixin": {
-      "quoteCache": {
-        "enabled": true,
-        "retentionDays": 14,
-        "maxMessagesPerAccount": 5000,
-        "mediaRetentionDays": 3,
-        "maxMediaBytesPerAccount": 134217728,
-        "maxSingleMediaBytes": 26214400
-      }
-    }
-  }
-}
-```
-
-如需明确关闭本地引用存储，只需配置：
-
-```json
-{
-  "channels": {
-    "openclaw-weixin": {
-      "quoteCache": {
-        "enabled": false
-      }
-    }
-  }
-}
-```
-
-修改配置后重启 gateway：
-
-```bash
-openclaw gateway restart
-```
-
-如当前 Node.js 不提供 `node:sqlite`，或数据库无法打开，插件会记录警告并自动关闭此功能。
-插件不会使用内存缓存降级，引用缓存异常也不会中断正常消息收发。
-
-## 后端 API 协议
-
-本插件通过 HTTP JSON API 与后端网关通信。二次开发者若需对接自有后端，需实现以下接口。
-
-所有接口均为 `POST`，请求和响应均为 JSON。通用请求头：
-
-| Header | 说明 |
-|--------|------|
-| `Content-Type` | `application/json` |
-| `AuthorizationType` | 固定值 `ilink_bot_token` |
-| `Authorization` | `Bearer <token>`（登录后获取） |
-| `X-WECHAT-UIN` | 随机 uint32 的 base64 编码 |
-
-### 接口列表
-
-| 接口 | 路径 | 说明 |
-|------|------|------|
-| getUpdates | `getupdates` | 长轮询获取新消息 |
-| sendMessage | `sendmessage` | 发送消息（文本/图片/视频/文件） |
-| getUploadUrl | `getuploadurl` | 获取 CDN 上传预签名 URL |
-| getConfig | `getconfig` | 获取账号配置（typing ticket 等） |
-| sendTyping | `sendtyping` | 发送/取消输入状态指示 |
-
-### getUpdates
-
-长轮询接口。服务端在有新消息或超时后返回。
-
-**请求体：**
-
-```json
-{
-  "get_updates_buf": ""
-}
-```
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `get_updates_buf` | `string` | 上次响应返回的同步游标，首次请求传空字符串 |
-
-**响应体：**
-
-```json
-{
-  "ret": 0,
-  "msgs": [...],
-  "get_updates_buf": "<新游标>",
-  "longpolling_timeout_ms": 35000
-}
-```
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `ret` | `number` | 返回码，`0` = 成功 |
-| `errcode` | `number?` | 错误码（如 `-14` = 会话超时） |
-| `errmsg` | `string?` | 错误描述 |
-| `msgs` | `WeixinMessage[]` | 消息列表（结构见下方） |
-| `get_updates_buf` | `string` | 新的同步游标，下次请求时回传 |
-| `longpolling_timeout_ms` | `number?` | 服务端建议的下次长轮询超时（ms） |
-
-### sendMessage
-
-发送一条消息给用户。
-
-**请求体：**
-
-```json
-{
-  "msg": {
-    "to_user_id": "<目标用户 ID>",
-    "context_token": "<会话上下文令牌>",
-    "item_list": [
-      {
-        "type": 1,
-        "text_item": { "text": "你好" }
-      }
-    ]
-  }
-}
-```
-
-### getUploadUrl
-
-获取 CDN 上传预签名参数。上传文件前需先调用此接口获取 `upload_param` 和 `thumb_upload_param`。
-
-**请求体：**
-
-```json
-{
-  "filekey": "<文件标识>",
-  "media_type": 1,
-  "to_user_id": "<目标用户 ID>",
-  "rawsize": 12345,
-  "rawfilemd5": "<明文 MD5>",
-  "filesize": 12352,
-  "thumb_rawsize": 1024,
-  "thumb_rawfilemd5": "<缩略图明文 MD5>",
-  "thumb_filesize": 1040
-}
-```
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `media_type` | `number` | `1` = IMAGE, `2` = VIDEO, `3` = FILE |
-| `rawsize` | `number` | 原文件明文大小 |
-| `rawfilemd5` | `string` | 原文件明文 MD5 |
-| `filesize` | `number` | AES-128-ECB 加密后的密文大小 |
-| `thumb_rawsize` | `number?` | 缩略图明文大小（IMAGE/VIDEO 时必填） |
-| `thumb_rawfilemd5` | `string?` | 缩略图明文 MD5（IMAGE/VIDEO 时必填） |
-| `thumb_filesize` | `number?` | 缩略图密文大小（IMAGE/VIDEO 时必填） |
-
-**响应体：**
-
-```json
-{
-  "upload_param": "<原图上传加密参数>",
-  "thumb_upload_param": "<缩略图上传加密参数>"
-}
-```
-
-### getConfig
-
-获取账号配置，包括 typing ticket。
-
-**请求体：**
-
-```json
-{
-  "ilink_user_id": "<用户 ID>",
-  "context_token": "<可选，会话上下文令牌>"
-}
-```
-
-**响应体：**
-
-```json
-{
-  "ret": 0,
-  "typing_ticket": "<base64 编码的 typing ticket>"
-}
-```
-
-### sendTyping
-
-发送或取消输入状态指示。
-
-**请求体：**
-
-```json
-{
-  "ilink_user_id": "<用户 ID>",
-  "typing_ticket": "<从 getConfig 获取>",
-  "status": 1
-}
-```
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `status` | `number` | `1` = 正在输入，`2` = 取消输入 |
-
-### 消息结构
-
-#### WeixinMessage
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `seq` | `number?` | 消息序列号 |
-| `message_id` | `number?` | 消息唯一 ID |
-| `from_user_id` | `string?` | 发送者 ID |
-| `to_user_id` | `string?` | 接收者 ID |
-| `create_time_ms` | `number?` | 创建时间戳（ms） |
-| `session_id` | `string?` | 会话 ID |
-| `message_type` | `number?` | `1` = USER, `2` = BOT |
-| `message_state` | `number?` | `0` = NEW, `1` = GENERATING, `2` = FINISH |
-| `item_list` | `MessageItem[]?` | 消息内容列表 |
-| `context_token` | `string?` | 会话上下文令牌，回复时需回传 |
-
-#### MessageItem
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `type` | `number` | `1` TEXT, `2` IMAGE, `3` VOICE, `4` FILE, `5` VIDEO |
-| `text_item` | `{ text: string }?` | 文本内容 |
-| `image_item` | `ImageItem?` | 图片（含 CDN 引用和 AES 密钥） |
-| `voice_item` | `VoiceItem?` | 语音（SILK 编码） |
-| `file_item` | `FileItem?` | 文件附件 |
-| `video_item` | `VideoItem?` | 视频 |
-| `ref_msg` | `RefMessage?` | 引用消息 |
-
-#### CDN 媒体引用 (CDNMedia)
-
-所有媒体类型（图片/语音/文件/视频）通过 CDN 传输，使用 AES-128-ECB 加密：
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `encrypt_query_param` | `string?` | CDN 下载/上传的加密参数 |
-| `aes_key` | `string?` | base64 编码的 AES-128 密钥 |
-
-### CDN 上传流程
-
-1. 计算文件明文大小、MD5，以及 AES-128-ECB 加密后的密文大小
-2. 如需缩略图（图片/视频），同样计算缩略图的明文和密文参数
-3. 调用 `getUploadUrl` 获取 `upload_param`（和 `thumb_upload_param`）
-4. 使用 AES-128-ECB 加密文件内容，PUT 上传到 CDN URL
-5. 缩略图同理加密并上传
-6. 使用返回的 `encrypt_query_param` 构造 `CDNMedia` 引用，放入 `MessageItem` 发送
-
-> 完整的类型定义见 [`src/api/types.ts`](src/api/types.ts)，API 调用实现见 [`src/api/api.ts`](src/api/api.ts)。
-
-## 开发与 CI
-
-本项目要求 Node.js >= 22。
-
-安装锁定版本的依赖并执行本地 CI 检查：
-
-```bash
-npm ci --ignore-scripts
-npm run ci
-```
-
-覆盖率检查单独执行：
-
-```bash
-npm run test:coverage
-```
-
-提交 Pull Request 后，GitHub Actions 会自动执行质量检查、单元测试、覆盖率、构建和 npm 包冒烟检查。
-
-CI 的设计和维护说明见 [CI 指南](./docs/ci_zh_CN.md)。
+新版微信客户端可能只在引用消息中提供服务端消息 ID。插件会在本地保存必要的文本和媒体元数据，
+以便后续引用消息还原上下文。缓存默认开启，缓存故障不会中断正常消息收发。
+
+如需调整保留时间或空间限制，可配置 `channels.openclaw-weixin.quoteCache`。默认文本缓存保留 30 天、
+每个账号最多 10,000 条；媒体缓存保留 7 天、每个账号最多 256 MiB、单个文件最多 25 MiB。
+完整配置、存储行为和验证说明见[引用消息本地缓存开发说明](./docs/quote-cache_zh_CN.md)。
 
 ## 卸载
 
@@ -411,25 +135,62 @@ openclaw plugins uninstall @tencent-weixin/openclaw-weixin
 
 ## 故障排查
 
-### "requires OpenClaw >=2026.3.22" 报错
+### 插件报告 OpenClaw 版本不受支持
 
-你的 OpenClaw 版本太旧，不兼容当前插件版本。检查版本：
+检查宿主版本：
 
 ```bash
 openclaw --version
 ```
 
-安装旧版插件线：
+将 OpenClaw 升级到受支持的版本，然后重启 Gateway。
 
-```bash
-openclaw plugins install @tencent-weixin/openclaw-weixin@legacy
-```
+### Channel 显示 `OK` 但没有连接
 
-### Channel 显示 "OK" 但未连接
-
-确保 `~/.openclaw/openclaw.json` 中 `plugins.entries.openclaw-weixin.enabled` 为 `true`：
+确认插件已启用，然后重启 Gateway：
 
 ```bash
 openclaw config set plugins.entries.openclaw-weixin.enabled true
 openclaw gateway restart
 ```
+
+如果问题仍然存在，请检查 Gateway 日志，并确认账号已经完成扫码登录。
+
+## 文档
+
+| 需求 | 文档 |
+| --- | --- |
+| 后端对接 | [微信后端 API 协议](./docs/protocol_zh_CN.md) |
+| CI 和本地质量检查 | [CI 指南](./docs/ci_zh_CN.md) |
+| 开发与本地验证 | [开发者指南](./docs/development_zh_CN.md) |
+| OpenClaw 渠道配置 | [OpenClaw Channels](https://docs.openclaw.ai/channels) |
+| 发布历史 | [CHANGELOG.zh_CN.md](./CHANGELOG.zh_CN.md) |
+
+后端协议文档面向实现或对接兼容后端的开发者，普通用户安装插件时不需要阅读。
+
+## 开发
+
+本项目使用 npm，并要求 Node.js `>=22.13.0`。
+
+```bash
+npm ci --ignore-scripts
+npm run ci
+```
+
+修改功能或测试时，可以单独运行覆盖率检查：
+
+```bash
+npm run test:coverage
+```
+
+Pull Request 会在 GitHub Actions 中执行质量检查、单元测试、覆盖率、构建和 npm 包冒烟测试。详细说明见 [CI 指南](./docs/ci_zh_CN.md)。
+
+从 worktree 创建、依赖安装到本地打包和插件安装的完整流程见[开发者指南](./docs/development_zh_CN.md)。
+
+## 参与贡献
+
+欢迎提交问题、改进文档、补充测试和贡献代码。请保持 Pull Request 聚焦，并附上验证结果。修改后端集成时，请同步更新[协议文档](./docs/protocol_zh_CN.md)。
+
+## License
+
+[MIT](./LICENSE)

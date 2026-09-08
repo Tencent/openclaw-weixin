@@ -3,6 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 
+import * as accounts from "./accounts.js";
+
 // Mock dependencies before importing module under test
 vi.mock("../util/logger.js", () => ({
   logger: {
@@ -26,11 +28,10 @@ afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-// Dynamic import so mocks are applied and env is set before module init
+// The module reads OPENCLAW_STATE_DIR when its functions are called, so a
+// static import avoids repeated cold starts while keeping each test isolated.
 async function loadModule() {
-  // Clear module cache to pick up new env
-  vi.resetModules();
-  return await import("./accounts.js");
+  return accounts;
 }
 
 describe("loadWeixinAccount", () => {
