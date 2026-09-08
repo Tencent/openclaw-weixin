@@ -62,8 +62,9 @@ This project follows the [Keep a Changelog](https://keepachangelog.com/) format.
 
 ### Fixed
 
-- **`iLink-App-Id` / `iLink-App-ClientVersion` headers were empty / `0` in production.** `readPackageJson` resolved `package.json` via a fixed `../../` from `import.meta.url`, but the TypeScript build (with `index.ts` plus `src/**/*.ts` in `tsconfig.include`) emits `dist/src/api/api.js` (extra `src/` segment), so the resolved path landed on the non-existent `dist/package.json` and the catch returned `{}`. Replaced with a walk-up that searches for the plugin's own `package.json` (validated by `name` containing `openclaw-weixin` or by the presence of `ilink_appid`), tolerating both dev (`src/api/`) and built (`dist/src/api/`) layouts. Adds tests in `src/api/api.test.ts` covering the compiled layout, dev layout, nested `node_modules/<dep>/package.json` shadowing, missing manifest, and malformed manifest.
-- **`openclaw channels login` exited non-zero when the bot was already bound to this OpenClaw**, which caused automated installers (e.g. `openclaw-weixin-installer`) to report a misleading "首次连接未完成" message and continue past a successful state. The QR poller now returns `alreadyConnected: true` for the server's `binded_redirect` status, and `auth.login` in `channel.ts` treats it as a successful no-op (no save, no throw) so the CLI exits cleanly.
+- **`iLink-App-Id` / `iLink-App-ClientVersion` headers were empty / `0` in production.**
+- **`openclaw channels login` exited non-zero when the bot was already bound to this OpenClaw.**
+- **`getUpdates` long-poll intermittently enters 30s backoff after `UND_ERR_HEADERS_TIMEOUT`.** The Node.js undici `HeadersTimeoutError` is a normal long-poll boundary event (the server held the connection waiting for messages and none arrived), but the monitor's catch block counted it as a hard failure. After 3 consecutive occurrences the channel backed off for 30 seconds, making the Weixin channel appear unavailable. The catch block now treats `UND_ERR_HEADERS_TIMEOUT` as a soft failure: logged at debug level, retried after 2 seconds, and not counted toward the backoff counter. Other network errors (connection refused, DNS failure, TLS error, etc.) continue to trigger the hard-failure path.
 
 ## [2.4.2] - 2026-05-07
 

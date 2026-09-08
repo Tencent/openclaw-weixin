@@ -62,8 +62,9 @@
 
 ### 修复
 
-- **`iLink-App-Id` / `iLink-App-ClientVersion` 请求头在生产环境为空 / `0`。** `readPackageJson` 用固定的 `../../` 从 `import.meta.url` 推算 `package.json`，但 TypeScript 构建（`tsconfig.include` 同时包含 `index.ts` 和 `src/**/*.ts`）实际产物是 `dist/src/api/api.js`（多出一层 `src/`），导致解析到不存在的 `dist/package.json`，catch 返回 `{}`。改为从当前模块所在目录向上逐级查找，并通过 `name` 包含 `openclaw-weixin` 或存在 `ilink_appid` 字段来确认是本插件自己的 `package.json`，同时兼容开发态（`src/api/`）和发布态（`dist/src/api/`）布局。`src/api/api.test.ts` 新增 5 个用例覆盖编译产物布局、开发布局、途经 `node_modules/<dep>/package.json` 不被误识别、找不到时返回 `{}`、坏 JSON 容错继续向上查找。
-- **`openclaw channels login` 在 "已连接过此 OpenClaw" 场景下被误判为失败。** 服务端返回 `binded_redirect` 时本地凭据其实仍有效，但旧逻辑返回 `connected: false`，`channel.ts` 的 `auth.login` 据此 `throw`，CLI 非零退出，导致 `openclaw-weixin-installer` 等自动化脚本误打印"首次连接未完成"。`WeixinQrWaitResult` 新增 `alreadyConnected` 字段，QR 轮询在 `binded_redirect` 时置为 `true`；`auth.login` 据此仅记录消息、不抛错，CLI 以 0 退出。
+- **`iLink-App-Id` / `iLink-App-ClientVersion` 请求头在生产环境为空 / `0`。**
+- **`openclaw channels login` 在 "已连接过此 OpenClaw" 场景下被误判为失败。**
+- **`getUpdates` 长轮询因 `UND_ERR_HEADERS_TIMEOUT` 间歇性进入 30 秒退避。** Node.js undici 的 `HeadersTimeoutError` 是正常的长轮询边界事件（服务器保持连接等待消息，期间无消息到达），但 monitor 的 catch 块将其计入硬故障。连续 3 次后触发 30 秒退避，导致微信通道表现不可用。现将其视为软失败：仅记录 debug 日志，2 秒后重试，不计入退避计数器。其他网络错误（连接拒绝、DNS 失败、TLS 错误等）仍走硬故障路径不变。
 
 ## [2.4.2] - 2026-05-07
 
