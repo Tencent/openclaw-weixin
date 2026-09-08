@@ -35,6 +35,7 @@ import type { WeixinInboundMediaOpts } from "./inbound.js";
 import { sendWeixinMediaFile } from "./send-media.js";
 import { StreamingMarkdownFilter } from "./markdown-filter.js";
 import { sendMessageWeixin } from "./send.js";
+import { isSilentOutboundText } from "./silent-reply.js";
 import { WeixinReplyProgressSender } from "./reply-progress-sender.js";
 import { getActiveQuoteMediaSubdir, getQuoteStore } from "./quote-store.js";
 import { handleSlashCommand } from "./slash-commands.js";
@@ -397,6 +398,15 @@ export async function processOneMessage(
           return;
         }
         text = sendingResult.text;
+
+        // OpenClaw silent token: skip text-only delivery; keep media if present.
+        if (isSilentOutboundText(text)) {
+          if (!mediaUrl) {
+            logger.info(`outbound: suppressed silent reply token to=${ctx.To}`);
+            return;
+          }
+          text = "";
+        }
 
         try {
           if (mediaUrl) {
