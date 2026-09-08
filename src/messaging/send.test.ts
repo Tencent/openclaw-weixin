@@ -44,6 +44,36 @@ beforeEach(() => {
 });
 
 describe("sendMessageWeixin", () => {
+  it("suppresses NO_REPLY silent token without calling the API", async () => {
+    const result = await sendMessageWeixin({
+      to: "user1",
+      text: "NO_REPLY",
+      opts: { baseUrl: "https://api.com", contextToken: "ctx" },
+    });
+    expect(result.messageId).toBe("");
+    expect(mockSendMessageApi).not.toHaveBeenCalled();
+  });
+
+  it("suppresses case-insensitive no_reply silent token", async () => {
+    const result = await sendMessageWeixin({
+      to: "user1",
+      text: "no_reply",
+      opts: { baseUrl: "https://api.com", contextToken: "ctx" },
+    });
+    expect(result.messageId).toBe("");
+    expect(mockSendMessageApi).not.toHaveBeenCalled();
+  });
+
+  it("still delivers substantive text that mentions NO_REPLY inline", async () => {
+    mockSendMessageApi.mockResolvedValueOnce(undefined);
+    await sendMessageWeixin({
+      to: "user1",
+      text: "status: NO_REPLY is a token",
+      opts: { baseUrl: "https://api.com", contextToken: "ctx" },
+    });
+    expect(mockSendMessageApi).toHaveBeenCalledOnce();
+  });
+
   it("sends without contextToken (no throw)", async () => {
     mockSendMessageApi.mockResolvedValueOnce(undefined);
     const result = await sendMessageWeixin({
