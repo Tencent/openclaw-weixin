@@ -7,13 +7,47 @@ import { generateId } from "../util/random.js";
 import type { MessageItem, SendMessageReq } from "../api/types.js";
 import { MessageItemType, MessageState, MessageType } from "../api/types.js";
 import type { UploadedFileInfo } from "../cdn/upload.js";
+import { getMediaLabel } from "./inbound.js";
+import { getQuoteStore } from "./quote-store.js";
 
 export { StreamingMarkdownFilter } from "./markdown-filter.js";
 
 type WeixinMessageSendOptions = WeixinApiOptions & {
   contextToken?: string;
   runId?: string;
+  accountId?: string;
 };
+
+type WeixinSendResult = { messageId: string; serverMessageId?: string };
+
+async function cacheOutboundMessage(params: {
+  opts: WeixinMessageSendOptions;
+  to: string;
+  serverMessageId?: string;
+  body: string;
+  sourceMediaPath?: string;
+  mediaMime?: string;
+  mediaName?: string;
+}): Promise<void> {
+  if (!params.opts.accountId || !params.serverMessageId) return;
+  try {
+    await getQuoteStore()?.put({
+      accountId: params.opts.accountId,
+      conversationId: params.to,
+      messageId: params.serverMessageId,
+      direction: "outbound",
+      body: params.body,
+      ...(params.sourceMediaPath ? { sourceMediaPath: params.sourceMediaPath } : {}),
+      ...(params.mediaMime ? { mediaMime: params.mediaMime } : {}),
+      ...(params.mediaName ? { mediaName: params.mediaName } : {}),
+      createdAt: Date.now(),
+    });
+  } catch (err) {
+    logger.warn(
+      `quote cache: failed to save outbound message id=${params.serverMessageId}: ${String(err)}`,
+    );
+  }
+}
 
 function generateClientId(): string {
   return generateId("openclaw-weixin");
@@ -70,7 +104,7 @@ export async function sendMessageWeixin(params: {
   to: string;
   text: string;
   opts: WeixinMessageSendOptions;
-}): Promise<{ messageId: string }> {
+}): Promise<WeixinSendResult> {
   const { to, text, opts } = params;
   if (!opts.contextToken) {
     logger.warn(`sendMessageWeixin: contextToken missing for to=${to}, sending without context`);
@@ -84,17 +118,22 @@ export async function sendMessageWeixin(params: {
     clientId,
   });
   try {
-    await sendMessageApi({
+    const response = await sendMessageApi({
       baseUrl: opts.baseUrl,
       token: opts.token,
       timeoutMs: opts.timeoutMs,
       body: req,
     });
+    const serverMessageId = response?.message_id;
+    await cacheOutboundMessage({ opts, to, serverMessageId, body: text });
+    return {
+      messageId: clientId,
+      ...(serverMessageId ? { serverMessageId } : {}),
+    };
   } catch (err) {
     logger.error(`sendMessageWeixin: failed to=${to} clientId=${clientId} err=${String(err)}`);
     throw err;
   }
-  return { messageId: clientId };
 }
 
 /** Send a single structured MessageItem downstream. */
@@ -104,7 +143,7 @@ export async function sendMessageItemWeixin(params: {
   opts: WeixinMessageSendOptions;
   clientId?: string;
   label?: string;
-}): Promise<{ messageId: string }> {
+}): Promise<WeixinSendResult> {
   const { to, item, opts } = params;
   if (!opts.contextToken) {
     logger.warn(
@@ -125,19 +164,25 @@ export async function sendMessageItemWeixin(params: {
     },
   };
   try {
-    await sendMessageApi({
+    const response = await sendMessageApi({
       baseUrl: opts.baseUrl,
       token: opts.token,
       timeoutMs: opts.timeoutMs,
       body: req,
     });
+    const serverMessageId = response?.message_id;
+    const itemText = item.type === MessageItemType.TEXT ? (item.text_item?.text ?? "") : "";
+    if (itemText) await cacheOutboundMessage({ opts, to, serverMessageId, body: itemText });
+    return {
+      messageId: clientId,
+      ...(serverMessageId ? { serverMessageId } : {}),
+    };
   } catch (err) {
     logger.error(
       `${params.label ?? "sendMessageItemWeixin"}: failed to=${to} clientId=${clientId} err=${String(err)}`,
     );
     throw err;
   }
-  return { messageId: clientId };
 }
 
 /**
@@ -150,7 +195,10 @@ async function sendMediaItems(params: {
   mediaItem: MessageItem;
   opts: WeixinMessageSendOptions;
   label: string;
-}): Promise<{ messageId: string }> {
+  sourceMediaPath?: string;
+  mediaMime?: string;
+  mediaName?: string;
+}): Promise<WeixinSendResult> {
   const { to, text, mediaItem, opts, label } = params;
   const runId = opts.runId;
 
@@ -161,6 +209,7 @@ async function sendMediaItems(params: {
   items.push(mediaItem);
 
   let lastClientId = "";
+  let lastServerMessageId: string | undefined;
   for (const item of items) {
     lastClientId = generateClientId();
     const req: SendMessageReq = {
@@ -176,12 +225,31 @@ async function sendMediaItems(params: {
       },
     };
     try {
-      await sendMessageApi({
+      const response = await sendMessageApi({
         baseUrl: opts.baseUrl,
         token: opts.token,
         timeoutMs: opts.timeoutMs,
         body: req,
       });
+      lastServerMessageId = response?.message_id;
+      if (item.type === MessageItemType.TEXT) {
+        await cacheOutboundMessage({
+          opts,
+          to,
+          serverMessageId: lastServerMessageId,
+          body: item.text_item?.text ?? text,
+        });
+      } else {
+        await cacheOutboundMessage({
+          opts,
+          to,
+          serverMessageId: lastServerMessageId,
+          body: getMediaLabel(item.type),
+          sourceMediaPath: params.sourceMediaPath,
+          mediaMime: params.mediaMime,
+          mediaName: params.mediaName,
+        });
+      }
     } catch (err) {
       logger.error(`${label}: failed to=${to} clientId=${lastClientId} err=${String(err)}`);
       throw err;
@@ -189,7 +257,10 @@ async function sendMediaItems(params: {
   }
 
   logger.info(`${label}: success to=${to} clientId=${lastClientId}`);
-  return { messageId: lastClientId };
+  return {
+    messageId: lastClientId,
+    ...(lastServerMessageId ? { serverMessageId: lastServerMessageId } : {}),
+  };
 }
 
 /**
@@ -206,7 +277,9 @@ export async function sendImageMessageWeixin(params: {
   text: string;
   uploaded: UploadedFileInfo;
   opts: WeixinMessageSendOptions;
-}): Promise<{ messageId: string }> {
+  filePath?: string;
+  mediaMime?: string;
+}): Promise<WeixinSendResult> {
   const { to, text, uploaded, opts } = params;
   if (!opts.contextToken) {
     logger.warn(
@@ -229,7 +302,16 @@ export async function sendImageMessageWeixin(params: {
     },
   };
 
-  return sendMediaItems({ to, text, mediaItem: imageItem, opts, label: "sendImageMessageWeixin" });
+  return sendMediaItems({
+    to,
+    text,
+    mediaItem: imageItem,
+    opts,
+    label: "sendImageMessageWeixin",
+    sourceMediaPath: params.filePath,
+    mediaMime: params.mediaMime,
+    mediaName: params.filePath?.split(/[\\/]/).pop(),
+  });
 }
 
 /**
@@ -242,7 +324,9 @@ export async function sendVideoMessageWeixin(params: {
   text: string;
   uploaded: UploadedFileInfo;
   opts: WeixinMessageSendOptions;
-}): Promise<{ messageId: string }> {
+  filePath?: string;
+  mediaMime?: string;
+}): Promise<WeixinSendResult> {
   const { to, text, uploaded, opts } = params;
   if (!opts.contextToken) {
     logger.warn(
@@ -262,7 +346,16 @@ export async function sendVideoMessageWeixin(params: {
     },
   };
 
-  return sendMediaItems({ to, text, mediaItem: videoItem, opts, label: "sendVideoMessageWeixin" });
+  return sendMediaItems({
+    to,
+    text,
+    mediaItem: videoItem,
+    opts,
+    label: "sendVideoMessageWeixin",
+    sourceMediaPath: params.filePath,
+    mediaMime: params.mediaMime,
+    mediaName: params.filePath?.split(/[\\/]/).pop(),
+  });
 }
 
 /**
@@ -276,7 +369,9 @@ export async function sendFileMessageWeixin(params: {
   fileName: string;
   uploaded: UploadedFileInfo;
   opts: WeixinMessageSendOptions;
-}): Promise<{ messageId: string }> {
+  filePath?: string;
+  mediaMime?: string;
+}): Promise<WeixinSendResult> {
   const { to, text, fileName, uploaded, opts } = params;
   if (!opts.contextToken) {
     logger.warn(
@@ -296,5 +391,14 @@ export async function sendFileMessageWeixin(params: {
     },
   };
 
-  return sendMediaItems({ to, text, mediaItem: fileItem, opts, label: "sendFileMessageWeixin" });
+  return sendMediaItems({
+    to,
+    text,
+    mediaItem: fileItem,
+    opts,
+    label: "sendFileMessageWeixin",
+    sourceMediaPath: params.filePath,
+    mediaMime: params.mediaMime,
+    mediaName: fileName,
+  });
 }

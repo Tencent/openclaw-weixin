@@ -26,12 +26,15 @@ export async function downloadMediaFromItem(
   deps: {
     cdnBaseUrl: string;
     saveMedia: SaveMediaFn;
+    /** OpenClaw media-store subdirectory; defaults to the transient inbound bucket. */
+    mediaSubdir?: string;
     log: (msg: string) => void;
     errLog: (msg: string) => void;
     label: string;
   },
 ): Promise<WeixinInboundMediaOpts> {
   const { cdnBaseUrl, saveMedia, log, errLog, label } = deps;
+  const mediaSubdir = deps.mediaSubdir ?? "inbound";
   const result: WeixinInboundMediaOpts = {};
 
   if (item.type === MessageItemType.IMAGE) {
@@ -58,7 +61,7 @@ export async function downloadMediaFromItem(
             `${label} image-plain`,
             img.media.full_url,
           );
-      const saved = await saveMedia(buf, undefined, "inbound", WEIXIN_MEDIA_MAX_BYTES);
+      const saved = await saveMedia(buf, undefined, mediaSubdir, WEIXIN_MEDIA_MAX_BYTES);
       result.decryptedPicPath = saved.path;
       logger.debug(`${label} image saved: ${saved.path}`);
     } catch (err) {
@@ -80,12 +83,12 @@ export async function downloadMediaFromItem(
       logger.debug(`${label} voice: decrypted ${silkBuf.length} bytes, attempting silk transcode`);
       const wavBuf = await silkToWav(silkBuf);
       if (wavBuf) {
-        const saved = await saveMedia(wavBuf, "audio/wav", "inbound", WEIXIN_MEDIA_MAX_BYTES);
+        const saved = await saveMedia(wavBuf, "audio/wav", mediaSubdir, WEIXIN_MEDIA_MAX_BYTES);
         result.decryptedVoicePath = saved.path;
         result.voiceMediaType = "audio/wav";
         logger.debug(`${label} voice: saved WAV to ${saved.path}`);
       } else {
-        const saved = await saveMedia(silkBuf, "audio/silk", "inbound", WEIXIN_MEDIA_MAX_BYTES);
+        const saved = await saveMedia(silkBuf, "audio/silk", mediaSubdir, WEIXIN_MEDIA_MAX_BYTES);
         result.decryptedVoicePath = saved.path;
         result.voiceMediaType = "audio/silk";
         logger.debug(`${label} voice: silk transcode unavailable, saved raw SILK to ${saved.path}`);
@@ -113,7 +116,7 @@ export async function downloadMediaFromItem(
       const saved = await saveMedia(
         buf,
         mime,
-        "inbound",
+        mediaSubdir,
         WEIXIN_MEDIA_MAX_BYTES,
         fileItem.file_name ?? undefined,
       );
@@ -139,7 +142,7 @@ export async function downloadMediaFromItem(
         `${label} video`,
         videoItem.media.full_url,
       );
-      const saved = await saveMedia(buf, "video/mp4", "inbound", WEIXIN_MEDIA_MAX_BYTES);
+      const saved = await saveMedia(buf, "video/mp4", mediaSubdir, WEIXIN_MEDIA_MAX_BYTES);
       result.decryptedVideoPath = saved.path;
       logger.debug(`${label} video: saved to ${saved.path}`);
     } catch (err) {

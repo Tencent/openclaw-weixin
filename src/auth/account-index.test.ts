@@ -3,6 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 
+import * as accounts from "./accounts.js";
+
 vi.mock("../util/logger.js", () => ({
   logger: {
     info: vi.fn(),
@@ -25,8 +27,7 @@ afterEach(() => {
 });
 
 async function loadModule() {
-  vi.resetModules();
-  return await import("./accounts.js");
+  return accounts;
 }
 
 describe("listIndexedWeixinAccountIds", () => {

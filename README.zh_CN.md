@@ -21,7 +21,7 @@ OpenClaw 的微信渠道插件。通过扫码登录将 OpenClaw Gateway 连接�
 
 | 组件 | 要求 |
 | --- | --- |
-| Node.js | `>=22` |
+| Node.js | `>=22.13.0` |
 | OpenClaw 运行时检查 | `>=2026.3.22` |
 | npm peer dependency | `>=2026.5.12` |
 
@@ -100,6 +100,33 @@ openclaw config set session.dmScope per-account-channel-peer
 
 `botAgent` 仅用于观测，不是鉴权凭证，也不控制消息路由。
 
+**格式规范**（UA 风格）：
+
+- 一个或多个 `Name/Version` token，空格分隔
+- 每个 token 可选地跟一个 ` (comment)`
+- 仅允许 ASCII 字符；总长 ≤ 256 字节
+- 不合规的 token 在清洗时静默丢弃；如果最终为空，回退到 `OpenClaw`
+
+可直接使用的示例：
+
+- `MyBot/1.2.0`
+- `MyBot/1.2.0 (region=cn;env=prod)`
+- `MyBot/1.2.0 LangChain/0.3.5`
+- `MyBot/1.2.0-rc.1+build.5`
+
+**注意**：`bot_agent` 仅用于观测，**不参与鉴权或路由**。当前本插件实例下所有
+已注册的 agent 共享同一个 `botAgent` 声明；如有需要按 agent 单独标识的场景，
+可在后续版本扩展配置。
+
+## 引用消息本地缓存
+
+新版微信客户端可能只在引用消息中提供服务端消息 ID。插件会在本地保存必要的文本和媒体元数据，
+以便后续引用消息还原上下文。缓存默认开启，缓存故障不会中断正常消息收发。
+
+如需调整保留时间或空间限制，可配置 `channels.openclaw-weixin.quoteCache`。默认文本缓存保留 30 天、
+每个账号最多 10,000 条；媒体缓存保留 7 天、每个账号最多 256 MiB、单个文件最多 25 MiB。
+完整配置、存储行为和验证说明见[引用消息本地缓存开发说明](./docs/quote-cache_zh_CN.md)。
+
 ## 卸载
 
 ```bash
@@ -135,6 +162,7 @@ openclaw gateway restart
 | --- | --- |
 | 后端对接 | [微信后端 API 协议](./docs/protocol_zh_CN.md) |
 | CI 和本地质量检查 | [CI 指南](./docs/ci_zh_CN.md) |
+| 开发与本地验证 | [开发者指南](./docs/development_zh_CN.md) |
 | OpenClaw 渠道配置 | [OpenClaw Channels](https://docs.openclaw.ai/channels) |
 | 发布历史 | [CHANGELOG.zh_CN.md](./CHANGELOG.zh_CN.md) |
 
@@ -142,7 +170,7 @@ openclaw gateway restart
 
 ## 开发
 
-本项目使用 npm，并要求 Node.js `>=22`。
+本项目使用 npm，并要求 Node.js `>=22.13.0`。
 
 ```bash
 npm ci --ignore-scripts
@@ -156,6 +184,8 @@ npm run test:coverage
 ```
 
 Pull Request 会在 GitHub Actions 中执行质量检查、单元测试、覆盖率、构建和 npm 包冒烟测试。详细说明见 [CI 指南](./docs/ci_zh_CN.md)。
+
+从 worktree 创建、依赖安装到本地打包和插件安装的完整流程见[开发者指南](./docs/development_zh_CN.md)。
 
 ## 参与贡献
 

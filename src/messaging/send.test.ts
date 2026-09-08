@@ -9,7 +9,8 @@ vi.mock("../util/logger.js", () => ({
   },
 }));
 
-const { mockSendMessageApi } = vi.hoisted(() => ({
+const { mockQuotePut, mockSendMessageApi } = vi.hoisted(() => ({
+  mockQuotePut: vi.fn(),
   mockSendMessageApi: vi.fn(),
 }));
 
@@ -17,22 +18,14 @@ vi.mock("../api/api.js", () => ({
   sendMessage: mockSendMessageApi,
 }));
 
+vi.mock("./quote-store.js", () => ({
+  getQuoteStore: () => ({ put: mockQuotePut }),
+}));
+
 vi.mock("node:crypto", () => ({
   default: {
     randomBytes: vi.fn(() => Buffer.from("deadbeef", "hex")),
   },
-}));
-
-vi.mock("openclaw/plugin-sdk", () => ({
-  stripMarkdown: (text: string) =>
-    text
-      .replace(/\*\*([^*]+)\*\*/g, "$1")
-      .replace(/\*([^*]+)\*/g, "$1")
-      .replace(/_([^_]+)_/g, "$1")
-      .replace(/~~([^~]+)~~/g, "$1")
-      .replace(/^#{1,6}\s+/gm, "")
-      .replace(/^[*-]\s+/gm, "")
-      .replace(/^\d+\.\s+/gm, ""),
 }));
 
 import {
@@ -108,6 +101,38 @@ describe("sendMessageWeixin", () => {
       }),
     ).rejects.toThrow("api fail");
   });
+
+  it("stores outbound text under the lossless server ID", async () => {
+    mockSendMessageApi.mockResolvedValueOnce({ message_id: "18446744073709551615" });
+    const result = await sendMessageWeixin({
+      to: "user1",
+      text: "hello",
+      opts: { baseUrl: "https://api.com", accountId: "account1" },
+    });
+    expect(result.serverMessageId).toBe("18446744073709551615");
+    expect(result.messageId).not.toBe(result.serverMessageId);
+    expect(mockQuotePut).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountId: "account1",
+        conversationId: "user1",
+        messageId: "18446744073709551615",
+        body: "hello",
+        direction: "outbound",
+      }),
+    );
+  });
+
+  it("does not turn a successful send into a failure when caching fails", async () => {
+    mockSendMessageApi.mockResolvedValueOnce({ message_id: "99" });
+    mockQuotePut.mockRejectedValueOnce(new Error("disk full"));
+    await expect(
+      sendMessageWeixin({
+        to: "user1",
+        text: "hello",
+        opts: { baseUrl: "https://api.com", accountId: "account1" },
+      }),
+    ).resolves.toMatchObject({ serverMessageId: "99" });
+  });
 });
 
 describe("sendMessageItemWeixin", () => {
@@ -137,6 +162,44 @@ describe("sendMessageItemWeixin", () => {
         },
       },
     ]);
+  });
+
+  it("caches a structured text item and preserves an explicit client ID", async () => {
+    mockSendMessageApi.mockResolvedValueOnce({ message_id: "123" });
+    const result = await sendMessageItemWeixin({
+      to: "user1",
+      item: { type: MessageItemType.TEXT, text_item: { text: "structured text" } },
+      opts: { baseUrl: "https://api.com", accountId: "account1" },
+      clientId: "explicit-client-id",
+    });
+    expect(result).toEqual({ messageId: "explicit-client-id", serverMessageId: "123" });
+    expect(mockQuotePut).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageId: "123",
+        body: "structured text",
+      }),
+    );
+  });
+
+  it("returns the client ID when a structured item has no server ID", async () => {
+    mockSendMessageApi.mockResolvedValueOnce({});
+    const result = await sendMessageItemWeixin({
+      to: "user1",
+      item: { type: MessageItemType.TEXT, text_item: {} },
+      opts: { baseUrl: "https://api.com" },
+    });
+    expect(result.serverMessageId).toBeUndefined();
+  });
+
+  it("rethrows structured-item API errors", async () => {
+    mockSendMessageApi.mockRejectedValueOnce(new Error("structured fail"));
+    await expect(
+      sendMessageItemWeixin({
+        to: "user1",
+        item: { type: MessageItemType.TEXT, text_item: { text: "hello" } },
+        opts: { baseUrl: "https://api.com" },
+      }),
+    ).rejects.toThrow("structured fail");
   });
 });
 
@@ -223,6 +286,27 @@ describe("sendImageMessageWeixin", () => {
         opts: { baseUrl: "https://api.com", contextToken: "ctx" },
       }),
     ).rejects.toThrow("cdn fail");
+  });
+
+  it("stores managed metadata for an outbound image", async () => {
+    mockSendMessageApi.mockResolvedValueOnce({ message_id: "image-server-id" });
+    await sendImageMessageWeixin({
+      to: "user1",
+      text: "",
+      uploaded: makeUploadedFileInfo(),
+      opts: { baseUrl: "https://api.com", accountId: "account1" },
+      filePath: "/tmp/photo.png",
+      mediaMime: "image/png",
+    });
+    expect(mockQuotePut).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageId: "image-server-id",
+        body: "[图片]",
+        sourceMediaPath: "/tmp/photo.png",
+        mediaMime: "image/png",
+        mediaName: "photo.png",
+      }),
+    );
   });
 });
 

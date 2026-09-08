@@ -6,6 +6,9 @@ import { generateId } from "../util/random.js";
 import type { WeixinMessage, MessageItem } from "../api/types.js";
 import { MessageItemType } from "../api/types.js";
 import { resolveStateDir } from "../storage/state-dir.js";
+import { resolvePartialQuote } from "./partial-quote.js";
+import { getQuoteStore } from "./quote-store.js";
+import type { QuoteStore } from "./quote-store.js";
 
 // ---------------------------------------------------------------------------
 // Context token store (in-process cache + disk persistence)
@@ -141,6 +144,8 @@ export type WeixinMsgContext = {
   OriginatingChannel: "openclaw-weixin";
   OriginatingTo: string;
   MessageSid: string;
+  /** Provider message ID retained losslessly for transcript metadata. */
+  MessageSidFull?: string;
   Timestamp?: number;
   Provider: "openclaw-weixin";
   ChatType: "direct";
@@ -150,6 +155,19 @@ export type WeixinMsgContext = {
   MediaUrl?: string;
   MediaPath?: string;
   MediaType?: string;
+  MediaPaths?: string[];
+  MediaTypes?: string[];
+  media?: Array<{
+    path?: string;
+    contentType?: string;
+    fileName?: string;
+    messageId?: string;
+  }>;
+  ChannelPromptContext?: string[];
+  ReplyToId?: string;
+  ReplyToBody?: string;
+  ReplyToQuoteText?: string;
+  ReplyToIsQuote?: boolean;
   /** Raw message body for framework command authorization. */
   CommandBody?: string;
   /** Whether the sender is authorized to execute slash commands. */
@@ -166,29 +184,42 @@ export function isMediaItem(item: MessageItem): boolean {
   );
 }
 
+export function getMediaLabel(type: number | undefined): string {
+  switch (type) {
+    case MessageItemType.IMAGE:
+      return "[图片]";
+    case MessageItemType.VIDEO:
+      return "[视频]";
+    case MessageItemType.FILE:
+      return "[文件]";
+    case MessageItemType.VOICE:
+      return "[语音]";
+    default:
+      return "";
+  }
+}
+
+export function getWeixinMessageId(msg: WeixinMessage): string | undefined {
+  const topLevel = msg.message_id?.trim();
+  if (topLevel) return topLevel;
+  for (const item of msg.item_list ?? []) {
+    const itemId = item.msg_id?.trim();
+    if (itemId) return itemId;
+  }
+  return undefined;
+}
+
 function bodyFromItemList(itemList?: MessageItem[]): string {
   if (!itemList?.length) return "";
   for (const item of itemList) {
     if (item.type === MessageItemType.TEXT && item.text_item?.text != null) {
-      const text = String(item.text_item.text);
-      const ref = item.ref_msg;
-      if (!ref) return text;
-      // Quoted media is passed as MediaPath; only include the current text as body.
-      if (ref.message_item && isMediaItem(ref.message_item)) return text;
-      // Build quoted context from both title and message_item content.
-      const parts: string[] = [];
-      if (ref.title) parts.push(ref.title);
-      if (ref.message_item) {
-        const refBody = bodyFromItemList([ref.message_item]);
-        if (refBody) parts.push(refBody);
-      }
-      if (!parts.length) return text;
-      return `[引用: ${parts.join(" | ")}]\n${text}`;
+      return String(item.text_item.text);
     }
     // 语音转文字：如果语音消息有 text 字段，直接使用文字内容
     if (item.type === MessageItemType.VOICE && item.voice_item?.text) {
       return item.voice_item.text;
     }
+    if (isMediaItem(item)) return getMediaLabel(item.type);
   }
   return "";
 }
@@ -206,6 +237,8 @@ export type WeixinInboundMediaOpts = {
   fileMediaType?: string;
   /** Local path to decrypted video file. */
   decryptedVideoPath?: string;
+  /** The downloaded media belongs to an inline quoted message, not the current message. */
+  referencedMedia?: boolean;
 };
 
 /**
@@ -235,6 +268,8 @@ export function weixinMessageToMsgContext(
   if (msg.context_token) {
     ctx.context_token = msg.context_token;
   }
+  const providerMessageId = getWeixinMessageId(msg);
+  if (providerMessageId) ctx.MessageSidFull = providerMessageId;
 
   if (opts?.decryptedPicPath) {
     ctx.MediaPath = opts.decryptedPicPath;
@@ -250,7 +285,121 @@ export function weixinMessageToMsgContext(
     ctx.MediaType = opts.voiceMediaType ?? "audio/wav";
   }
 
+  if (opts?.referencedMedia && ctx.MediaPath) {
+    ctx.MediaPaths = [ctx.MediaPath];
+    ctx.MediaTypes = [ctx.MediaType ?? "application/octet-stream"];
+    delete ctx.MediaPath;
+    delete ctx.MediaType;
+  }
+
+  applyInlineQuoteContext(ctx, msg);
+
   return ctx;
+}
+
+function findReferenceItem(msg: WeixinMessage): MessageItem | undefined {
+  return msg.item_list?.find((item) => item.ref_msg);
+}
+
+function inlineQuoteBody(item: MessageItem): string | undefined {
+  const ref = item.ref_msg;
+  if (!ref) return undefined;
+  const parts: string[] = [];
+  if (ref.title?.trim()) parts.push(ref.title.trim());
+  if (ref.message_item) {
+    const body = bodyFromItemList([ref.message_item]);
+    if (body) parts.push(body);
+  }
+  return parts.length ? parts.join(" | ") : undefined;
+}
+
+function applyInlineQuoteContext(ctx: WeixinMsgContext, msg: WeixinMessage): void {
+  const item = findReferenceItem(msg);
+  if (!item?.ref_msg) return;
+  const replyToId = item.ref_msg.svr_id?.trim() || item.ref_msg.message_item?.msg_id?.trim();
+  const body = inlineQuoteBody(item);
+  ctx.ReplyToIsQuote = true;
+  if (replyToId) ctx.ReplyToId = replyToId;
+  if (body) ctx.ReplyToBody = body;
+}
+
+function expiredMediaLabel(mime?: string, name?: string): string {
+  const kind = mime?.startsWith("image/")
+    ? "图片"
+    : mime?.startsWith("video/")
+      ? "视频"
+      : mime?.startsWith("audio/")
+        ? "语音"
+        : "附件";
+  return name ? `[引用的${kind}已过期: ${name}]` : `[引用的${kind}已过期]`;
+}
+
+/** Resolve an ID-only quote after sender authorization has succeeded. */
+export function resolveStoredQuoteContext(
+  ctx: WeixinMsgContext,
+  msg: WeixinMessage,
+  accountId: string,
+  store: Pick<QuoteStore, "find"> | null = getQuoteStore(),
+): void {
+  const item = findReferenceItem(msg);
+  const ref = item?.ref_msg;
+  const referenceId = ref?.svr_id?.trim() || ref?.message_item?.msg_id?.trim();
+  if (!item || !ref || !referenceId) return;
+
+  ctx.ReplyToId = referenceId;
+  ctx.ReplyToIsQuote = true;
+  if (ctx.ReplyToBody && (ref.title?.trim() || ref.message_item)) return;
+  const record = store?.find(accountId, ctx.From, referenceId);
+  if (!record) {
+    if (!ctx.ReplyToBody) ctx.ReplyToBody = "[引用消息内容未缓存]";
+    return;
+  }
+
+  ctx.ReplyToBody = record.body || expiredMediaLabel(record.mediaMime, record.mediaName);
+  if (ref.partial_text && record.body) {
+    const partial = resolvePartialQuote(record.body, ref.partial_text);
+    if (!partial.fallback && partial.resolved) ctx.ReplyToQuoteText = partial.resolved;
+  }
+
+  if (!record.mediaPath) {
+    if (record.mediaMime || record.mediaName) {
+      ctx.ReplyToBody = expiredMediaLabel(record.mediaMime, record.mediaName);
+    }
+    return;
+  }
+  if (!fs.existsSync(record.mediaPath)) {
+    ctx.ReplyToBody = expiredMediaLabel(record.mediaMime, record.mediaName);
+    return;
+  }
+  const currentPaths = ctx.MediaPaths ?? (ctx.MediaPath ? [ctx.MediaPath] : []);
+  const currentTypes =
+    ctx.MediaTypes ?? (ctx.MediaPath ? [ctx.MediaType ?? "application/octet-stream"] : []);
+  ctx.MediaPaths = [...currentPaths, record.mediaPath];
+  ctx.MediaTypes = [...currentTypes, record.mediaMime ?? "application/octet-stream"];
+  ctx.media = ctx.MediaPaths.map((mediaPath, index) => ({
+    path: mediaPath,
+    contentType: ctx.MediaTypes?.[index] ?? "application/octet-stream",
+    ...(index === ctx.MediaPaths!.length - 1 && record.mediaName
+      ? { fileName: record.mediaName }
+      : {}),
+    ...(index === ctx.MediaPaths!.length - 1 ? { messageId: referenceId } : {}),
+  }));
+  const quotedAttachment = {
+    message_id: referenceId,
+    original_filename: record.mediaName ?? path.basename(record.mediaPath),
+    managed_source_path: record.mediaPath,
+    workspace_directory: "media/inbound/",
+  };
+  ctx.ChannelPromptContext = [
+    ...(ctx.ChannelPromptContext ?? []),
+    [
+      "Quoted attachment tool access:",
+      JSON.stringify(quotedAttachment),
+      "The attachment is staged into the agent workspace under media/inbound/. " +
+        "If automatic extraction fails and the user asks about its contents, use the available " +
+        "file/PDF tools to locate it by original_filename and read it.",
+    ].join("\n"),
+  ];
 }
 
 /** Extract the context_token from an inbound WeixinMsgContext. */

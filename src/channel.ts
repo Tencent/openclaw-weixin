@@ -23,6 +23,7 @@ import {
   restoreContextTokens,
   clearContextTokensForAccount,
 } from "./messaging/inbound.js";
+import { deactivateQuoteStoreAccount, initializeQuoteStore } from "./messaging/quote-store.js";
 import { logger } from "./util/logger.js";
 import {
   DEFAULT_ILINK_BOT_TYPE,
@@ -158,6 +159,7 @@ async function sendWeixinOutbound(params: {
         baseUrl: account.baseUrl,
         token: account.token,
         contextToken: params.contextToken,
+        accountId: account.accountId,
       },
     });
     emitWeixinMessageSent({
@@ -199,6 +201,27 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
           type: "boolean",
           default: true,
           description: "Send structured tool-call progress messages.",
+        },
+        quoteCache: {
+          type: "object",
+          additionalProperties: false,
+          description: "Persist message content locally so ID-only Weixin quotes can be resolved.",
+          properties: {
+            enabled: { type: "boolean", default: true },
+            retentionDays: { type: "number", default: 30, minimum: 0.01 },
+            maxMessagesPerAccount: { type: "integer", default: 10000, minimum: 1 },
+            mediaRetentionDays: { type: "number", default: 7, minimum: 0.01 },
+            maxMediaBytesPerAccount: {
+              type: "integer",
+              default: 268435456,
+              minimum: 1,
+            },
+            maxSingleMediaBytes: {
+              type: "integer",
+              default: 26214400,
+              minimum: 1,
+            },
+          },
         },
       },
     },
@@ -298,7 +321,12 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
             filePath,
             to: ctx.to,
             text,
-            opts: { baseUrl: account.baseUrl, token: account.token, contextToken },
+            opts: {
+              baseUrl: account.baseUrl,
+              token: account.token,
+              contextToken,
+              accountId: account.accountId,
+            },
             cdnBaseUrl: account.cdnBaseUrl,
           });
           emitWeixinMessageSent({
@@ -329,6 +357,7 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
             baseUrl: account.baseUrl,
             token: account.token,
             contextToken,
+            accountId: account.accountId,
           },
         });
         emitWeixinMessageSent({
@@ -483,6 +512,8 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
         throw new Error("weixin not configured: missing token");
       }
 
+      await initializeQuoteStore(ctx.cfg, account.accountId);
+
       ctx.log?.info?.(`[${account.accountId}] starting weixin provider (${DEFAULT_BASE_URL})`);
 
       try {
@@ -527,6 +558,7 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
     stopAccount: async (ctx) => {
       const account = ctx.account;
       const aLog = logger.withAccount(account.accountId);
+      deactivateQuoteStoreAccount(account.accountId);
       if (!account.configured || !account.token?.trim()) {
         aLog.debug(`gateway.stopAccount: skip notifyStop (not configured or no token)`);
         return;

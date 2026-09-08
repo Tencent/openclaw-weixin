@@ -5,6 +5,7 @@ import { normalizeAccountId } from "openclaw/plugin-sdk/account-id";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 
 import { resolveStateDir } from "../storage/state-dir.js";
+import { deleteQuoteCacheForAccount } from "../messaging/quote-store.js";
 import { resolveFrameworkAllowFromPath } from "./pairing.js";
 import { logger } from "../util/logger.js";
 
@@ -224,6 +225,7 @@ export function saveWeixinAccount(
  *   - credentials/openclaw-weixin-{accountId}-allowFrom.json (authorized users)
  */
 export function clearWeixinAccount(accountId: string): void {
+  deleteQuoteCacheForAccount(accountId);
   const dir = resolveAccountsDir();
   const accountFiles = [
     `${accountId}.json`,

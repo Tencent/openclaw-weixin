@@ -21,7 +21,7 @@ OpenClaw's Weixin channel plugin. Connect an OpenClaw Gateway to Weixin with QR-
 
 | Component | Requirement |
 | --- | --- |
-| Node.js | `>=22` |
+| Node.js | `>=22.13.0` |
 | OpenClaw runtime check | `>=2026.3.22` |
 | npm peer dependency | `>=2026.5.12` |
 
@@ -100,6 +100,39 @@ Set an optional identifier for backend log attribution and monitoring:
 
 `botAgent` is used for observability only. It is not an authentication credential and does not control message routing.
 
+**Format** (UA-style):
+
+- One or more `Name/Version` tokens, space-separated
+- Each token may optionally be followed by ` (comment)`
+- ASCII only; total length ≤ 256 bytes
+- Invalid tokens are silently dropped during sanitization; falls back to
+  `OpenClaw` if nothing valid remains
+
+Examples that pass through unchanged:
+
+- `MyBot/1.2.0`
+- `MyBot/1.2.0 (region=cn;env=prod)`
+- `MyBot/1.2.0 LangChain/0.3.5`
+- `MyBot/1.2.0-rc.1+build.5`
+
+**Note**: `bot_agent` is for observability only — it is not used for
+authentication or routing. All registered agents on this plugin instance
+currently share the same `botAgent` declaration; per-agent overrides may be
+added in a future version if needed.
+
+## Local quote cache
+
+Newer WeChat clients may send only a server message ID for a quoted message. The plugin
+stores the required text and media metadata locally so later quotes can restore their
+context. The cache is enabled by default and failures do not interrupt normal message
+delivery.
+
+Configure it under `channels.openclaw-weixin.quoteCache` when you need different
+retention or size limits. The default limits are 30 days and 10,000 text records per
+account, plus 7 days, 256 MiB per account, and 25 MiB per media file. See the
+[local quote cache guide](./docs/quote-cache_zh_CN.md) for the complete configuration,
+storage behavior, and validation details.
+
 ## Uninstall
 
 ```bash
@@ -135,6 +168,7 @@ If the problem persists, inspect the Gateway log and verify that the account has
 | --- | --- |
 | Backend integration | [Weixin backend API protocol](./docs/protocol.md) |
 | CI and local quality checks | [CI guide](./docs/ci.md) |
+| Development and local validation | [Development guide](./docs/development.md) |
 | OpenClaw channel configuration | [OpenClaw channels](https://docs.openclaw.ai/channels) |
 | Release history | [CHANGELOG.md](./CHANGELOG.md) |
 
@@ -142,10 +176,10 @@ The backend protocol document is intended for developers implementing or integra
 
 ## Development
 
-This repository uses npm and requires Node.js `>=22`.
+This repository uses npm and requires Node.js `>=22.13.0`.
 
 ```bash
-npm ci --ignore-scripts
+npm ci --ignore-scripts --include=dev
 npm run ci
 ```
 
@@ -156,6 +190,8 @@ npm run test:coverage
 ```
 
 Pull requests run the same quality, unit-test, coverage, build, and package smoke checks in GitHub Actions. See the [CI guide](./docs/ci.md) for details.
+
+See the [development guide](./docs/development.md) for the complete worktree, dependency, packaging, and local installation workflow.
 
 ## Contributing
 

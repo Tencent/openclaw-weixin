@@ -22,7 +22,7 @@ export async function sendWeixinMediaFile(params: {
   filePath: string;
   to: string;
   text: string;
-  opts: WeixinApiOptions & { contextToken?: string; runId?: string };
+  opts: WeixinApiOptions & { contextToken?: string; runId?: string; accountId?: string };
   cdnBaseUrl: string;
 }): Promise<{ messageId: string }> {
   const { filePath, to, text, opts, cdnBaseUrl } = params;
@@ -40,7 +40,7 @@ export async function sendWeixinMediaFile(params: {
     logger.info(
       `[weixin] sendWeixinMediaFile: video upload done filekey=${uploaded.filekey} size=${uploaded.fileSize}`,
     );
-    return sendVideoMessageWeixin({ to, text, uploaded, opts });
+    return sendVideoMessageWeixin({ to, text, uploaded, opts, filePath, mediaMime: mime });
   }
 
   if (mime.startsWith("image/")) {
@@ -54,7 +54,7 @@ export async function sendWeixinMediaFile(params: {
     logger.info(
       `[weixin] sendWeixinMediaFile: image upload done filekey=${uploaded.filekey} size=${uploaded.fileSize}`,
     );
-    return sendImageMessageWeixin({ to, text, uploaded, opts });
+    return sendImageMessageWeixin({ to, text, uploaded, opts, filePath, mediaMime: mime });
   }
 
   // File attachment: pdf, doc, zip, etc.
@@ -72,5 +72,5 @@ export async function sendWeixinMediaFile(params: {
   logger.info(
     `[weixin] sendWeixinMediaFile: file upload done filekey=${uploaded.filekey} size=${uploaded.fileSize}`,
   );
-  return sendFileMessageWeixin({ to, text, fileName, uploaded, opts });
+  return sendFileMessageWeixin({ to, text, fileName, uploaded, opts, filePath, mediaMime: mime });
 }
