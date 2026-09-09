@@ -2,8 +2,10 @@ import type { ChannelAccountSnapshot } from "openclaw/plugin-sdk/channel-contrac
 import type { PluginRuntime } from "openclaw/plugin-sdk/core";
 
 import { getUpdates, classifyFetchError } from "../api/api.js";
+import { MessageItemType, type WeixinMessage } from "../api/types.js";
 import { WeixinConfigManager } from "../api/config-cache.js";
 import { STALE_TOKEN_ERRCODE, pauseSession, getRemainingPauseMs } from "../api/session-guard.js";
+import { setContextToken } from "../messaging/inbound.js";
 import { processOneMessage } from "../messaging/process-message.js";
 import { getSyncBufFilePath, loadGetUpdatesBuf, saveGetUpdatesBuf } from "../storage/sync-buf.js";
 import { logger } from "../util/logger.js";
@@ -14,6 +16,7 @@ const DEFAULT_LONG_POLL_TIMEOUT_MS = 35_000;
 const MAX_CONSECUTIVE_FAILURES = 3;
 const BACKOFF_DELAY_MS = 30_000;
 const RETRY_DELAY_MS = 2_000;
+const PLUGIN_APPROVAL_RE = /^\/approve\s+plugin:/i;
 
 export type MonitorWeixinOpts = {
   baseUrl: string;
@@ -36,7 +39,7 @@ export type MonitorWeixinOpts = {
 };
 
 /**
- * Long-poll loop: getUpdates -> normalize -> recordInboundSession -> dispatchReplyFromConfig.
+ * Long-poll loop: getUpdates -> dispatchReplyFromConfig.
  * Runs until abort.
  */
 export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<void> {
@@ -66,7 +69,6 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
   aLog.info(
     `Monitor started: baseUrl=${baseUrl} timeoutMs=${longPollTimeoutMs ?? DEFAULT_LONG_POLL_TIMEOUT_MS}`,
   );
-
   const syncFilePath = getSyncBufFilePath(accountId);
   aLog.debug(`syncFilePath: ${syncFilePath}`);
 
@@ -82,6 +84,69 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
   }
 
   const configManager = new WeixinConfigManager({ baseUrl, token }, log);
+  const processInboundMessage = async (
+    full: WeixinMessage,
+    onReplyAdmitted: () => void,
+  ): Promise<void> => {
+    if (abortSignal?.aborted) return;
+    aLog.info(
+      `inbound message: from=${full.from_user_id} types=${full.item_list?.map((i) => i.type).join(",") ?? "none"}`,
+    );
+
+    const now = Date.now();
+    setStatus?.({ accountId, lastEventAt: now, lastInboundAt: now });
+
+    // allowFrom filtering is delegated to processOneMessage via the framework
+    // authorization pipeline (resolveSenderCommandAuthorizationWithRuntime).
+
+    const fromUserId = full.from_user_id ?? "";
+    const cachedConfig = await configManager.getForUser(fromUserId, full.context_token);
+    if (abortSignal?.aborted) return;
+
+    await processOneMessage(full, {
+      accountId,
+      config,
+      channelRuntime,
+      baseUrl,
+      cdnBaseUrl,
+      token,
+      typingTicket: cachedConfig.typingTicket,
+      log: opts.runtime?.log ?? (() => {}),
+      errLog,
+      onReplyAdmitted,
+    });
+  };
+  // Serialize preprocessing until core accepts the turn; approvals use an independent lane.
+  let ordinaryLane = Promise.resolve();
+  let approvalLane = Promise.resolve();
+  const scheduleInboundMessage = (full: WeixinMessage): void => {
+    const isApproval = isPluginApprovalMessage(full);
+    const previous = isApproval ? approvalLane : ordinaryLane;
+    const next = previous.then(
+      () =>
+        new Promise<void>((releaseLane) => {
+          let released = false;
+          const releaseOnce = () => {
+            if (released) return;
+            released = true;
+            releaseLane();
+          };
+          void processInboundMessage(full, releaseOnce)
+            .catch((err) => {
+              errLog(`weixin inbound message failed: ${String(err)}`);
+              aLog.error(
+                `Inbound message failed: ${String(err)}, stack=${(err as Error).stack ?? "none"}`,
+              );
+            })
+            .finally(releaseOnce);
+        }),
+    );
+    if (isApproval) {
+      approvalLane = next;
+    } else {
+      ordinaryLane = next;
+    }
+  };
 
   let nextTimeoutMs = longPollTimeoutMs ?? DEFAULT_LONG_POLL_TIMEOUT_MS;
   let consecutiveFailures = 0;
@@ -154,32 +219,11 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
         getUpdatesBuf = resp.get_updates_buf;
         aLog.debug(`Saved new get_updates_buf (${getUpdatesBuf.length} bytes)`);
       }
-      const list = resp.msgs ?? [];
-      for (const full of list) {
-        aLog.info(
-          `inbound message: from=${full.from_user_id} types=${full.item_list?.map((i) => i.type).join(",") ?? "none"}`,
-        );
-
-        const now = Date.now();
-        setStatus?.({ accountId, lastEventAt: now, lastInboundAt: now });
-
-        // allowFrom filtering is delegated to processOneMessage via the framework
-        // authorization pipeline (resolveSenderCommandAuthorizationWithRuntime).
-
-        const fromUserId = full.from_user_id ?? "";
-        const cachedConfig = await configManager.getForUser(fromUserId, full.context_token);
-
-        await processOneMessage(full, {
-          accountId,
-          config,
-          channelRuntime,
-          baseUrl,
-          cdnBaseUrl,
-          token,
-          typingTicket: cachedConfig.typingTicket,
-          log: opts.runtime?.log ?? (() => {}),
-          errLog,
-        });
+      for (const full of resp.msgs ?? []) {
+        if (full.context_token) {
+          setContextToken(accountId, full.from_user_id ?? "", full.context_token);
+        }
+        scheduleInboundMessage(full);
       }
     } catch (err) {
       if (abortSignal?.aborted) {
@@ -207,6 +251,11 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
     }
   }
   aLog.info(`Monitor ended`);
+}
+
+function isPluginApprovalMessage(message: WeixinMessage): boolean {
+  const text = message.item_list?.find((item) => item.type === MessageItemType.TEXT)?.text_item?.text;
+  return PLUGIN_APPROVAL_RE.test(String(text ?? "").trim());
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
