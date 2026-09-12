@@ -6,6 +6,10 @@
 
 ## [未发布]
 
+### 修复
+
+- **OpenClaw >= 2026.9.x 回复时报 `PreparedModelCatalogConfigReplacedError`：** 监听循环把账号启动时的 `ctx.cfg` 快照长期缓存并用于每次回复。新版宿主在每次写入配置或重载后都会重新发布配置对象，并拒绝配置与已发布的 prepared model catalog 持有者不一致的调用，导致消息能收到但回复全部失败。现在每条入站消息都会重新读取宿主当前的运行时配置（优先 `createRuntimeConfigReader`，其次 `selectApplicableRuntimeConfig` / `getRuntimeConfigSnapshot`）；宿主不提供上述接口时仍退回启动时的快照。`scripts/hotfix-live-config.mjs` 可将同样的修复打到已安装的版本上，自动备份并支持 `--revert` 回滚。
+
 ## [2.4.9-beta.0] - 2026-09-08
 
 ### 新增

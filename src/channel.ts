@@ -24,6 +24,7 @@ import {
   clearContextTokensForAccount,
 } from "./messaging/inbound.js";
 import { deactivateQuoteStoreAccount, initializeQuoteStore } from "./messaging/quote-store.js";
+import { createLiveConfigResolver } from "./config/live-config.js";
 import { logger } from "./util/logger.js";
 import {
   DEFAULT_ILINK_BOT_TYPE,
@@ -542,6 +543,11 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
         throw new Error(msg);
       }
 
+      // Resolve the host's current config per inbound message instead of pinning the
+      // startup snapshot: hosts >= 2026.9.x reject replies dispatched with a config
+      // object they have since replaced (PreparedModelCatalogConfigReplacedError).
+      const getConfig = await createLiveConfigResolver(ctx.cfg);
+
       const { monitorWeixinProvider } = await import("./monitor/monitor.js");
       return monitorWeixinProvider({
         baseUrl: account.baseUrl,
@@ -549,6 +555,7 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
         token: account.token,
         accountId: account.accountId,
         config: ctx.cfg,
+        getConfig,
         runtime: ctx.runtime,
         channelRuntime: ctx.channelRuntime as unknown as PluginRuntime["channel"],
         abortSignal: ctx.abortSignal,

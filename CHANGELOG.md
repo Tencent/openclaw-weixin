@@ -6,6 +6,10 @@ This project follows the [Keep a Changelog](https://keepachangelog.com/) format.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`PreparedModelCatalogConfigReplacedError` on reply with OpenClaw >= 2026.9.x:** The monitor loop pinned the `ctx.cfg` snapshot captured when the account started and reused it for every reply. Newer hosts republish the config object on each config write / reload and reject calls whose config no longer matches the published prepared-model-catalog owner, so inbound messages were received but every reply failed. Each inbound message now re-reads the host's current runtime config (via `createRuntimeConfigReader`, falling back to `selectApplicableRuntimeConfig` / `getRuntimeConfigSnapshot`), and keeps using the startup snapshot on hosts that expose no such accessor. `scripts/hotfix-live-config.mjs` applies the same fix to an already installed build, with a backup and `--revert`.
+
 ## [2.4.9-beta.0] - 2026-09-08
 
 ### Added
