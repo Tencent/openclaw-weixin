@@ -8,7 +8,7 @@
 
 ### 修复
 
-- **OpenClaw >= 2026.9.x 回复时报 `PreparedModelCatalogConfigReplacedError`：** 监听循环把账号启动时的 `ctx.cfg` 快照长期缓存并用于每次回复。新版宿主在每次写入配置或重载后都会重新发布配置对象，并拒绝配置与已发布的 prepared model catalog 持有者不一致的调用，导致消息能收到但回复全部失败。现在每条入站消息都会重新读取宿主当前的运行时配置（优先 `createRuntimeConfigReader`，其次 `selectApplicableRuntimeConfig` / `getRuntimeConfigSnapshot`）；宿主不提供上述接口时仍退回启动时的快照。`scripts/hotfix-live-config.mjs` 可将同样的修复打到已安装的版本上，自动备份并支持 `--revert` 回滚。
+- **OpenClaw >= 2026.9.x 下每次回复都报 `PreparedModelCatalogConfigReplacedError`：** 监听循环把 `gateway.startAccount` 传入的 `ctx.cfg` 快照长期持有并用于每次回复。新版宿主在每次写入配置或重载后都会重新发布配置对象，并拒绝配置与已发布的 prepared model catalog 持有者不一致的调用，导致消息能收到但回复全部失败；又因为账号只在 `channels.openclaw-weixin.*` 变更时重启，改动其他配置项会让循环一直持有已作废的对象。现在每条入站消息都会通过 `selectApplicableRuntimeConfig` 解析宿主当前的运行时配置——这也是宿主自带频道所用的规则，既跟随重新发布的配置，也保留插件自己的 scoped 配置——该接口自声明的最低宿主版本 `2026.5.12` 起即存在，因此不需要提高宿主版本要求。`scripts/hotfix-live-config.mjs` 可把同样的改动打到已安装的版本上（自动备份，`--revert` 回滚），供无法等待发版的环境使用。
 
 ## [2.4.9-beta.0] - 2026-09-08
 

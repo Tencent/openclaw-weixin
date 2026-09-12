@@ -546,7 +546,7 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
       // Resolve the host's current config per inbound message instead of pinning the
       // startup snapshot: hosts >= 2026.9.x reject replies dispatched with a config
       // object they have since replaced (PreparedModelCatalogConfigReplacedError).
-      const getConfig = await createLiveConfigResolver(ctx.cfg);
+      const getConfig = createLiveConfigResolver(ctx.cfg);
 
       const { monitorWeixinProvider } = await import("./monitor/monitor.js");
       return monitorWeixinProvider({
@@ -554,7 +554,6 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
         cdnBaseUrl: account.cdnBaseUrl,
         token: account.token,
         accountId: account.accountId,
-        config: ctx.cfg,
         getConfig,
         runtime: ctx.runtime,
         channelRuntime: ctx.channelRuntime as unknown as PluginRuntime["channel"],

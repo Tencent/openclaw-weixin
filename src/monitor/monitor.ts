@@ -23,13 +23,12 @@ export type MonitorWeixinOpts = {
   accountId: string;
   /** When non-empty, only messages whose from_user_id is in this list are processed. */
   allowFrom?: string[];
-  /** Startup config snapshot; only used when `getConfig` is absent. */
-  config: import("openclaw/plugin-sdk/core").OpenClawConfig;
   /**
-   * Resolves the host's *current* config. Required for hosts that reject calls
-   * made with a superseded config object (PreparedModelCatalogConfigReplacedError).
+   * Resolves the host's *current* config, re-read for every inbound message.
+   * Reusing a captured snapshot breaks replies once the host republishes its
+   * config (PreparedModelCatalogConfigReplacedError); see `createLiveConfigResolver`.
    */
-  getConfig?: LiveConfigResolver;
+  getConfig: LiveConfigResolver;
   runtime?: { log?: (msg: string) => void; error?: (msg: string) => void };
   /**
    * Gateway-injected channel runtime surface (reply/routing/session/media/commands/...).
@@ -52,7 +51,7 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
     cdnBaseUrl,
     token,
     accountId,
-    config,
+    getConfig,
     channelRuntime,
     abortSignal,
     longPollTimeoutMs,
@@ -89,10 +88,6 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
   }
 
   const configManager = new WeixinConfigManager({ baseUrl, token }, log);
-  // Never reuse the startup snapshot across messages: the host may have replaced
-  // the config object since (config edit / reload), and replying with a stale one
-  // fails with PreparedModelCatalogConfigReplacedError.
-  const resolveLiveConfig: LiveConfigResolver = opts.getConfig ?? (() => config);
 
   let nextTimeoutMs = longPollTimeoutMs ?? DEFAULT_LONG_POLL_TIMEOUT_MS;
   let consecutiveFailures = 0;
@@ -182,7 +177,7 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
 
         await processOneMessage(full, {
           accountId,
-          config: resolveLiveConfig(),
+          config: getConfig(),
           channelRuntime,
           baseUrl,
           cdnBaseUrl,

@@ -2,103 +2,87 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createLiveConfigResolver } from "./live-config.js";
 
-vi.mock("../util/logger.js", () => ({
-  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
-}));
-
 type Cfg = import("openclaw/plugin-sdk/core").OpenClawConfig;
 
-const asCfg = (v: unknown) => v as Cfg;
-const tagOf = (cfg: Cfg) => (cfg as unknown as { tag?: string }).tag;
+/** Host runtime-config state, driven per test. */
+const host = {
+  snapshot: null as Cfg | null,
+  source: null as Cfg | null,
+};
 
-/** Stand-in for the host module probed via dynamic import. */
-type HostModule = Record<string, unknown>;
+vi.mock("openclaw/plugin-sdk/runtime-config-snapshot", () => ({
+  getRuntimeConfigSnapshot: () => host.snapshot,
+  getRuntimeConfigSourceSnapshot: () => host.source,
+  // Mirrors the host rule: follow the republished config when the retained
+  // object is the one the host published, otherwise keep the retained object.
+  selectApplicableRuntimeConfig: ({
+    inputConfig,
+    runtimeConfig,
+    runtimeSourceConfig,
+  }: {
+    inputConfig?: Cfg;
+    runtimeConfig?: Cfg | null;
+    runtimeSourceConfig?: Cfg | null;
+  }) => {
+    if (!runtimeConfig) return inputConfig;
+    if (!inputConfig) return runtimeConfig;
+    if (inputConfig === runtimeConfig) return inputConfig;
+    if (!runtimeSourceConfig) return runtimeConfig;
+    return inputConfig === runtimeSourceConfig ? runtimeConfig : inputConfig;
+  },
+}));
 
-function resolverWithHost(host: HostModule, snapshot: Cfg) {
-  return createLiveConfigResolver(snapshot, {
-    loadModule: async (modulePath) => {
-      if (modulePath === "openclaw/plugin-sdk/runtime-config-snapshot") return host;
-      throw new Error(`module not found: ${modulePath}`);
-    },
-  });
-}
+const asCfg = (value: unknown) => value as Cfg;
 
 describe("createLiveConfigResolver", () => {
-  it("falls back to the startup snapshot when the host exposes no accessor", async () => {
-    const snapshot = asCfg({ tag: "snapshot" });
-    const resolve = await createLiveConfigResolver(snapshot, { probeSdk: false });
-    expect(resolve()).toBe(snapshot);
+  it("returns the startup config while the host has published none", () => {
+    const startup = asCfg({ tag: "startup" });
+    host.snapshot = null;
+    host.source = null;
+    expect(createLiveConfigResolver(startup)()).toBe(startup);
   });
 
-  it("prefers createRuntimeConfigReader and re-reads it per call", async () => {
-    const snapshot = asCfg({ tag: "v1" });
-    let current = snapshot;
-    const resolve = await resolverWithHost(
-      { createRuntimeConfigReader: (input: Cfg) => () => current ?? input },
-      snapshot,
-    );
+  it("follows the host config republished after a config write", () => {
+    const startup = asCfg({ tag: "v1" });
+    host.snapshot = startup;
+    host.source = startup;
+    const resolve = createLiveConfigResolver(startup);
+    expect(resolve()).toBe(startup);
 
-    expect(resolve()).toBe(snapshot);
-    // Host republished the config (config write / reload).
-    current = asCfg({ tag: "v2" });
-    expect(tagOf(resolve())).toBe("v2");
-    current = asCfg({ tag: "v3" });
-    expect(tagOf(resolve())).toBe("v3");
+    // Host reloaded: a new config object replaced the one we were handed.
+    const republished = asCfg({ tag: "v2" });
+    host.snapshot = republished;
+    host.source = startup;
+    expect(resolve()).toBe(republished);
+
+    const again = asCfg({ tag: "v3" });
+    host.snapshot = again;
+    expect(resolve()).toBe(again);
   });
 
-  it("uses selectApplicableRuntimeConfig when no reader factory exists", async () => {
-    const snapshot = asCfg({ tag: "snapshot" });
-    const live = asCfg({ tag: "live" });
-    const seen: unknown[] = [];
-    const resolve = await resolverWithHost(
-      {
-        getRuntimeConfigSnapshot: () => live,
-        getRuntimeConfigSourceSnapshot: () => snapshot,
-        selectApplicableRuntimeConfig: (params: unknown) => {
-          seen.push(params);
-          return live;
-        },
-      },
-      snapshot,
-    );
-    expect(resolve()).toBe(live);
-    expect(seen.length).toBeGreaterThan(0);
+  it("keeps a scoped startup config instead of the host's own", () => {
+    const scoped = asCfg({ tag: "scoped" });
+    host.snapshot = asCfg({ tag: "host" });
+    host.source = asCfg({ tag: "host-source" });
+    expect(createLiveConfigResolver(scoped)()).toBe(scoped);
   });
 
-  it("falls back to getRuntimeConfigSnapshot/getRuntimeConfig", async () => {
-    const snapshot = asCfg({ tag: "snapshot" });
-    const live = asCfg({ tag: "live" });
-    const resolve = await resolverWithHost({ getRuntimeConfig: () => live }, snapshot);
-    expect(resolve()).toBe(live);
-  });
+  it("re-reads on every call rather than caching the decision", () => {
+    const startup = asCfg({ tag: "startup" });
+    host.snapshot = startup;
+    host.source = startup;
+    const resolve = createLiveConfigResolver(startup);
 
-  it("ignores accessors that throw or return non-configs", async () => {
-    const snapshot = asCfg({ tag: "snapshot" });
-    const resolve = await resolverWithHost(
-      {
-        createRuntimeConfigReader: () => () => {
-          throw new Error("not available in this phase");
-        },
-        getRuntimeConfigSnapshot: () => undefined,
-        getRuntimeConfig: () => "nope",
-      },
-      snapshot,
-    );
-    expect(resolve()).toBe(snapshot);
-  });
+    const first = asCfg({ tag: "first" });
+    host.snapshot = first;
+    expect(resolve()).toBe(first);
 
-  it("falls back per call when a working accessor later returns nothing", async () => {
-    const snapshot = asCfg({ tag: "snapshot" });
-    const live = asCfg({ tag: "live" });
-    let give = true;
-    const resolve = await resolverWithHost(
-      { createRuntimeConfigReader: () => () => (give ? live : undefined) },
-      snapshot,
-    );
-    expect(resolve()).toBe(live);
-    give = false;
-    expect(resolve()).toBe(snapshot);
-    give = true;
-    expect(resolve()).toBe(live);
+    // Gateway shut the snapshot down (e.g. reload in progress).
+    host.snapshot = null;
+    expect(resolve()).toBe(startup);
+
+    const second = asCfg({ tag: "second" });
+    host.snapshot = second;
+    expect(resolve()).toBe(second);
   });
 });

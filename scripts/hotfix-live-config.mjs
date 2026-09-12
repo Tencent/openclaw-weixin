@@ -10,8 +10,10 @@
  * fails with `PreparedModelCatalogConfigReplacedError`.
  *
  * Fix: patch `dist/monitor/monitor.js` so each inbound message re-reads the
- * host's current runtime config (the same accessors the bundled channels use)
- * and falls back to the startup snapshot when the host has none.
+ * host's current runtime config through `selectApplicableRuntimeConfig`, the
+ * same rule the shipped source fix uses (available since OpenClaw 2026.5.12).
+ * This is a stopgap for installs that cannot wait for a release; the released
+ * plugin carries the fix in `src/config/live-config.ts`.
  *
  * Usage:
  *   node scripts/hotfix-live-config.mjs [--plugin-dir <dir>] [--check|--revert]
@@ -31,48 +33,27 @@ const TARGET_RELS = [
 ];
 const BACKUP_SUFFIX = ".weixin-livecfg.bak";
 const MARKER = "__weixinLiveConfig";
+/** Present in builds that already carry the shipped fix. */
+const ALREADY_FIXED = /processOneMessage\([\s\S]{0,200}?config:\s*getConfig\(\)/;
 
 /** Matches the single `processOneMessage` call site, whatever the emitted indentation is. */
 const ANCHOR = /(await processOneMessage\(\s*full\s*,\s*\{\s*accountId,\s*)config,/;
 
+const IMPORT_LINE = `import { getRuntimeConfigSnapshot as __weixinRuntimeConfig, getRuntimeConfigSourceSnapshot as __weixinRuntimeSourceConfig, selectApplicableRuntimeConfig as __weixinSelectConfig } from "openclaw/plugin-sdk/runtime-config-snapshot";\n`;
+
 const HELPER = `
 // --- weixin live-config hotfix (scripts/hotfix-live-config.mjs) ---
-let __weixinCfgRuntime = null;
-for (const __weixinCfgModule of [
-    "openclaw/plugin-sdk/runtime-config-snapshot",
-    "openclaw/plugin-sdk/config-runtime",
-]) {
-    try {
-        __weixinCfgRuntime = await import(__weixinCfgModule);
-        if (__weixinCfgRuntime?.getRuntimeConfigSnapshot || __weixinCfgRuntime?.getRuntimeConfig) break;
-        __weixinCfgRuntime = null;
-    }
-    catch {
-        __weixinCfgRuntime = null;
-    }
-}
-/** Returns the host's current config, or the startup snapshot when unavailable. */
+/**
+ * Bind the startup config snapshot to the host's current runtime config, using
+ * the host's own resolution rule: follow the republished config when the
+ * retained object is the host's, keep it when it is a scoped config.
+ */
 function ${MARKER}(snapshot) {
-    try {
-        const runtimeConfig = __weixinCfgRuntime?.getRuntimeConfigSnapshot?.() ?? null;
-        const select = __weixinCfgRuntime?.selectApplicableRuntimeConfig;
-        if (select && runtimeConfig) {
-            const picked = select({
-                inputConfig: snapshot,
-                runtimeConfig,
-                runtimeSourceConfig: __weixinCfgRuntime?.getRuntimeConfigSourceSnapshot?.() ?? null,
-            });
-            if (picked && typeof picked === "object")
-                return picked;
-        }
-        const live = runtimeConfig ?? __weixinCfgRuntime?.getRuntimeConfig?.();
-        if (live && typeof live === "object")
-            return live;
-    }
-    catch {
-        // fall through to the startup snapshot
-    }
-    return snapshot;
+    return __weixinSelectConfig({
+        inputConfig: snapshot,
+        runtimeConfig: __weixinRuntimeConfig(),
+        runtimeSourceConfig: __weixinRuntimeSourceConfig(),
+    }) ?? snapshot;
 }
 // --- end weixin live-config hotfix ---
 `;
@@ -159,6 +140,12 @@ function main() {
     return;
   }
 
+  if (ALREADY_FIXED.test(source)) {
+    console.log(`no patch needed: ${target}`);
+    console.log(`This build already resolves the host config per inbound message.`);
+    return;
+  }
+
   const occurrences = source.match(new RegExp(ANCHOR, "g"))?.length ?? 0;
   if (occurrences !== 1) {
     throw new Error(
@@ -168,7 +155,7 @@ function main() {
   }
 
   copyFileSync(target, backup);
-  const output = `${source.replace(ANCHOR, `$1config: ${MARKER}(config),`)}${HELPER}`;
+  const output = `${IMPORT_LINE}${source.replace(ANCHOR, `$1config: ${MARKER}(config),`)}${HELPER}`;
   writeFileSync(target, output, "utf8");
   console.log(`patched  ${target}`);
   console.log(`backup   ${backup}`);
