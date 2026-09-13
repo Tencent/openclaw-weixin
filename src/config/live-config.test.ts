@@ -1,6 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
-
-import { createLiveConfigResolver } from "./live-config.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 type Cfg = import("openclaw/plugin-sdk/core").OpenClawConfig;
 
@@ -8,14 +6,15 @@ type Cfg = import("openclaw/plugin-sdk/core").OpenClawConfig;
 const host = {
   snapshot: null as Cfg | null,
   source: null as Cfg | null,
+  /** Whether the mocked host exports `createRuntimeConfigReader` (>= newer hosts). */
+  exportsReader: false,
 };
 
-vi.mock("openclaw/plugin-sdk/runtime-config-snapshot", () => ({
-  getRuntimeConfigSnapshot: () => host.snapshot,
-  getRuntimeConfigSourceSnapshot: () => host.source,
-  // Mirrors the host rule: follow the republished config when the retained
-  // object is the one the host published, otherwise keep the retained object.
-  selectApplicableRuntimeConfig: ({
+/** Stand-in for the host's structural `configSnapshotsMatch`. */
+const sameContent = (a: Cfg, b: Cfg) => a === b || JSON.stringify(a) === JSON.stringify(b);
+
+vi.mock("openclaw/plugin-sdk/runtime-config-snapshot", () => {
+  const selectApplicableRuntimeConfig = ({
     inputConfig,
     runtimeConfig,
     runtimeSourceConfig,
@@ -28,61 +27,91 @@ vi.mock("openclaw/plugin-sdk/runtime-config-snapshot", () => ({
     if (!inputConfig) return runtimeConfig;
     if (inputConfig === runtimeConfig) return inputConfig;
     if (!runtimeSourceConfig) return runtimeConfig;
-    return inputConfig === runtimeSourceConfig ? runtimeConfig : inputConfig;
-  },
-}));
+    return sameContent(inputConfig, runtimeSourceConfig) ? runtimeConfig : inputConfig;
+  };
+  // Mirrors the host: the follow decision is latched when the reader is created.
+  const createRuntimeConfigReader = (inputConfig: Cfg) => {
+    const follows =
+      host.snapshot === inputConfig ||
+      (host.source !== null && sameContent(inputConfig, host.source));
+    return () => (follows ? host.snapshot : null) ?? inputConfig;
+  };
+  return {
+    getRuntimeConfigSnapshot: () => host.snapshot,
+    getRuntimeConfigSourceSnapshot: () => host.source,
+    selectApplicableRuntimeConfig,
+    get createRuntimeConfigReader() {
+      return host.exportsReader ? createRuntimeConfigReader : undefined;
+    },
+  };
+});
+
+const { createLiveConfigResolver } = await import("./live-config.js");
 
 const asCfg = (value: unknown) => value as Cfg;
 
-describe("createLiveConfigResolver", () => {
-  it("returns the startup config while the host has published none", () => {
-    const startup = asCfg({ tag: "startup" });
+/** Simulate a host config write: a new runtime object and a new source object. */
+function publish(tag: string, extra: Record<string, unknown> = {}) {
+  const runtime = asCfg({ tag, ...extra });
+  host.snapshot = runtime;
+  host.source = asCfg({ tag, ...extra });
+  return runtime;
+}
+
+describe.each([
+  ["hosts without createRuntimeConfigReader (fallback)", false],
+  ["hosts exporting createRuntimeConfigReader", true],
+])("createLiveConfigResolver on %s", (_label, exportsReader) => {
+  beforeEach(() => {
     host.snapshot = null;
     host.source = null;
+    host.exportsReader = exportsReader;
+  });
+
+  it("returns the startup config while the host has published none", () => {
+    const startup = asCfg({ tag: "startup" });
     expect(createLiveConfigResolver(startup)()).toBe(startup);
   });
 
-  it("follows the host config republished after a config write", () => {
-    const startup = asCfg({ tag: "v1" });
-    host.snapshot = startup;
-    host.source = startup;
+  it("follows the host config across successive writes that change content", () => {
+    const startup = publish("v1");
     const resolve = createLiveConfigResolver(startup);
     expect(resolve()).toBe(startup);
 
-    // Host reloaded: a new config object replaced the one we were handed.
-    const republished = asCfg({ tag: "v2" });
-    host.snapshot = republished;
-    host.source = startup;
-    expect(resolve()).toBe(republished);
+    // Regression: the first content-changing write replaces the source snapshot,
+    // which no longer matches the startup object. The resolver must keep following.
+    const v2 = publish("v2", { controlUi: { allowedOrigins: ["https://example.com"] } });
+    expect(resolve()).toBe(v2);
 
-    const again = asCfg({ tag: "v3" });
-    host.snapshot = again;
-    expect(resolve()).toBe(again);
+    const v3 = publish("v3", { tools: { profile: "full" } });
+    expect(resolve()).toBe(v3);
+  });
+
+  it("follows when started with a same-content copy of the host source", () => {
+    publish("v1");
+    const resolve = createLiveConfigResolver(asCfg({ tag: "v1" }));
+    const v2 = publish("v2", { changed: true });
+    expect(resolve()).toBe(v2);
   });
 
   it("keeps a scoped startup config instead of the host's own", () => {
+    publish("host");
     const scoped = asCfg({ tag: "scoped" });
-    host.snapshot = asCfg({ tag: "host" });
-    host.source = asCfg({ tag: "host-source" });
-    expect(createLiveConfigResolver(scoped)()).toBe(scoped);
+    const resolve = createLiveConfigResolver(scoped);
+    expect(resolve()).toBe(scoped);
+    publish("host-v2", { changed: true });
+    expect(resolve()).toBe(scoped);
   });
 
-  it("re-reads on every call rather than caching the decision", () => {
-    const startup = asCfg({ tag: "startup" });
-    host.snapshot = startup;
-    host.source = startup;
+  it("falls back to the startup config while a reload has cleared the snapshot", () => {
+    const startup = publish("v1");
     const resolve = createLiveConfigResolver(startup);
 
-    const first = asCfg({ tag: "first" });
-    host.snapshot = first;
-    expect(resolve()).toBe(first);
-
-    // Gateway shut the snapshot down (e.g. reload in progress).
     host.snapshot = null;
+    host.source = null;
     expect(resolve()).toBe(startup);
 
-    const second = asCfg({ tag: "second" });
-    host.snapshot = second;
-    expect(resolve()).toBe(second);
+    const v2 = publish("v2", { changed: true });
+    expect(resolve()).toBe(v2);
   });
 });
