@@ -54,8 +54,11 @@ export function createLiveConfigResolver(startupConfig: OpenClawConfig): LiveCon
     return hostReader(startupConfig);
   }
 
-  const { getRuntimeConfigSnapshot, getRuntimeConfigSourceSnapshot, selectApplicableRuntimeConfig } =
-    runtimeConfigSnapshot;
+  const {
+    getRuntimeConfigSnapshot,
+    getRuntimeConfigSourceSnapshot,
+    selectApplicableRuntimeConfig,
+  } = runtimeConfigSnapshot;
   const sourceConfig = getRuntimeConfigSourceSnapshot();
   const followsRuntimeConfig =
     getRuntimeConfigSnapshot() === startupConfig ||
