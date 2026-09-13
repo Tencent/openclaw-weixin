@@ -6,6 +6,10 @@
 
 ## [未发布]
 
+### 修复
+
+- **OpenClaw >= 2026.9.x 下每次回复都报 `PreparedModelCatalogConfigReplacedError`：** 监听循环把 `gateway.startAccount` 传入的 `ctx.cfg` 快照长期持有并用于每次回复。新版宿主在每次写入配置或重载后都会重新发布配置对象，并拒绝配置与已发布的 prepared model catalog 持有者不一致的调用，导致消息能收到但回复全部失败；又因为账号只在 `channels.openclaw-weixin.*` 变更时重启，改动其他配置项会让循环一直持有已作废的对象。现在每条入站消息都按宿主自带频道所用的 `createRuntimeConfigReader` 语义读取宿主当前的运行时配置：是否跟随宿主配置只在账号启动时判定一次，之后每次调用都返回最新重新发布的运行时配置，而插件自己的 scoped 配置保持不变。若每次调用都拿启动时的对象重新判定，第一次改变内容的配置写入后宿主的 source 快照就不再与之匹配，便会停止跟随。宿主导出 `createRuntimeConfigReader` 时直接使用它；较旧的宿主则使用基于 `selectApplicableRuntimeConfig` 的等价实现，该接口自声明的最低宿主版本 `2026.5.12` 起即存在，因此不需要提高宿主版本要求。
+
 ## [2.4.9-beta.0] - 2026-09-08
 
 ### 新增

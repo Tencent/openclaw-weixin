@@ -3,6 +3,7 @@ import type { PluginRuntime } from "openclaw/plugin-sdk/core";
 
 import { getUpdates, classifyFetchError } from "../api/api.js";
 import { WeixinConfigManager } from "../api/config-cache.js";
+import type { LiveConfigResolver } from "../config/live-config.js";
 import { STALE_TOKEN_ERRCODE, pauseSession, getRemainingPauseMs } from "../api/session-guard.js";
 import { processOneMessage } from "../messaging/process-message.js";
 import { getSyncBufFilePath, loadGetUpdatesBuf, saveGetUpdatesBuf } from "../storage/sync-buf.js";
@@ -22,7 +23,12 @@ export type MonitorWeixinOpts = {
   accountId: string;
   /** When non-empty, only messages whose from_user_id is in this list are processed. */
   allowFrom?: string[];
-  config: import("openclaw/plugin-sdk/core").OpenClawConfig;
+  /**
+   * Resolves the host's *current* config, re-read for every inbound message.
+   * Reusing a captured snapshot breaks replies once the host republishes its
+   * config (PreparedModelCatalogConfigReplacedError); see `createLiveConfigResolver`.
+   */
+  getConfig: LiveConfigResolver;
   runtime?: { log?: (msg: string) => void; error?: (msg: string) => void };
   /**
    * Gateway-injected channel runtime surface (reply/routing/session/media/commands/...).
@@ -45,7 +51,7 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
     cdnBaseUrl,
     token,
     accountId,
-    config,
+    getConfig,
     channelRuntime,
     abortSignal,
     longPollTimeoutMs,
@@ -171,7 +177,7 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
 
         await processOneMessage(full, {
           accountId,
-          config,
+          config: getConfig(),
           channelRuntime,
           baseUrl,
           cdnBaseUrl,

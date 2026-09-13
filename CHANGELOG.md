@@ -6,6 +6,10 @@ This project follows the [Keep a Changelog](https://keepachangelog.com/) format.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`PreparedModelCatalogConfigReplacedError` on every reply with OpenClaw >= 2026.9.x:** The monitor loop pinned the `ctx.cfg` snapshot handed to `gateway.startAccount` and reused it for every reply. Newer hosts republish the config object on each config write / reload and reject calls whose config no longer matches the published prepared-model-catalog owner, so inbound messages were received while every reply failed; because the account is only restarted for `channels.openclaw-weixin.*` changes, edits anywhere else left the loop holding a superseded object indefinitely. Each inbound message now reads the host's current runtime config using the host's `createRuntimeConfigReader` semantics, which the bundled channels use: whether to follow the host config is decided once when the account starts, after which every call returns the latest republished runtime config, while a scoped config of the plugin's own is kept. Deciding per call against the startup object would stop following after the first content-changing config write, because the host's source snapshot no longer matches it. `createRuntimeConfigReader` is used when the host exports it; older hosts get an equivalent built on `selectApplicableRuntimeConfig`, which exists from the declared host minimum (`2026.5.12`), so no host requirement changes.
+
 ## [2.4.9-beta.0] - 2026-09-08
 
 ### Added
