@@ -36,6 +36,7 @@ import { sendWeixinMediaFile } from "./send-media.js";
 import { StreamingMarkdownFilter } from "./markdown-filter.js";
 import { sendMessageWeixin } from "./send.js";
 import { WeixinReplyProgressSender } from "./reply-progress-sender.js";
+import { withPublishedModelRuntime } from "./dispatch-options.js";
 import { getActiveQuoteMediaSubdir, getQuoteStore } from "./quote-store.js";
 import { handleSlashCommand } from "./slash-commands.js";
 
@@ -531,16 +532,18 @@ export async function processOneMessage(
     await deps.channelRuntime.reply.withReplyDispatcher({
       dispatcher,
       run: () =>
-        deps.channelRuntime.reply.dispatchReplyFromConfig({
-          ctx: finalized,
-          cfg: deps.config,
-          dispatcher,
-          replyOptions: {
-            ...replyOptions,
-            ...(replyProgressSender?.replyOptions ?? {}),
-            disableBlockStreaming: true,
-          },
-        }),
+        deps.channelRuntime.reply.dispatchReplyFromConfig(
+          withPublishedModelRuntime({
+            ctx: finalized,
+            cfg: deps.config,
+            dispatcher,
+            replyOptions: {
+              ...replyOptions,
+              ...(replyProgressSender?.replyOptions ?? {}),
+              disableBlockStreaming: true,
+            },
+          }),
+        ),
     });
     logger.debug(`dispatchReplyFromConfig: done agentId=${route.agentId ?? "(none)"}`);
   } catch (err) {
