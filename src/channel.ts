@@ -41,6 +41,7 @@ import {
 } from "./messaging/outbound-hooks.js";
 import { sendWeixinMediaFile } from "./messaging/send-media.js";
 import { sendMessageWeixin, StreamingMarkdownFilter } from "./messaging/send.js";
+import { isSilentOutboundText } from "./messaging/silent-reply.js";
 import { downloadRemoteImageToTemp } from "./cdn/upload.js";
 
 /** Returns true when mediaUrl refers to a local filesystem path (absolute or relative). */
@@ -150,6 +151,11 @@ async function sendWeixinOutbound(params: {
     return { channel: "openclaw-weixin", messageId: "" };
   }
   filteredText = sendingResult.text;
+
+  if (isSilentOutboundText(filteredText)) {
+    aLog.info(`sendWeixinOutbound: suppressed silent reply token to=${params.to}`);
+    return { channel: "openclaw-weixin", messageId: "" };
+  }
 
   try {
     const result = await sendMessageWeixin({
@@ -304,6 +310,14 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
         return { channel: "openclaw-weixin", messageId: "" };
       }
       text = sendingResult.text;
+
+      if (isSilentOutboundText(text)) {
+        if (!(mediaUrl && (isLocalFilePath(mediaUrl) || isRemoteUrl(mediaUrl)))) {
+          aLog.info(`sendMedia: suppressed silent reply token to=${ctx.to}`);
+          return { channel: "openclaw-weixin", messageId: "" };
+        }
+        text = "";
+      }
 
       if (mediaUrl && (isLocalFilePath(mediaUrl) || isRemoteUrl(mediaUrl))) {
         let filePath: string;

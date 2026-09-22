@@ -1,4 +1,5 @@
 import type { ReplyPayload } from "openclaw/plugin-sdk/reply-runtime";
+import { isSilentOutboundText } from "./silent-reply.js";
 
 import { sendMessage as sendMessageApi } from "../api/api.js";
 import type { WeixinApiOptions } from "../api/api.js";
@@ -106,6 +107,10 @@ export async function sendMessageWeixin(params: {
   opts: WeixinMessageSendOptions;
 }): Promise<WeixinSendResult> {
   const { to, text, opts } = params;
+  if (isSilentOutboundText(text)) {
+    logger.info(`sendMessageWeixin: suppressed silent reply token to=${to}`);
+    return { messageId: "" };
+  }
   if (!opts.contextToken) {
     logger.warn(`sendMessageWeixin: contextToken missing for to=${to}, sending without context`);
   }
