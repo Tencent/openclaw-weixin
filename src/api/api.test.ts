@@ -211,6 +211,13 @@ describe("sendMessage", () => {
       sendMessage({ baseUrl: "https://api.example.com/", body: { msg: {} } }),
     ).rejects.toThrow("sendMessage ret=1 errmsg=(none)");
   });
+
+  it("throws on a successful HTTP response with a non-zero errcode envelope", async () => {
+    mockFetch.mockResolvedValueOnce(mockResponse({ errcode: -14, errmsg: "session timeout" }));
+    await expect(
+      sendMessage({ baseUrl: "https://api.example.com/", body: { msg: {} } }),
+    ).rejects.toThrow("sendMessage errcode=-14 errmsg=session timeout");
+  });
 });
 
 describe("parseWeixinApiJson", () => {

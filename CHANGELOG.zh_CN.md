@@ -6,6 +6,10 @@
 
 ## [未发布]
 
+### 修复
+
+- **`errcode` 错误信封导致的静默发送失败：** `sendMessage` 现在将非零 `errcode`（例如 `context_token` 过期时的 `-14 session timeout`）视为失败，不再返回成功，下行消息被丢弃时不会再被记录为 "text sent OK"。通道层在 `-14` 时丢弃过期的 context token，使下一次发送等待新的入站 token。
+
 ## [2.4.9] - 2026-09-17
 
 ### 修复

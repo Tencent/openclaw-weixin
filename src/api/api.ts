@@ -592,6 +592,12 @@ export async function sendMessage(
   if (resp.ret && resp.ret !== 0) {
     throw new Error(`sendMessage ret=${resp.ret} errmsg=${resp.errmsg ?? "(none)"}`);
   }
+  // The gateway also rejects sends with HTTP 200 + {"errcode": <nonzero>, "errmsg": ...}
+  // (observed: errcode=-14 "session timeout" with a stale context_token). Without this
+  // branch the failure is swallowed and logged upstream as "text sent OK".
+  if (resp.errcode && resp.errcode !== 0) {
+    throw new Error(`sendMessage errcode=${resp.errcode} errmsg=${resp.errmsg ?? "(none)"}`);
+  }
   return resp;
 }
 

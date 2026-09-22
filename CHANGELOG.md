@@ -6,6 +6,10 @@ This project follows the [Keep a Changelog](https://keepachangelog.com/) format.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Silent send failures on the `errcode` error envelope:** `sendMessage` now treats a non-zero `errcode` (e.g. `-14 session timeout` with a stale `context_token`) as a failure instead of returning success, so dropped outbound messages are no longer logged as "text sent OK". The channel layer discards the stale context token on `-14`, so the next send waits for a fresh inbound token.
+
 ## [2.4.9] - 2026-09-17
 
 ### Fixed

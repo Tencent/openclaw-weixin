@@ -240,6 +240,8 @@ export interface SendMessageResp {
   /** uint64 on the wire; parsed losslessly as a string. */
   message_id?: string;
   ret?: number;
+  /** Alternate error envelope used by the gateway (e.g. -14 = session timeout). */
+  errcode?: number;
   errmsg?: string;
 }
 
