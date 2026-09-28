@@ -126,6 +126,9 @@ export async function sendMessageWeixin(params: {
     });
     const serverMessageId = response?.message_id;
     await cacheOutboundMessage({ opts, to, serverMessageId, body: text });
+    logger.info(
+      `sendMessageWeixin: success to=${to} clientId=${clientId} serverMessageId=${serverMessageId ?? "(none)"}`,
+    );
     return {
       messageId: clientId,
       ...(serverMessageId ? { serverMessageId } : {}),
@@ -173,6 +176,9 @@ export async function sendMessageItemWeixin(params: {
     const serverMessageId = response?.message_id;
     const itemText = item.type === MessageItemType.TEXT ? (item.text_item?.text ?? "") : "";
     if (itemText) await cacheOutboundMessage({ opts, to, serverMessageId, body: itemText });
+    logger.info(
+      `${params.label ?? "sendMessageItemWeixin"}: success to=${to} clientId=${clientId} serverMessageId=${serverMessageId ?? "(none)"}`,
+    );
     return {
       messageId: clientId,
       ...(serverMessageId ? { serverMessageId } : {}),
