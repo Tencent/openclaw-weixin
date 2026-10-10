@@ -53,6 +53,41 @@ function generateClientId(): string {
   return generateId("openclaw-weixin");
 }
 
+/**
+ * Detect whether a send failure is caused by a stale/invalid context_token.
+ * Weixin rejects the whole request with `ret=-2 errmsg=prepare failed` when the
+ * echoed context_token has expired server-side. context_token is OPTIONAL per the
+ * Weixin API (verified: a send without it succeeds), so on this failure we can
+ * safely retry without it instead of dropping the message.
+ */
+function isStaleContextTokenError(err: unknown): boolean {
+  const s = String((err as { message?: string })?.message ?? err ?? "");
+  return /prepare failed/i.test(s) || /ret=-2\b/.test(s);
+}
+
+/**
+ * Send a request, and if it fails due to a stale context_token, retry once with
+ * the context_token stripped from the body. Returns the (possibly retried) response.
+ */
+async function sendWithStaleTokenFallback(
+  sendParams: Parameters<typeof sendMessageApi>[0],
+  label: string,
+): Promise<Awaited<ReturnType<typeof sendMessageApi>>> {
+  try {
+    return await sendMessageApi(sendParams);
+  } catch (err) {
+    if (isStaleContextTokenError(err) && sendParams.body?.msg?.context_token) {
+      logger.warn(
+        `${label}: stale context_token (ret=-2 prepare failed), retrying without context_token`,
+      );
+      const { context_token: _drop, ...restMsg } = sendParams.body.msg;
+      const retryBody = { ...sendParams.body, msg: restMsg };
+      return await sendMessageApi({ ...sendParams, body: retryBody });
+    }
+    throw err;
+  }
+}
+
 /** Build a SendMessageReq containing a single text message. */
 function buildTextMessageReq(params: {
   to: string;
@@ -118,12 +153,15 @@ export async function sendMessageWeixin(params: {
     clientId,
   });
   try {
-    const response = await sendMessageApi({
-      baseUrl: opts.baseUrl,
-      token: opts.token,
-      timeoutMs: opts.timeoutMs,
-      body: req,
-    });
+    const response = await sendWithStaleTokenFallback(
+      {
+        baseUrl: opts.baseUrl,
+        token: opts.token,
+        timeoutMs: opts.timeoutMs,
+        body: req,
+      },
+      "sendMessageWeixin",
+    );
     const serverMessageId = response?.message_id;
     await cacheOutboundMessage({ opts, to, serverMessageId, body: text });
     return {
@@ -164,12 +202,15 @@ export async function sendMessageItemWeixin(params: {
     },
   };
   try {
-    const response = await sendMessageApi({
-      baseUrl: opts.baseUrl,
-      token: opts.token,
-      timeoutMs: opts.timeoutMs,
-      body: req,
-    });
+    const response = await sendWithStaleTokenFallback(
+      {
+        baseUrl: opts.baseUrl,
+        token: opts.token,
+        timeoutMs: opts.timeoutMs,
+        body: req,
+      },
+      params.label ?? "sendMessageItemWeixin",
+    );
     const serverMessageId = response?.message_id;
     const itemText = item.type === MessageItemType.TEXT ? (item.text_item?.text ?? "") : "";
     if (itemText) await cacheOutboundMessage({ opts, to, serverMessageId, body: itemText });
@@ -225,12 +266,15 @@ async function sendMediaItems(params: {
       },
     };
     try {
-      const response = await sendMessageApi({
-        baseUrl: opts.baseUrl,
-        token: opts.token,
-        timeoutMs: opts.timeoutMs,
-        body: req,
-      });
+      const response = await sendWithStaleTokenFallback(
+        {
+          baseUrl: opts.baseUrl,
+          token: opts.token,
+          timeoutMs: opts.timeoutMs,
+          body: req,
+        },
+        label,
+      );
       lastServerMessageId = response?.message_id;
       if (item.type === MessageItemType.TEXT) {
         await cacheOutboundMessage({
