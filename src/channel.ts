@@ -177,6 +177,16 @@ async function sendWeixinOutbound(params: {
       error: String(err),
       accountId: account.accountId,
     });
+    // errcode=-14 "session timeout" means the cached context_token is stale. Drop it so a
+    // later retry waits for a fresh inbound token instead of repeating a doomed send.
+    if (/errcode=-14|session timeout/i.test(String(err))) {
+      try {
+        clearContextTokensForAccount(account.accountId);
+        logger.warn(`discarded stale contextToken for account=${account.accountId} after session timeout`);
+      } catch (clearErr) {
+        logger.warn(`failed to clear stale contextToken: ${String(clearErr)}`);
+      }
+    }
     throw err;
   }
 }
