@@ -54,7 +54,9 @@ export function readFrameworkAllowFromList(accountId: string): string[] {
     const raw = fs.readFileSync(filePath, "utf-8");
     const parsed = JSON.parse(raw) as AllowFromFileContent;
     if (Array.isArray(parsed.allowFrom)) {
-      return parsed.allowFrom.filter((id): id is string => typeof id === "string" && id.trim() !== "");
+      return parsed.allowFrom.filter(
+        (id): id is string => typeof id === "string" && id.trim() !== "",
+      );
     }
   } catch {
     // best-effort

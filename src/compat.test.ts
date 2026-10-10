@@ -20,6 +20,7 @@ describe("parseOpenClawVersion", () => {
   it("returns null for malformed strings", () => {
     expect(parseOpenClawVersion("")).toBeNull();
     expect(parseOpenClawVersion("abc")).toBeNull();
+    expect(parseOpenClawVersion("2026.invalid.22")).toBeNull();
     expect(parseOpenClawVersion("2026.3")).toBeNull();
     expect(parseOpenClawVersion("2026.3.22.1")).toBeNull();
   });
@@ -27,16 +28,24 @@ describe("parseOpenClawVersion", () => {
 
 describe("compareVersions", () => {
   it("returns 0 for equal versions", () => {
-    expect(compareVersions({ year: 2026, month: 3, day: 22 }, { year: 2026, month: 3, day: 22 })).toBe(0);
+    expect(
+      compareVersions({ year: 2026, month: 3, day: 22 }, { year: 2026, month: 3, day: 22 }),
+    ).toBe(0);
   });
 
   it("compares by year first", () => {
-    expect(compareVersions({ year: 2025, month: 12, day: 31 }, { year: 2026, month: 1, day: 1 })).toBe(-1);
+    expect(
+      compareVersions({ year: 2025, month: 12, day: 31 }, { year: 2026, month: 1, day: 1 }),
+    ).toBe(-1);
   });
 
   it("compares by month then day", () => {
-    expect(compareVersions({ year: 2026, month: 3, day: 22 }, { year: 2026, month: 3, day: 21 })).toBe(1);
-    expect(compareVersions({ year: 2026, month: 3, day: 22 }, { year: 2026, month: 4, day: 1 })).toBe(-1);
+    expect(
+      compareVersions({ year: 2026, month: 3, day: 22 }, { year: 2026, month: 3, day: 21 }),
+    ).toBe(1);
+    expect(
+      compareVersions({ year: 2026, month: 3, day: 22 }, { year: 2026, month: 4, day: 1 }),
+    ).toBe(-1);
   });
 });
 

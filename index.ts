@@ -12,7 +12,9 @@ export default {
   configSchema: buildChannelConfigSchema(WeixinConfigSchema),
   register(api: OpenClawPluginApi) {
     // Fail-fast: reject incompatible host versions before any side-effects.
-    assertHostCompatibility(api.runtime?.version);
+    if (api.registrationMode !== "cli-metadata") {
+      assertHostCompatibility(api.runtime?.version);
+    }
 
     api.registerChannel({ plugin: weixinPlugin });
   },

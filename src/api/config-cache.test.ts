@@ -32,6 +32,12 @@ describe("WeixinConfigManager", () => {
     expect(logFn).toHaveBeenCalled();
   });
 
+  it("uses an empty typing ticket when the response omits it", async () => {
+    mockGetConfig.mockResolvedValueOnce({ ret: 0 });
+    const mgr = new WeixinConfigManager({ baseUrl: "https://api.com" }, vi.fn());
+    await expect(mgr.getForUser("user1")).resolves.toEqual({ typingTicket: "" });
+  });
+
   it("returns cached config on subsequent calls within TTL", async () => {
     mockGetConfig.mockResolvedValueOnce({ ret: 0, typing_ticket: "ticket-1" });
     const mgr = new WeixinConfigManager({ baseUrl: "https://api.com" }, vi.fn());

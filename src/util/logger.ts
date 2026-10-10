@@ -41,7 +41,9 @@ let minLevelId = resolveMinLevel();
 export function setLogLevel(level: string): void {
   const upper = level.toUpperCase();
   if (!(upper in LEVEL_IDS)) {
-    throw new Error(`Invalid log level: ${level}. Valid levels: ${Object.keys(LEVEL_IDS).join(", ")}`);
+    throw new Error(
+      `Invalid log level: ${level}. Valid levels: ${Object.keys(LEVEL_IDS).join(", ")}`,
+    );
   }
   minLevelId = LEVEL_IDS[upper];
 }

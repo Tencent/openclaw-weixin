@@ -37,6 +37,7 @@ import {
   sanitizeBotAgent,
   readPackageJsonFromDir,
   classifyFetchError,
+  parseWeixinApiJson,
 } from "./api.js";
 
 function mockResponse(body: object | string, status = 200, ok = true): Response {
@@ -72,7 +73,9 @@ describe("getUpdates", () => {
 
   it("throws on non-ok response", async () => {
     mockFetch.mockResolvedValueOnce(mockResponse("err", 500, false));
-    await expect(getUpdates({ baseUrl: "https://api.example.com" })).rejects.toThrow("getUpdates 500");
+    await expect(getUpdates({ baseUrl: "https://api.example.com" })).rejects.toThrow(
+      "getUpdates 500",
+    );
   });
 
   it("returns empty response on abort/timeout", async () => {
@@ -90,7 +93,9 @@ describe("getUpdates", () => {
 
   it("re-throws non-abort errors", async () => {
     mockFetch.mockRejectedValueOnce(new Error("network error"));
-    await expect(getUpdates({ baseUrl: "https://api.example.com" })).rejects.toThrow("network error");
+    await expect(getUpdates({ baseUrl: "https://api.example.com" })).rejects.toThrow(
+      "network error",
+    );
   });
 
   it("adds trailing slash to baseUrl", async () => {
@@ -168,18 +173,29 @@ describe("getUploadUrl", () => {
 
   it("throws on non-ok response", async () => {
     mockFetch.mockResolvedValueOnce(mockResponse("fail", 400, false));
-    await expect(
-      getUploadUrl({ baseUrl: "https://api.example.com/" }),
-    ).rejects.toThrow("getUploadUrl 400");
+    await expect(getUploadUrl({ baseUrl: "https://api.example.com/" })).rejects.toThrow(
+      "getUploadUrl 400",
+    );
   });
 });
 
 describe("sendMessage", () => {
   it("succeeds on ok response", async () => {
-    mockFetch.mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve("{}") } as Response);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve("{}"),
+    } as Response);
     await expect(
       sendMessage({ baseUrl: "https://api.example.com/", body: { msg: { to_user_id: "u" } } }),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({});
+  });
+
+  it("returns a lossless server message ID", async () => {
+    mockFetch.mockResolvedValueOnce(mockResponse('{"ret":0,"message_id":18446744073709551615}'));
+    await expect(
+      sendMessage({ baseUrl: "https://api.example.com/", body: { msg: { to_user_id: "u" } } }),
+    ).resolves.toMatchObject({ message_id: "18446744073709551615" });
   });
 
   it("throws on non-ok response", async () => {
@@ -187,6 +203,54 @@ describe("sendMessage", () => {
     await expect(
       sendMessage({ baseUrl: "https://api.example.com/", body: { msg: {} } }),
     ).rejects.toThrow("sendMessage 403");
+  });
+
+  it("throws on a successful HTTP response with a non-zero API ret", async () => {
+    mockFetch.mockResolvedValueOnce(mockResponse({ ret: 1 }));
+    await expect(
+      sendMessage({ baseUrl: "https://api.example.com/", body: { msg: {} } }),
+    ).rejects.toThrow("sendMessage ret=1 errmsg=(none)");
+  });
+});
+
+describe("parseWeixinApiJson", () => {
+  it("preserves all known uint64 message ID fields as strings", () => {
+    const parsed = parseWeixinApiJson<{
+      message_id: string;
+      nested: { msg_id: string; ref: { svr_id: string } };
+    }>(
+      '{"message_id":18446744073709551615,"nested":{"msg_id" : 9007199254740993,"ref":{"svr_id": 123}}}',
+    );
+    expect(parsed).toEqual({
+      message_id: "18446744073709551615",
+      nested: { msg_id: "9007199254740993", ref: { svr_id: "123" } },
+    });
+  });
+
+  it("does not rewrite matching text inside JSON strings", () => {
+    const raw = '{"text":"\\\"message_id\\\":18446744073709551615","message_id":"7"}';
+    expect(parseWeixinApiJson<{ text: string; message_id: string }>(raw)).toEqual({
+      text: '"message_id":18446744073709551615',
+      message_id: "7",
+    });
+  });
+
+  it("leaves non-ID keys and non-numeric ID values unchanged", () => {
+    expect(
+      parseWeixinApiJson<unknown>(
+        '{ "other": 9007199254740993, "message_id": null, "msg_id": "already-string" }',
+      ),
+    ).toEqual({
+      other: 9007199254740992,
+      message_id: null,
+      msg_id: "already-string",
+    });
+  });
+
+  it("handles negative numeric IDs without losing precision", () => {
+    expect(parseWeixinApiJson<{ svr_id: string }>('{"svr_id" : -9007199254740993}')).toEqual({
+      svr_id: "-9007199254740993",
+    });
   });
 });
 
@@ -222,9 +286,9 @@ describe("sendTyping", () => {
 
   it("throws on non-ok response", async () => {
     mockFetch.mockResolvedValueOnce(mockResponse("err", 500, false));
-    await expect(
-      sendTyping({ baseUrl: "https://api.example.com/", body: {} }),
-    ).rejects.toThrow("sendTyping 500");
+    await expect(sendTyping({ baseUrl: "https://api.example.com/", body: {} })).rejects.toThrow(
+      "sendTyping 500",
+    );
   });
 });
 
@@ -241,9 +305,7 @@ describe("sanitizeBotAgent", () => {
   });
 
   it("passes through multiple space-separated products", () => {
-    expect(sanitizeBotAgent("MyBot/1.2.0 LangChain/0.3.5")).toBe(
-      "MyBot/1.2.0 LangChain/0.3.5",
-    );
+    expect(sanitizeBotAgent("MyBot/1.2.0 LangChain/0.3.5")).toBe("MyBot/1.2.0 LangChain/0.3.5");
   });
 
   it("preserves a (comment) attached to a product", () => {
@@ -253,15 +315,11 @@ describe("sanitizeBotAgent", () => {
   });
 
   it("supports multi-word comments", () => {
-    expect(sanitizeBotAgent("MyBot/1.2.0 (built on linux)")).toBe(
-      "MyBot/1.2.0 (built on linux)",
-    );
+    expect(sanitizeBotAgent("MyBot/1.2.0 (built on linux)")).toBe("MyBot/1.2.0 (built on linux)");
   });
 
   it("accepts semver pre-release and build metadata", () => {
-    expect(sanitizeBotAgent("MyBot/1.2.0-rc.1+build.5")).toBe(
-      "MyBot/1.2.0-rc.1+build.5",
-    );
+    expect(sanitizeBotAgent("MyBot/1.2.0-rc.1+build.5")).toBe("MyBot/1.2.0-rc.1+build.5");
   });
 
   it("drops tokens that fail to parse, keeps valid ones", () => {

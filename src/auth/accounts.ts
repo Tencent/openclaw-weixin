@@ -5,12 +5,12 @@ import { normalizeAccountId } from "openclaw/plugin-sdk/account-id";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 
 import { resolveStateDir } from "../storage/state-dir.js";
+import { deleteQuoteCacheForAccount } from "../messaging/quote-store.js";
 import { resolveFrameworkAllowFromPath } from "./pairing.js";
 import { logger } from "../util/logger.js";
 
 export const DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com";
 export const CDN_BASE_URL = "https://novac2c.cdn.weixin.qq.com/c2c";
-
 
 // ---------------------------------------------------------------------------
 // Account ID compatibility (legacy raw ID → normalized ID)
@@ -97,7 +97,9 @@ export function clearStaleAccountsForUserId(
     if (id === currentAccountId) continue;
     const data = loadWeixinAccount(id);
     if (data?.userId?.trim() === userId) {
-      logger.info(`clearStaleAccountsForUserId: removing stale account=${id} (same userId=${userId})`);
+      logger.info(
+        `clearStaleAccountsForUserId: removing stale account=${id} (same userId=${userId})`,
+      );
       onClearContextTokens?.(id);
       clearWeixinAccount(id);
       unregisterWeixinAccountId(id);
@@ -130,7 +132,12 @@ function resolveAccountPath(accountId: string): string {
  * Legacy single-file token: `credentials/openclaw-weixin/credentials.json` (pre per-account files).
  */
 function loadLegacyToken(): string | undefined {
-  const legacyPath = path.join(resolveStateDir(), "credentials", "openclaw-weixin", "credentials.json");
+  const legacyPath = path.join(
+    resolveStateDir(),
+    "credentials",
+    "openclaw-weixin",
+    "credentials.json",
+  );
   try {
     if (!fs.existsSync(legacyPath)) return undefined;
     const raw = fs.readFileSync(legacyPath, "utf-8");
@@ -218,6 +225,7 @@ export function saveWeixinAccount(
  *   - credentials/openclaw-weixin-{accountId}-allowFrom.json (authorized users)
  */
 export function clearWeixinAccount(accountId: string): void {
+  deleteQuoteCacheForAccount(accountId);
   const dir = resolveAccountsDir();
   const accountFiles = [
     `${accountId}.json`,
@@ -261,7 +269,10 @@ function loadRouteTagSection(): Record<string, unknown> | null {
   if (cachedRouteTagSection !== undefined) return cachedRouteTagSection;
   try {
     const configPath = resolveConfigPath();
-    if (!fs.existsSync(configPath)) { cachedRouteTagSection = null; return null; }
+    if (!fs.existsSync(configPath)) {
+      cachedRouteTagSection = null;
+      return null;
+    }
     const raw = fs.readFileSync(configPath, "utf-8");
     const cfg = JSON.parse(raw) as Record<string, unknown>;
     const channels = cfg.channels as Record<string, unknown> | undefined;

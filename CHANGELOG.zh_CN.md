@@ -4,7 +4,33 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/) 格式。
 
-## [2.4.5] - 2026-06-22
+## [未发布]
+
+## [2.4.9] - 2026-09-17
+
+### 修复
+
+- **OpenClaw 2026.9.x 入站回复兼容性：** 为低层 `dispatchReplyFromConfig` 调用绑定 Gateway 已发布的模型运行时，修复 `PreparedModelCatalogConfigReplacedError` 导致微信入站消息丢失的问题（#311、#312；方案受 @yuzheng14 提交的 #313 启发）。
+
+## [2.4.9-beta.0] - 2026-09-08
+
+### 新增
+
+- **新版微信引用消息还原：** 对消息 ID 做无损解析，并用按账号、会话隔离的 SQLite 旁路存储还原只携带 `svr_id` 的文本引用和局部引用。入站图片、视频、语音及附件可以保留在插件专属的 OpenClaw 受管目录中，并支持按时间、条数、空间和单文件大小淘汰；还原引用附件时会提供工具访问提示，便于 agent 在自动抽取失败后定位并读取文件。
+- **兼容降级：** `node:sqlite` 不可用或 `quoteCache.enabled=false` 时关闭引用缓存，不启用内存替代方案；缓存异常不会影响正常消息收发。
+- **开发文档：** 新增通用开发与 CI 流程说明，以及本地引用缓存的设计和验证说明。
+
+### 变更
+
+- **Node.js 运行时最低版本：** 要求 Node.js `>=22.13.0`，以便在无需实验性开关的情况下使用内置的 `node:sqlite` API。开发验证目标为 OpenClaw `2026.8.1`；声明的运行时 peer 最低版本仍为 `>=2026.5.12`。
+
+## [2.4.7] - 2026-08-31
+
+### 修复
+
+- **OpenClaw 2026.8.1 Plugin SDK 兼容性：** 将 `createTypingCallbacks` 的导入路径从已删除的兼容子路径 `openclaw/plugin-sdk/channel-runtime` 调整为 `openclaw/plugin-sdk/channel-message`。新路径继续兼容插件声明的最低宿主版本 OpenClaw 2026.5.12。
+
+## [2.4.6] - 2026-06-22
 
 ### 新增
 
