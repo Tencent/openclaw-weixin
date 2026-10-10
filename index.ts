@@ -4,6 +4,7 @@ import { buildChannelConfigSchema } from "openclaw/plugin-sdk/channel-config-sch
 import { weixinPlugin } from "./src/channel.js";
 import { assertHostCompatibility } from "./src/compat.js";
 import { WeixinConfigSchema } from "./src/config/config-schema.js";
+import { registerWeixinLoginControl } from "./src/auth/login-control.js";
 
 export default {
   id: "openclaw-weixin",
@@ -17,5 +18,8 @@ export default {
     }
 
     api.registerChannel({ plugin: weixinPlugin });
+    if (api.registrationMode !== "cli-metadata") {
+      registerWeixinLoginControl(api);
+    }
   },
 };
