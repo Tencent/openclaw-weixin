@@ -12,6 +12,7 @@ export type WeixinReplyProgressSenderDeps = {
   opts: WeixinApiOptions & {
     contextToken?: string;
     runId?: string;
+    accountId?: string;
   };
 };
 
@@ -44,7 +45,7 @@ export class WeixinReplyProgressSender {
     this.runId = deps.runId;
     this.to = deps.to;
     this.accountId = deps.accountId;
-    this.opts = { ...deps.opts, runId: deps.runId };
+    this.opts = { ...deps.opts, runId: deps.runId, accountId: deps.accountId };
   }
 
   get replyOptions() {
@@ -66,7 +67,9 @@ export class WeixinReplyProgressSender {
         });
       })
       .catch((err) => {
-        logger.warn(`${label}: failed to=${this.to} accountId=${this.accountId} runId=${this.runId} err=${String(err)}`);
+        logger.warn(
+          `${label}: failed to=${this.to} accountId=${this.accountId} runId=${this.runId} err=${String(err)}`,
+        );
       });
   }
 
@@ -116,7 +119,9 @@ export class WeixinReplyProgressSender {
     try {
       await this.sendChain;
     } catch (err) {
-      logger.warn(`WeixinReplyProgressSender.finalize: send drain failed runId=${this.runId} err=${String(err)}`);
+      logger.warn(
+        `WeixinReplyProgressSender.finalize: send drain failed runId=${this.runId} err=${String(err)}`,
+      );
     }
   }
 }

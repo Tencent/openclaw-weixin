@@ -1,7 +1,7 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
-import path from "node:path";
 import os from "node:os";
+import path from "node:path";
 
 let tmpDir: string;
 
@@ -22,54 +22,51 @@ async function loadModule() {
 }
 
 describe("resolveFrameworkAllowFromPath", () => {
-  it("returns correct path for a given accountId", async () => {
+  it("returns the account-scoped path", async () => {
     const { resolveFrameworkAllowFromPath } = await loadModule();
-    const result = resolveFrameworkAllowFromPath("test-account");
-    expect(result).toBe(
+    expect(resolveFrameworkAllowFromPath("test-account")).toBe(
       path.join(tmpDir, "credentials", "openclaw-weixin-test-account-allowFrom.json"),
     );
   });
 
-  it("respects OPENCLAW_OAUTH_DIR override", async () => {
-    const customDir = path.join(tmpDir, "custom-creds");
-    process.env.OPENCLAW_OAUTH_DIR = customDir;
+  it("respects OPENCLAW_OAUTH_DIR", async () => {
+    process.env.OPENCLAW_OAUTH_DIR = path.join(tmpDir, "custom-creds");
     const { resolveFrameworkAllowFromPath } = await loadModule();
-    const result = resolveFrameworkAllowFromPath("my-bot");
-    expect(result).toBe(path.join(customDir, "openclaw-weixin-my-bot-allowFrom.json"));
+    expect(resolveFrameworkAllowFromPath("my-bot")).toBe(
+      path.join(tmpDir, "custom-creds", "openclaw-weixin-my-bot-allowFrom.json"),
+    );
   });
 
-  it("sanitizes special characters in accountId", async () => {
+  it("sanitizes account identifiers", async () => {
     const { resolveFrameworkAllowFromPath } = await loadModule();
-    const result = resolveFrameworkAllowFromPath("abc@im.bot");
-    // Only [\\/:*?"<>|] and ".." are replaced; @ and dots are preserved
-    expect(result).toContain("openclaw-weixin-abc@im.bot-allowFrom.json");
+    expect(resolveFrameworkAllowFromPath("abc@im.bot")).toContain(
+      "openclaw-weixin-abc@im.bot-allowFrom.json",
+    );
+    expect(() => resolveFrameworkAllowFromPath("/")).toThrow("invalid key");
   });
 });
 
 describe("readFrameworkAllowFromList", () => {
-  it("reads existing paired IDs without rewriting the credentials file", async () => {
+  it("reads existing pairing entries without modifying the file", async () => {
     const { readFrameworkAllowFromList, resolveFrameworkAllowFromPath } = await loadModule();
-    const filePath = resolveFrameworkAllowFromPath("existing-account");
+    const filePath = resolveFrameworkAllowFromPath("account");
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    const saved = JSON.stringify({ version: 1, allowFrom: ["owner", "second-user", "", 42] });
-    fs.writeFileSync(filePath, saved);
+    const content = JSON.stringify({ version: 1, allowFrom: ["owner", "", 42, "peer"] });
+    fs.writeFileSync(filePath, content);
 
-    expect(readFrameworkAllowFromList("existing-account")).toEqual(["owner", "second-user"]);
-    expect(fs.readFileSync(filePath, "utf-8")).toBe(saved);
+    expect(readFrameworkAllowFromList("account")).toEqual(["owner", "peer"]);
+    expect(fs.readFileSync(filePath, "utf8")).toBe(content);
   });
 
-  it("returns an empty list without creating a missing credentials file", async () => {
+  it("returns an empty list when pairing data is missing or malformed", async () => {
     const { readFrameworkAllowFromList, resolveFrameworkAllowFromPath } = await loadModule();
-    expect(readFrameworkAllowFromList("missing-account")).toEqual([]);
-    expect(fs.existsSync(resolveFrameworkAllowFromPath("missing-account"))).toBe(false);
-  });
+    expect(readFrameworkAllowFromList("account")).toEqual([]);
 
-  it("leaves an unreadable credentials file untouched", async () => {
-    const { readFrameworkAllowFromList, resolveFrameworkAllowFromPath } = await loadModule();
-    const filePath = resolveFrameworkAllowFromPath("corrupt-account");
+    const filePath = resolveFrameworkAllowFromPath("account");
+    expect(fs.existsSync(filePath)).toBe(false);
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, "not valid json");
-    expect(readFrameworkAllowFromList("corrupt-account")).toEqual([]);
-    expect(fs.readFileSync(filePath, "utf-8")).toBe("not valid json");
+    fs.writeFileSync(filePath, "not-json");
+    expect(readFrameworkAllowFromList("account")).toEqual([]);
+    expect(fs.readFileSync(filePath, "utf8")).toBe("not-json");
   });
 });

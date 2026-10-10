@@ -147,6 +147,18 @@ export interface VideoItem {
 export interface RefMessage {
   message_item?: MessageItem;
   title?: string; // 摘要
+  /** Server message ID used when newer clients omit the quoted content. */
+  svr_id?: string;
+  /** Optional metadata describing a selected substring of the quoted message. */
+  partial_text?: PartialText;
+}
+
+export interface PartialText {
+  start: string;
+  end: string;
+  startindex: number;
+  endindex: number;
+  quotemd5: string;
 }
 
 export interface ToolCallStartItem {
@@ -179,7 +191,8 @@ export interface MessageItem {
 /** Unified message (proto: WeixinMessage). Replaces the old split Message + MessageContent + FullMessage. */
 export interface WeixinMessage {
   seq?: number;
-  message_id?: number;
+  /** uint64 on the wire; parsed losslessly as a string. */
+  message_id?: string;
   from_user_id?: string;
   to_user_id?: string;
   client_id?: string;
@@ -224,6 +237,8 @@ export interface SendMessageReq {
 }
 
 export interface SendMessageResp {
+  /** uint64 on the wire; parsed losslessly as a string. */
+  message_id?: string;
   ret?: number;
   errmsg?: string;
 }

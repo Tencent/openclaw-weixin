@@ -33,10 +33,7 @@ vi.mock("../util/logger.js", () => ({
   logger: mocks.logger,
 }));
 
-import {
-  applyWeixinMessageSendingHook,
-  emitWeixinMessageSent,
-} from "./outbound-hooks.js";
+import { applyWeixinMessageSendingHook, emitWeixinMessageSent } from "./outbound-hooks.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -46,18 +43,20 @@ describe("applyWeixinMessageSendingHook", () => {
   it("returns original text when no hook runner is registered", async () => {
     mocks.getGlobalHookRunner.mockReturnValue(undefined);
 
-    await expect(
-      applyWeixinMessageSendingHook({ to: "user-1", text: "hello" }),
-    ).resolves.toEqual({ cancelled: false, text: "hello" });
+    await expect(applyWeixinMessageSendingHook({ to: "user-1", text: "hello" })).resolves.toEqual({
+      cancelled: false,
+      text: "hello",
+    });
   });
 
   it("returns original text when no message_sending hooks exist", async () => {
     const hookRunner = { hasHooks: vi.fn().mockReturnValue(false) };
     mocks.getGlobalHookRunner.mockReturnValue(hookRunner);
 
-    await expect(
-      applyWeixinMessageSendingHook({ to: "user-1", text: "hello" }),
-    ).resolves.toEqual({ cancelled: false, text: "hello" });
+    await expect(applyWeixinMessageSendingHook({ to: "user-1", text: "hello" })).resolves.toEqual({
+      cancelled: false,
+      text: "hello",
+    });
     expect(hookRunner.hasHooks).toHaveBeenCalledWith("message_sending");
   });
 
@@ -99,9 +98,10 @@ describe("applyWeixinMessageSendingHook", () => {
     };
     mocks.getGlobalHookRunner.mockReturnValue(hookRunner);
 
-    await expect(
-      applyWeixinMessageSendingHook({ to: "user-1", text: "hello" }),
-    ).resolves.toEqual({ cancelled: true, text: "hello" });
+    await expect(applyWeixinMessageSendingHook({ to: "user-1", text: "hello" })).resolves.toEqual({
+      cancelled: true,
+      text: "hello",
+    });
   });
 
   it("logs hook errors and proceeds with original text", async () => {
@@ -111,9 +111,10 @@ describe("applyWeixinMessageSendingHook", () => {
     };
     mocks.getGlobalHookRunner.mockReturnValue(hookRunner);
 
-    await expect(
-      applyWeixinMessageSendingHook({ to: "user-1", text: "hello" }),
-    ).resolves.toEqual({ cancelled: false, text: "hello" });
+    await expect(applyWeixinMessageSendingHook({ to: "user-1", text: "hello" })).resolves.toEqual({
+      cancelled: false,
+      text: "hello",
+    });
     expect(mocks.logger.warn).toHaveBeenCalledWith(
       "message_sending hook error, proceeding with send: Error: boom",
     );

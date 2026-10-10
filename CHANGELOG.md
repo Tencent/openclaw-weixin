@@ -4,7 +4,33 @@
 
 This project follows the [Keep a Changelog](https://keepachangelog.com/) format.
 
-## [2.4.5] - 2026-06-22
+## [Unreleased]
+
+## [2.4.9] - 2026-09-17
+
+### Fixed
+
+- **OpenClaw 2026.9.x inbound-reply compatibility:** Bind the low-level `dispatchReplyFromConfig` call to the Gateway-published model runtime, fixing lost Weixin inbound messages caused by `PreparedModelCatalogConfigReplacedError` (#311, #312; solution inspired by #313 from @yuzheng14).
+
+## [2.4.9-beta.0] - 2026-09-08
+
+### Added
+
+- **Quote reconstruction for newer WeChat clients:** Losslessly parse message IDs and resolve ID-only `svr_id` text and partial quotes through a per-account, per-conversation SQLite side store. Inbound images, video, voice, and attachments can be retained in plugin-owned OpenClaw managed storage with time, count, byte-budget, and single-file eviction limits. Restored attachments include tool-access hints so agents can locate and read the file when automatic extraction fails.
+- **Compatible degradation:** Disable quote caching when `node:sqlite` is unavailable or `quoteCache.enabled=false`, with no in-memory fallback. Cache failures never interrupt normal message delivery.
+- **Developer documentation:** Add general development and CI guidance, plus design and verification notes for the local quote cache.
+
+### Changed
+
+- **Node.js runtime baseline:** Require Node.js `>=22.13.0` so the built-in `node:sqlite` API is available without an experimental flag. Development validation targets OpenClaw `2026.8.1`; the declared runtime peer minimum remains `>=2026.5.12`.
+
+## [2.4.7] - 2026-08-31
+
+### Fixed
+
+- **OpenClaw 2026.8.1 Plugin SDK compatibility:** Import `createTypingCallbacks` from `openclaw/plugin-sdk/channel-message` instead of the removed `openclaw/plugin-sdk/channel-runtime` compatibility subpath. The replacement remains compatible with the declared minimum host version, OpenClaw 2026.5.12.
+
+## [2.4.6] - 2026-06-22
 
 ### Added
 

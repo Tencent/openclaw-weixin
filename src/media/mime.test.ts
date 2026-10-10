@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { getMimeFromFilename, getExtensionFromMime, getExtensionFromContentTypeOrUrl } from "./mime.js";
+import {
+  getMimeFromFilename,
+  getExtensionFromMime,
+  getExtensionFromContentTypeOrUrl,
+} from "./mime.js";
 
 describe("getMimeFromFilename", () => {
   it("returns correct MIME for known extensions", () => {
@@ -52,11 +56,15 @@ describe("getExtensionFromMime", () => {
 
 describe("getExtensionFromContentTypeOrUrl", () => {
   it("prefers Content-Type when it resolves to a known extension", () => {
-    expect(getExtensionFromContentTypeOrUrl("image/png", "https://example.com/file.jpg")).toBe(".png");
+    expect(getExtensionFromContentTypeOrUrl("image/png", "https://example.com/file.jpg")).toBe(
+      ".png",
+    );
   });
 
   it("falls back to URL extension when Content-Type is unknown", () => {
-    expect(getExtensionFromContentTypeOrUrl("application/unknown", "https://example.com/file.jpg")).toBe(".jpg");
+    expect(
+      getExtensionFromContentTypeOrUrl("application/unknown", "https://example.com/file.jpg"),
+    ).toBe(".jpg");
   });
 
   it("falls back to URL extension when Content-Type is null", () => {
@@ -65,10 +73,14 @@ describe("getExtensionFromContentTypeOrUrl", () => {
 
   it("returns .bin when neither Content-Type nor URL has a known extension", () => {
     expect(getExtensionFromContentTypeOrUrl(null, "https://example.com/file")).toBe(".bin");
-    expect(getExtensionFromContentTypeOrUrl("application/unknown", "https://example.com/file.xyz")).toBe(".bin");
+    expect(
+      getExtensionFromContentTypeOrUrl("application/unknown", "https://example.com/file.xyz"),
+    ).toBe(".bin");
   });
 
   it("handles URL with query parameters", () => {
-    expect(getExtensionFromContentTypeOrUrl(null, "https://example.com/file.png?token=abc")).toBe(".png");
+    expect(getExtensionFromContentTypeOrUrl(null, "https://example.com/file.png?token=abc")).toBe(
+      ".png",
+    );
   });
 });

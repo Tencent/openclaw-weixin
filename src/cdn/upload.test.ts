@@ -26,7 +26,12 @@ const { mockFetch } = vi.hoisted(() => ({
 }));
 vi.stubGlobal("fetch", mockFetch);
 
-import { downloadRemoteImageToTemp, uploadFileToWeixin, uploadVideoToWeixin, uploadFileAttachmentToWeixin } from "./upload.js";
+import {
+  downloadRemoteImageToTemp,
+  uploadFileToWeixin,
+  uploadVideoToWeixin,
+  uploadFileAttachmentToWeixin,
+} from "./upload.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -40,7 +45,13 @@ describe("downloadRemoteImageToTemp", () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
         status: 200,
-        arrayBuffer: () => Promise.resolve(imageBytes.buffer.slice(imageBytes.byteOffset, imageBytes.byteOffset + imageBytes.byteLength)),
+        arrayBuffer: () =>
+          Promise.resolve(
+            imageBytes.buffer.slice(
+              imageBytes.byteOffset,
+              imageBytes.byteOffset + imageBytes.byteLength,
+            ),
+          ),
         headers: new Headers({ "content-type": "image/png" }),
       });
       const filePath = await downloadRemoteImageToTemp("https://example.com/photo.png", tmpDir);
@@ -62,6 +73,14 @@ describe("downloadRemoteImageToTemp", () => {
     await expect(
       downloadRemoteImageToTemp("https://example.com/missing.png", "/tmp/test"),
     ).rejects.toThrow("remote media download failed");
+  });
+
+  it("re-throws network errors from fetch", async () => {
+    const networkError = Object.assign(new Error("connection reset"), { code: "ECONNRESET" });
+    mockFetch.mockRejectedValueOnce(networkError);
+    await expect(
+      downloadRemoteImageToTemp("https://example.com/photo.png", "/tmp/test"),
+    ).rejects.toThrow("connection reset");
   });
 });
 
