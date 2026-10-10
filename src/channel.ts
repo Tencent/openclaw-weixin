@@ -29,9 +29,11 @@ import {
   DEFAULT_ILINK_BOT_TYPE,
   startWeixinLoginWithQr,
   waitForWeixinLogin,
+  waitForWeixinLoginBrowser,
   displayQRCode,
 } from "./auth/login-qr.js";
 import type { WeixinQrStartResult, WeixinQrWaitResult } from "./auth/login-qr.js";
+import { captureWeixinWebLoginAuthority } from "./auth/login-authority.js";
 // Lazy-imported inside startAccount to avoid pulling in the monitor -> process-message ->
 // command-auth chain during plugin registration, which can re-enter plugin/provider registry
 // resolution before the account actually starts.
@@ -183,6 +185,7 @@ async function sendWeixinOutbound(params: {
 
 export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
   id: "openclaw-weixin",
+  gatewayMethods: ["web.login.start", "web.login.wait", "weixin.login.control"],
   meta: {
     id: "openclaw-weixin",
     label: "openclaw-weixin",
@@ -389,6 +392,7 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
     collectStatusIssues: () => [],
     buildChannelSummary: ({ snapshot }) => ({
       configured: snapshot.configured ?? false,
+      running: snapshot.running ?? false,
       lastError: snapshot.lastError ?? null,
       lastInboundAt: snapshot.lastInboundAt ?? null,
       lastOutboundAt: snapshot.lastOutboundAt ?? null,
@@ -576,6 +580,7 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
       }
     },
     loginWithQrStart: async ({ accountId, force, verbose }) => {
+      const authority = await captureWeixinWebLoginAuthority();
       // For re-login: use saved baseUrl from account data; fall back to default for new accounts.
       const savedBaseUrl = accountId ? loadWeixinAccount(accountId)?.baseUrl?.trim() : "";
       const result: WeixinQrStartResult = await startWeixinLoginWithQr({
@@ -584,28 +589,30 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
         botType: DEFAULT_ILINK_BOT_TYPE,
         force,
         verbose,
+        browser: true,
+        assertCurrent: authority.assertCurrent,
+        requestSignal: authority.signal,
       });
       // Return sessionKey so the client can pass it back in loginWithQrWait.
       return {
-        qrDataUrl: result.qrcodeUrl,
+        qrDataUrl: result.qrDataUrl,
         message: result.message,
         sessionKey: result.sessionKey,
+        expiresAtMs: result.expiresAtMs,
+        cancelled: result.cancelled,
       } as { qrDataUrl?: string; message: string };
     },
     loginWithQrWait: async (params) => {
+      const authority = await captureWeixinWebLoginAuthority();
       // sessionKey is forwarded by the client after loginWithQrStart (runtime param extension).
       const sessionKey = (params as { sessionKey?: string }).sessionKey || params.accountId || "";
-      const savedBaseUrl = params.accountId
-        ? loadWeixinAccount(params.accountId)?.baseUrl?.trim()
-        : "";
-      const result: WeixinQrWaitResult = await waitForWeixinLogin({
+      return await waitForWeixinLoginBrowser({
         sessionKey,
-        apiBaseUrl: savedBaseUrl || DEFAULT_BASE_URL,
         timeoutMs: params.timeoutMs,
-      });
-
-      if (result.connected && result.botToken && result.accountId) {
-        try {
+        assertCurrent: authority.assertCurrent,
+        requestSignal: authority.signal,
+        onConnected: (result) => {
+          if (!result.accountId || !result.botToken) throw new Error("Missing Weixin credentials");
           const normalizedId = normalizeAccountId(result.accountId);
           saveWeixinAccount(normalizedId, {
             token: result.botToken,
@@ -616,18 +623,10 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
           if (result.userId) {
             clearStaleAccountsForUserId(normalizedId, result.userId, clearContextTokensForAccount);
           }
-          triggerWeixinChannelReload();
           logger.info(`loginWithQrWait: saved account data for accountId=${normalizedId}`);
-        } catch (err) {
-          logger.error(`loginWithQrWait: failed to save account data err=${String(err)}`);
-        }
-      }
-
-      return {
-        connected: result.connected,
-        message: result.message,
-        accountId: result.accountId,
-      } as { connected: boolean; message: string };
+          return normalizedId;
+        },
+      });
     },
   },
 };

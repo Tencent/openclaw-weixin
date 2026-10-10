@@ -9,6 +9,59 @@
 
 OpenClaw's Weixin channel plugin. Connect an OpenClaw Gateway to Weixin with QR-code login and receive and send messages through the Weixin backend.
 
+## Browser QR login contract
+
+The channel advertises `web.login.start`, `web.login.wait`, and its admin-only
+`weixin.login.control` method for a Channels page login client. A client must
+first call `weixin.login.control` with `{ "action": "capabilities" }`. If
+`supportsPageLogin` is false, show the returned update-host guidance and do not
+start a login. This probe does not request a QR code or change login state.
+
+Browser login requires the host's public current-client authority predicate.
+The optional request-lifetime fields are verified in published OpenClaw 2026.9.9.
+The older development SDK and existing CLI host range remain supported:
+hosts without those fields can still use CLI login, but page login fails closed.
+The host owns administrator authorization and connection lifetime; a QR session
+key alone does not grant authority.
+
+The page must send `preserveRunning: true` on **both** `web.login.start` and
+`web.login.wait`, and must not combine it with `force: true`. This requires the
+companion OpenClaw core RPC change; current-client authority alone does not
+establish support for this new option. An older core rejects the unsupported
+parameter before stopping a channel. Do not retry without it: a reconnect must
+leave the current account running until confirmation, so closing the QR page
+does not leave the account stopped. The plugin's existing host range and CLI
+login remain unchanged.
+
+Start uses channel `openclaw-weixin` and returns a bounded PNG `qrDataUrl`, opaque
+`sessionKey`, `expiresAtMs`, and `message`. Pass that exact session key to each
+wait request. Wait returns `connected` and `message`, and while pending returns
+the current PNG, expiry, session key, and `verificationRequired`. QR refreshes
+are published through the same session. Successful confirmation saves the
+account under current authority and returns its normalized `accountId`, without
+exposing the bot token. In the companion core's preserved-running flow, successful
+wait stops and restarts only that returned account ID to adopt its saved token;
+unrelated running accounts remain active.
+When a login target was selected at start, a confirmation for a different
+normalized account ID is rejected before storing any credentials.
+
+An already-bound result is matched to the account IDs whose tokens were offered
+for that exact QR generation. A provider-supplied account ID must match an
+offered, still-configured account and any selected login target. Without a
+provider account ID, only a generation that offered one unambiguous account can
+succeed. Deleting another account later does not resolve an ambiguous generation.
+Only browser QR creation has the new 30-second client timeout; CLI creation and
+refresh retain their existing timeout behavior.
+
+If phone verification is requested, submit
+`{ "action": "verify", "sessionKey": "...", "code": "..." }` to
+`weixin.login.control`; the code must contain 1–10 digits. To close a login, send
+`{ "action": "cancel", "sessionKey": "..." }`. Cancellation is idempotent,
+aborts pending requests, and prevents a late confirmation from saving credentials.
+Host cleanup also clears active logins. CLI QR display and verification input
+remain available. This login contract does not change message access policy,
+inbound message handling, or the quote cache.
+
 ## Highlights
 
 - QR-code login with automatic credential storage.
