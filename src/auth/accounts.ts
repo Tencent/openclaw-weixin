@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { normalizeAccountId } from "openclaw/plugin-sdk/account-id";
+import { mutateConfigFile } from "openclaw/plugin-sdk/config-mutation";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 
 import { resolveStateDir } from "../storage/state-dir.js";
@@ -318,21 +319,18 @@ export function loadConfigBotAgent(): string | undefined {
  */
 export async function triggerWeixinChannelReload(): Promise<void> {
   try {
-    const { loadConfig, writeConfigFile } = await import("openclaw/plugin-sdk/config-runtime");
-    const cfg = loadConfig();
-    const channels = (cfg.channels ?? {}) as Record<string, unknown>;
-    const existing = (channels["openclaw-weixin"] as Record<string, unknown> | undefined) ?? {};
-    const updated: OpenClawConfig = {
-      ...cfg,
-      channels: {
-        ...channels,
-        "openclaw-weixin": {
+    await mutateConfigFile({
+      afterWrite: { mode: "auto" },
+      mutate(draft) {
+        draft.channels ??= {};
+        const channels = draft.channels as Record<string, unknown>;
+        const existing = (channels["openclaw-weixin"] as Record<string, unknown> | undefined) ?? {};
+        channels["openclaw-weixin"] = {
           ...existing,
           channelConfigUpdatedAt: new Date().toISOString(),
-        },
+        };
       },
-    };
-    await writeConfigFile(updated);
+    });
     logger.info("triggerWeixinChannelReload: wrote channel config to openclaw.json");
   } catch (err) {
     logger.warn(`triggerWeixinChannelReload: failed to update config: ${String(err)}`);
