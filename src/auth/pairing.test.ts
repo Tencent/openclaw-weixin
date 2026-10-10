@@ -63,8 +63,10 @@ describe("readFrameworkAllowFromList", () => {
     expect(readFrameworkAllowFromList("account")).toEqual([]);
 
     const filePath = resolveFrameworkAllowFromPath("account");
+    expect(fs.existsSync(filePath)).toBe(false);
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, "not-json");
     expect(readFrameworkAllowFromList("account")).toEqual([]);
+    expect(fs.readFileSync(filePath, "utf8")).toBe("not-json");
   });
 });
