@@ -33,6 +33,7 @@
     "node": ">=22.13.0"
   },
   "dependencies": {
+    "qrcode": "1.5.4",
     "qrcode-terminal": "0.12.0",
     "zod": "^4.3.6"
   },
@@ -40,6 +41,7 @@
     "openclaw": ">=2026.5.12"
   },
   "devDependencies": {
+    "@types/qrcode": "1.5.5",
     "@vitest/coverage-v8": "^3.1.0",
     "openclaw": "2026.8.1",
     "oxfmt": "0.60.0",

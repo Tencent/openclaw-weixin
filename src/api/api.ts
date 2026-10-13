@@ -314,6 +314,7 @@ export async function apiGetFetch(params: {
   endpoint: string;
   timeoutMs?: number;
   label: string;
+  abortSignal?: AbortSignal;
 }): Promise<string> {
   const base = ensureTrailingSlash(params.baseUrl);
   const url = new URL(params.endpoint, base);
@@ -326,11 +327,15 @@ export async function apiGetFetch(params: {
     controller != null && timeoutMs != null
       ? setTimeout(() => controller.abort(), timeoutMs)
       : undefined;
+  const { signal, cleanup } = combineAbortSignals({
+    internal: controller,
+    external: params.abortSignal,
+  });
   try {
     const res = await fetch(url.toString(), {
       method: "GET",
       headers: hdrs,
-      ...(controller ? { signal: controller.signal } : {}),
+      ...(signal ? { signal } : {}),
     });
     if (t !== undefined) clearTimeout(t);
     const rawText = await res.text();
@@ -341,11 +346,18 @@ export async function apiGetFetch(params: {
     return rawText;
   } catch (err) {
     if (t !== undefined) clearTimeout(t);
+    // QR polling URLs can contain a phone verification code. Do not log or return them.
+    if (params.label === "pollQRStatus") {
+      logger.error("Weixin QR status request failed");
+      throw new Error("Weixin QR status request failed");
+    }
     const classified = classifyFetchError(err);
     logger.error(
       `${params.label}: GET fetch failed url=${redactUrl(url.toString())} timeoutMs=${timeoutMs ?? "none"} type=${classified.type} description=${classified.description}${classified.code ? ` code=${classified.code}` : ""} error=${String(err)}`,
     );
     throw err;
+  } finally {
+    cleanup();
   }
 }
 
