@@ -9,11 +9,17 @@ import { getSyncBufFilePath, loadGetUpdatesBuf, saveGetUpdatesBuf } from "../sto
 import { logger } from "../util/logger.js";
 import type { Logger } from "../util/logger.js";
 import { redactBody } from "../util/redact.js";
+import { recoverWeixinSession } from "../api/session-recovery.js";
 
 const DEFAULT_LONG_POLL_TIMEOUT_MS = 35_000;
 const MAX_CONSECUTIVE_FAILURES = 3;
 const BACKOFF_DELAY_MS = 30_000;
 const RETRY_DELAY_MS = 2_000;
+// Local patch (2026-10-03): after this many consecutive network-level
+// getUpdates failures, the long-poll session is likely degraded server-side.
+// Trigger session recovery (notifyStart + channel reload) proactively instead
+// of only backing off, so outbound sends stop failing with `prepare failed`.
+const MAX_NETWORK_FAILURES_BEFORE_RECOVERY = 5;
 
 export type MonitorWeixinOpts = {
   baseUrl: string;
@@ -194,7 +200,17 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
       aLog.error(
         `getUpdates error: ${String(err)}, type=${classified.type} code=${classified.code ?? "none"}, stack=${(err as Error).stack}`,
       );
-      if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+      if (consecutiveFailures >= MAX_NETWORK_FAILURES_BEFORE_RECOVERY) {
+        errLog(
+          `weixin getUpdates: ${consecutiveFailures} consecutive network failures, triggering session recovery`,
+        );
+        aLog.error(
+          `getUpdates: ${consecutiveFailures} consecutive network failures, triggering session recovery`,
+        );
+        await recoverWeixinSession({ accountId, baseUrl, token });
+        consecutiveFailures = 0;
+        await sleep(BACKOFF_DELAY_MS, abortSignal);
+      } else if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
         errLog(
           `weixin getUpdates: ${MAX_CONSECUTIVE_FAILURES} consecutive failures, backing off 30s`,
         );

@@ -2,6 +2,7 @@ import type { ReplyPayload } from "openclaw/plugin-sdk/reply-runtime";
 
 import { sendMessage as sendMessageApi } from "../api/api.js";
 import type { WeixinApiOptions } from "../api/api.js";
+import { recoverWeixinSession } from "../api/session-recovery.js";
 import { logger } from "../util/logger.js";
 import { generateId } from "../util/random.js";
 import type { MessageItem, SendMessageReq } from "../api/types.js";
@@ -51,6 +52,81 @@ async function cacheOutboundMessage(params: {
 
 function generateClientId(): string {
   return generateId("openclaw-weixin");
+}
+
+/**
+ * Detect whether a send failure is caused by a stale/invalid context_token.
+ * Weixin rejects the whole request with `ret=-2 errmsg=prepare failed` when the
+ * echoed context_token has expired server-side. context_token is OPTIONAL per the
+ * Weixin API (verified: a send without it succeeds), so on this failure we can
+ * safely retry without it instead of dropping the message.
+ */
+function isStaleContextTokenError(err: unknown): boolean {
+  const s = String((err as { message?: unknown })?.message ?? err ?? "");
+  return /prepare failed/i.test(s) || /ret=-2\b/.test(s);
+}
+
+/**
+ * Send a request, and if it fails due to a stale context_token, retry once with
+ * the context_token stripped from the body. Returns the (possibly retried) response.
+ *
+ * Local patch (2026-10-03): if the no-token retry ALSO fails with the same
+ * `prepare failed` error, the server-side bot session itself is degraded
+ * (not just the context_token). In that case trigger session recovery
+ * (notifyStart + channel reload) so the next delivery-recovery retry — or the
+ * next message — goes out on a fresh session. The error is still rethrown so
+ * the caller's delivery-recovery path keeps the message for retry.
+ */
+async function sendWithStaleTokenFallback(
+  sendParams: WeixinApiOptions & { body: SendMessageReq },
+  label: string,
+  accountId?: string,
+): Promise<Awaited<ReturnType<typeof sendMessageApi>>> {
+  try {
+    return await sendMessageApi(sendParams);
+  } catch (err) {
+    if (isStaleContextTokenError(err) && sendParams.body?.msg?.context_token) {
+      logger.warn(
+        `${label}: stale context_token (ret=-2 prepare failed), retrying without context_token`,
+      );
+      const { context_token: _drop, ...restMsg } = sendParams.body.msg;
+      const retryBody = { ...sendParams.body, msg: restMsg };
+      try {
+        return await sendMessageApi({ ...sendParams, body: retryBody });
+      } catch (retryErr) {
+        if (isStaleContextTokenError(retryErr)) {
+          logger.error(
+            `${label}: retry without context_token also failed (${String(retryErr)}); session appears degraded, triggering session recovery`,
+          );
+          if (accountId) {
+            await recoverWeixinSession({
+              accountId,
+              baseUrl: sendParams.baseUrl,
+              token: sendParams.token,
+            });
+          }
+        }
+        throw retryErr;
+      }
+    }
+    // Local patch (2026-10-07): a `prepare failed` on a send WITHOUT a
+    // context_token (e.g. cron direct delivery) means the server-side bot
+    // session is degraded — the no-token retry branch above never runs for
+    // these, so recovery was never triggered. Trigger it here.
+    if (isStaleContextTokenError(err) && !sendParams.body?.msg?.context_token) {
+      logger.error(
+        `${label}: prepare failed without context_token; session appears degraded, triggering session recovery`,
+      );
+      if (accountId) {
+        await recoverWeixinSession({
+          accountId,
+          baseUrl: sendParams.baseUrl,
+          token: sendParams.token,
+        });
+      }
+    }
+    throw err;
+  }
 }
 
 /** Build a SendMessageReq containing a single text message. */
@@ -118,12 +194,16 @@ export async function sendMessageWeixin(params: {
     clientId,
   });
   try {
-    const response = await sendMessageApi({
-      baseUrl: opts.baseUrl,
-      token: opts.token,
-      timeoutMs: opts.timeoutMs,
-      body: req,
-    });
+    const response = await sendWithStaleTokenFallback(
+      {
+        baseUrl: opts.baseUrl,
+        token: opts.token,
+        timeoutMs: opts.timeoutMs,
+        body: req,
+      },
+      "sendMessageWeixin",
+      opts.accountId,
+    );
     const serverMessageId = response?.message_id;
     await cacheOutboundMessage({ opts, to, serverMessageId, body: text });
     return {
@@ -164,12 +244,16 @@ export async function sendMessageItemWeixin(params: {
     },
   };
   try {
-    const response = await sendMessageApi({
-      baseUrl: opts.baseUrl,
-      token: opts.token,
-      timeoutMs: opts.timeoutMs,
-      body: req,
-    });
+    const response = await sendWithStaleTokenFallback(
+      {
+        baseUrl: opts.baseUrl,
+        token: opts.token,
+        timeoutMs: opts.timeoutMs,
+        body: req,
+      },
+      params.label ?? "sendMessageItemWeixin",
+      opts.accountId,
+    );
     const serverMessageId = response?.message_id;
     const itemText = item.type === MessageItemType.TEXT ? (item.text_item?.text ?? "") : "";
     if (itemText) await cacheOutboundMessage({ opts, to, serverMessageId, body: itemText });
@@ -225,12 +309,16 @@ async function sendMediaItems(params: {
       },
     };
     try {
-      const response = await sendMessageApi({
-        baseUrl: opts.baseUrl,
-        token: opts.token,
-        timeoutMs: opts.timeoutMs,
-        body: req,
-      });
+      const response = await sendWithStaleTokenFallback(
+        {
+          baseUrl: opts.baseUrl,
+          token: opts.token,
+          timeoutMs: opts.timeoutMs,
+          body: req,
+        },
+        label,
+        opts.accountId,
+      );
       lastServerMessageId = response?.message_id;
       if (item.type === MessageItemType.TEXT) {
         await cacheOutboundMessage({
