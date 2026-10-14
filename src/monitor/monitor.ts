@@ -186,6 +186,20 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
         aLog.info(`Monitor stopped (aborted)`);
         return;
       }
+      // UND_ERR_HEADERS_TIMEOUT is a normal long-poll timeout — the server
+      // held the connection waiting for messages and none arrived. Treat it
+      // as a soft failure: don't count toward the 3-strike backoff.
+      if (
+        err instanceof TypeError &&
+        err.message === "fetch failed" &&
+        (err as any).cause?.code === "UND_ERR_HEADERS_TIMEOUT"
+      ) {
+        aLog.debug(
+          `getUpdates: long-poll headers timeout (normal), retrying in ${RETRY_DELAY_MS}ms`,
+        );
+        await sleep(RETRY_DELAY_MS, abortSignal);
+        continue;
+      }
       consecutiveFailures += 1;
       const classified = classifyFetchError(err);
       errLog(
