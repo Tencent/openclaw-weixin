@@ -30,6 +30,7 @@ import type { WeixinInboundMediaOpts } from "./inbound.js";
 import { sendWeixinMediaFile } from "./send-media.js";
 import { StreamingMarkdownFilter } from "./markdown-filter.js";
 import { sendMessageWeixin } from "./send.js";
+import { stripInboundMetadata } from "./strip-meta.js";
 import { WeixinReplyProgressSender } from "./reply-progress-sender.js";
 import { withPublishedModelRuntime } from "./dispatch-options.js";
 import { resolveWeixinInboundAuthorization } from "./authorization.js";
@@ -354,6 +355,8 @@ export async function processOneMessage(
           const f = new StreamingMarkdownFilter();
           return f.feed(rawText) + f.flush();
         })();
+        // Strip inbound metadata echoed by LLM (Conversation info, Sender info, etc.)
+        text = stripInboundMetadata(text);
         const mediaUrl = payload.mediaUrl ?? payload.mediaUrls?.[0];
         logger.debug(`outbound payload: ${redactBody(JSON.stringify(payload))}`);
         logger.info(
