@@ -4,11 +4,14 @@ import type { PluginRuntime } from "openclaw/plugin-sdk/core";
 import { getUpdates, classifyFetchError } from "../api/api.js";
 import { WeixinConfigManager } from "../api/config-cache.js";
 import { STALE_TOKEN_ERRCODE, pauseSession, getRemainingPauseMs } from "../api/session-guard.js";
+import type { WeixinMessage } from "../api/types.js";
 import { processOneMessage } from "../messaging/process-message.js";
 import { getSyncBufFilePath, loadGetUpdatesBuf, saveGetUpdatesBuf } from "../storage/sync-buf.js";
 import { logger } from "../util/logger.js";
 import type { Logger } from "../util/logger.js";
 import { redactBody } from "../util/redact.js";
+
+import { createInboundBatcher, resolveInboundBatchWindowMs } from "./inbound-batcher.js";
 
 const DEFAULT_LONG_POLL_TIMEOUT_MS = 35_000;
 const MAX_CONSECUTIVE_FAILURES = 3;
@@ -83,6 +86,39 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
 
   let nextTimeoutMs = longPollTimeoutMs ?? DEFAULT_LONG_POLL_TIMEOUT_MS;
   let consecutiveFailures = 0;
+
+  const processInbound = async (full: WeixinMessage): Promise<void> => {
+    const fromUserId = full.from_user_id ?? "";
+    const cachedConfig = await configManager.getForUser(fromUserId, full.context_token);
+
+    await processOneMessage(full, {
+      accountId,
+      config,
+      channelRuntime,
+      baseUrl,
+      cdnBaseUrl,
+      token,
+      typingTicket: cachedConfig.typingTicket,
+      log: opts.runtime?.log ?? (() => {}),
+      errLog,
+    });
+  };
+
+  // Opt-in inbound batching (messages.inbound.byChannel["openclaw-weixin"] / debounceMs).
+  // When disabled, messages are processed one by one exactly as before.
+  const imageWindowMs = resolveInboundBatchWindowMs(config);
+  const batcher =
+    imageWindowMs > 0
+      ? createInboundBatcher({
+          imageWindowMs,
+          process: processInbound,
+          onError: (err) =>
+            aLog.error(`processOneMessage failed: ${String(err)} stack=${(err as Error)?.stack}`),
+          onMerged: ({ from, count, media }) =>
+            aLog.info(`inbound batching: merged ${count} messages (media=${media}) from=${from}`),
+        })
+      : undefined;
+  if (batcher) aLog.info(`inbound batching enabled: imageWindow=${imageWindowMs}ms`);
 
   while (!abortSignal?.aborted) {
     try {
@@ -161,23 +197,15 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
         const now = Date.now();
         setStatus?.({ accountId, lastEventAt: now, lastInboundAt: now });
 
-        const fromUserId = full.from_user_id ?? "";
-        const cachedConfig = await configManager.getForUser(fromUserId, full.context_token);
-
-        await processOneMessage(full, {
-          accountId,
-          config,
-          channelRuntime,
-          baseUrl,
-          cdnBaseUrl,
-          token,
-          typingTicket: cachedConfig.typingTicket,
-          log: opts.runtime?.log ?? (() => {}),
-          errLog,
-        });
+        if (batcher) {
+          batcher.push(full);
+        } else {
+          await processInbound(full);
+        }
       }
     } catch (err) {
       if (abortSignal?.aborted) {
+        batcher?.flush();
         aLog.info(`Monitor stopped (aborted)`);
         return;
       }
@@ -201,6 +229,7 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
       }
     }
   }
+  batcher?.flush();
   aLog.info(`Monitor ended`);
 }
 

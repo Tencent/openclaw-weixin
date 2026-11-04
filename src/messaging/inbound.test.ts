@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
+  attachAdditionalMedia,
   getContextTokenFromMsgContext,
   getWeixinMessageId,
   isMediaItem,
@@ -555,5 +556,69 @@ describe("getContextTokenFromMsgContext", () => {
   it("returns undefined when context_token is absent", () => {
     const ctx = {} as WeixinMsgContext;
     expect(getContextTokenFromMsgContext(ctx)).toBeUndefined();
+  });
+});
+
+describe("attachAdditionalMedia", () => {
+  const media = { encrypt_query_param: "q" };
+  const img = (id: string): MessageItem => ({
+    type: MessageItemType.IMAGE,
+    msg_id: id,
+    image_item: { media },
+  });
+  const pdf: MessageItem = {
+    type: MessageItemType.FILE,
+    file_item: { media, file_name: "report.pdf" },
+  };
+
+  it("is a no-op for a message with a single attachment", async () => {
+    const main = img("1");
+    const msg: WeixinMessage = { item_list: [main] };
+    const ctx = weixinMessageToMsgContext(msg, "acc", { decryptedPicPath: "/m/1.jpg" });
+    const download = vi.fn();
+    await attachAdditionalMedia(ctx, msg, main, download);
+    expect(download).not.toHaveBeenCalled();
+    expect(ctx.MediaPath).toBe("/m/1.jpg");
+    expect(ctx.media).toBeUndefined();
+  });
+
+  it("downloads every other attachment and keeps file names in order", async () => {
+    const main = img("1");
+    const msg: WeixinMessage = {
+      item_list: [
+        { type: MessageItemType.TEXT, text_item: { text: "look" } },
+        main,
+        img("2"),
+        pdf,
+        { type: MessageItemType.VOICE, voice_item: { media, text: "transcribed" } },
+      ],
+    };
+    const ctx = weixinMessageToMsgContext(msg, "acc", { decryptedPicPath: "/m/1.jpg" });
+    const download = vi.fn(async (item: MessageItem) =>
+      item.type === MessageItemType.IMAGE
+        ? { decryptedPicPath: "/m/2.jpg" }
+        : { decryptedFilePath: "/m/report.pdf", fileMediaType: "application/pdf" },
+    );
+    await attachAdditionalMedia(ctx, msg, main, download);
+
+    // Transcribed voice is already part of the text and is not downloaded.
+    expect(download).toHaveBeenCalledTimes(2);
+    expect(ctx.MediaPath).toBeUndefined();
+    expect(ctx.MediaType).toBeUndefined();
+    expect(ctx.MediaPaths).toEqual(["/m/1.jpg", "/m/2.jpg", "/m/report.pdf"]);
+    expect(ctx.MediaTypes).toEqual(["image/*", "image/*", "application/pdf"]);
+    expect(ctx.media).toEqual([
+      { path: "/m/1.jpg", contentType: "image/*" },
+      { path: "/m/2.jpg", contentType: "image/*" },
+      { path: "/m/report.pdf", contentType: "application/pdf", fileName: "report.pdf" },
+    ]);
+  });
+
+  it("skips attachments whose download failed", async () => {
+    const main = img("1");
+    const msg: WeixinMessage = { item_list: [main, img("2")] };
+    const ctx = weixinMessageToMsgContext(msg, "acc", { decryptedPicPath: "/m/1.jpg" });
+    await attachAdditionalMedia(ctx, msg, main, async () => ({}));
+    expect(ctx.MediaPaths).toEqual(["/m/1.jpg"]);
   });
 });

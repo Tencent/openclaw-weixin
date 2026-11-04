@@ -6,6 +6,10 @@ This project follows the [Keep a Changelog](https://keepachangelog.com/) format.
 
 ## [Unreleased]
 
+### Added
+
+- **Inbound message batching (opt-in):** With `messages.inbound.byChannel.openclaw-weixin` (or `messages.inbound.debounceMs`) set, multi-image sends and messages that arrive while a reply is running are merged into a single turn per sender, with every attachment downloaded. Slash commands stay separate. Disabled by default (#359).
+
 ### Changed
 
 - **Inbound access follows the scanned account owner:** Messages are admitted by comparing `from_user_id` with the `userId` saved at QR login. OpenClaw `allowFrom` files and SQLite pairing entries are not consulted. When no owner is stored, ordinary messages still pass and slash commands stay unauthorized.

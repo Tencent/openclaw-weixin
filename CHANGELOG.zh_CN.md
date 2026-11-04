@@ -6,6 +6,10 @@
 
 ## [未发布]
 
+### 新增
+
+- **连续消息合并（需手动开启）：** 配置 `messages.inbound.byChannel.openclaw-weixin`（或 `messages.inbound.debounceMs`）后，同一发送人一次发送的多张图片、以及回复进行中到达的消息会合并为一轮处理，所有附件都会下载；`/` 命令仍单独处理。默认关闭（#359）。
+
 ### 变更
 
 - **入站消息按扫码账号主人放行：** 用消息的 `from_user_id` 和登录时写入的 `userId` 比较。不再读取 OpenClaw 的 `allowFrom` 文件或 SQLite Pairing 记录。账号里没有主人时，普通消息仍放行，斜杠命令不执行。

@@ -297,6 +297,74 @@ export function weixinMessageToMsgContext(
   return ctx;
 }
 
+function downloadableMediaItems(msg: WeixinMessage): MessageItem[] {
+  const hasMedia = (m?: { encrypt_query_param?: string; full_url?: string }) =>
+    Boolean(m?.encrypt_query_param || m?.full_url);
+  return (
+    msg.item_list?.filter(
+      (i) =>
+        (i.type === MessageItemType.IMAGE && hasMedia(i.image_item?.media)) ||
+        (i.type === MessageItemType.VIDEO && hasMedia(i.video_item?.media)) ||
+        (i.type === MessageItemType.FILE && hasMedia(i.file_item?.media)) ||
+        (i.type === MessageItemType.VOICE && hasMedia(i.voice_item?.media) && !i.voice_item?.text),
+    ) ?? []
+  );
+}
+
+/**
+ * Attach every downloadable media item besides `mainMediaItem` (already set as MediaPath).
+ * Only relevant for batched messages carrying several attachments; a no-op otherwise.
+ * Converts the context to MediaPaths/MediaTypes plus ordered `media` facts so file names survive.
+ */
+export async function attachAdditionalMedia(
+  ctx: WeixinMsgContext,
+  msg: WeixinMessage,
+  mainMediaItem: MessageItem,
+  download: (item: MessageItem) => Promise<WeixinInboundMediaOpts>,
+): Promise<void> {
+  const items = downloadableMediaItems(msg);
+  if (ctx.media || !ctx.MediaPath || items.length < 2 || !items.includes(mainMediaItem)) return;
+
+  const entries: Array<{ path: string; contentType: string; fileName?: string }> = [
+    {
+      path: ctx.MediaPath,
+      contentType: ctx.MediaType ?? "application/octet-stream",
+      fileName: mainMediaItem.file_item?.file_name,
+    },
+  ];
+  for (const item of items) {
+    if (item === mainMediaItem) continue;
+    const downloaded = await download(item);
+    if (downloaded.decryptedPicPath) {
+      entries.push({ path: downloaded.decryptedPicPath, contentType: "image/*" });
+    } else if (downloaded.decryptedVideoPath) {
+      entries.push({ path: downloaded.decryptedVideoPath, contentType: "video/mp4" });
+    } else if (downloaded.decryptedFilePath) {
+      entries.push({
+        path: downloaded.decryptedFilePath,
+        contentType: downloaded.fileMediaType ?? "application/octet-stream",
+        fileName: item.file_item?.file_name,
+      });
+    } else if (downloaded.decryptedVoicePath) {
+      entries.push({
+        path: downloaded.decryptedVoicePath,
+        contentType: downloaded.voiceMediaType ?? "audio/wav",
+      });
+    }
+  }
+
+  ctx.MediaPaths = entries.map((e) => e.path);
+  ctx.MediaTypes = entries.map((e) => e.contentType);
+  ctx.media = entries.map((e) => ({
+    path: e.path,
+    contentType: e.contentType,
+    ...(e.fileName ? { fileName: e.fileName } : {}),
+  }));
+  delete ctx.MediaPath;
+  delete ctx.MediaType;
+  logger.info(`inbound batching: ${entries.length}/${items.length} media attached`);
+}
+
 function findReferenceItem(msg: WeixinMessage): MessageItem | undefined {
   return msg.item_list?.find((item) => item.ref_msg);
 }

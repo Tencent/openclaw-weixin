@@ -18,6 +18,7 @@ import { isDebugMode } from "./debug-mode.js";
 import { sendWeixinErrorNotice } from "./error-notice.js";
 import { applyWeixinMessageSendingHook, emitWeixinMessageSent } from "./outbound-hooks.js";
 import {
+  attachAdditionalMedia,
   setContextToken,
   weixinMessageToMsgContext,
   getContextTokenFromMsgContext,
@@ -228,6 +229,21 @@ export async function processOneMessage(
         `quote cache: failed to save inbound message id=${inboundMessageId}: ${String(err)}`,
       );
     }
+  }
+
+  // A batched message (see monitor/inbound-batcher.ts) may carry several attachments.
+  // The quote cache above keeps recording only the first one, as for any single message.
+  if (mainMediaItem) {
+    await attachAdditionalMedia(ctx, full, mainMediaItem, (item) =>
+      downloadMediaFromItem(item, {
+        cdnBaseUrl: deps.cdnBaseUrl,
+        saveMedia: deps.channelRuntime.media.saveMediaBuffer,
+        mediaSubdir: getActiveQuoteMediaSubdir(deps.accountId),
+        log: deps.log,
+        errLog: deps.errLog,
+        label: "inbound",
+      }),
+    );
   }
 
   const route = deps.channelRuntime.routing.resolveAgentRoute({
