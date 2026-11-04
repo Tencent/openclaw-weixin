@@ -126,6 +126,7 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
   let noticeRecovery = flushWeixinErrorNotices({ config, accountId, abortSignal, errLog });
   try {
     while (!abortSignal?.aborted) {
+      let pollCompleted = false;
       try {
         aLog.debug(
           `getUpdates: get_updates_buf=${getUpdatesBuf.substring(0, 50)}..., timeoutMs=${nextTimeoutMs}`,
@@ -139,6 +140,10 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
           // instead of waiting for the server-side long-poll timeout.
           abortSignal,
         });
+        pollCompleted = true;
+        if (abortSignal?.aborted) {
+          break;
+        }
         aLog.debug(
           `getUpdates response: ret=${resp.ret}, msgs=${resp.msgs?.length ?? 0}, get_updates_buf_length=${resp.get_updates_buf?.length ?? 0}`,
         );
@@ -151,6 +156,7 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
           (resp.ret !== undefined && resp.ret !== 0) ||
           (resp.errcode !== undefined && resp.errcode !== 0);
         if (isApiError) {
+          setStatus?.({ accountId, connected: false });
           const isStaleToken =
             resp.errcode === STALE_TOKEN_ERRCODE || resp.ret === STALE_TOKEN_ERRCODE;
 
@@ -188,7 +194,14 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
         }
         consecutiveFailures = 0;
         noticeRecovery = flushWeixinErrorNotices({ config, accountId, abortSignal, errLog });
-        setStatus?.({ accountId, lastEventAt: Date.now() });
+        const pollTime = Date.now();
+        setStatus?.({
+          accountId,
+          connected: true,
+          lastConnectedAt: pollTime,
+          lastEventAt: pollTime,
+          lastError: null,
+        });
         if (resp.get_updates_buf != null && resp.get_updates_buf !== "") {
           saveGetUpdatesBuf(syncFilePath, resp.get_updates_buf);
           getUpdatesBuf = resp.get_updates_buf;
@@ -219,6 +232,9 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
           aLog.info(`Monitor stopped (aborted)`);
           return;
         }
+        if (!pollCompleted) {
+          setStatus?.({ accountId, connected: false });
+        }
         consecutiveFailures += 1;
         const classified = classifyFetchError(err);
         errLog(
@@ -243,6 +259,7 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
     }
   } finally {
     await noticeRecovery;
+    setStatus?.({ accountId, connected: false });
   }
   batcher?.flush();
   aLog.info(`Monitor ended`);
