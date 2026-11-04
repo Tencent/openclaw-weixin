@@ -8,7 +8,6 @@ import { sendTyping } from "../api/api.js";
 import type { WeixinMessage } from "../api/types.js";
 import { MessageItemType, TypingStatus } from "../api/types.js";
 import { loadWeixinAccount } from "../auth/accounts.js";
-import { readFrameworkAllowFromList } from "../auth/pairing.js";
 import { downloadRemoteImageToTemp } from "../cdn/upload.js";
 import { resolveReplyProgressMessagesEnabled } from "../config/reply-progress.js";
 import { downloadMediaFromItem } from "../media/media-download.js";
@@ -88,6 +87,21 @@ export async function processOneMessage(
   const debugTs: Record<string, number> = { received: receivedAt };
 
   const textBody = extractTextBody(full.item_list);
+  const senderId = full.from_user_id ?? "";
+  const ownerId = loadWeixinAccount(deps.accountId)?.userId?.trim();
+  const { senderAllowed, commandAuthorized } = await resolveWeixinInboundAuthorization({
+    senderId,
+    ownerId,
+    rawBody: textBody.trim(),
+    config: deps.config,
+    commands: deps.channelRuntime.commands,
+  });
+
+  if (!senderAllowed) {
+    logger.info(`authorization: dropping message from=${senderId} outcome=unauthorized`);
+    return;
+  }
+
   if (textBody.startsWith("/")) {
     const slashResult = await handleSlashCommand(
       textBody,
@@ -97,6 +111,7 @@ export async function processOneMessage(
         baseUrl: deps.baseUrl,
         token: deps.token,
         accountId: deps.accountId,
+        commandAuthorized: commandAuthorized === true,
         log: deps.log,
         errLog: deps.errLog,
       },
@@ -177,28 +192,8 @@ export async function processOneMessage(
 
   const ctx = weixinMessageToMsgContext(full, deps.accountId, mediaOpts);
 
-  // --- Framework command authorization ---
   const rawBody = ctx.Body?.trim() ?? "";
   ctx.CommandBody = rawBody;
-
-  const senderId = full.from_user_id ?? "";
-
-  const fromStore = readFrameworkAllowFromList(deps.accountId);
-  const uid = loadWeixinAccount(deps.accountId)?.userId?.trim();
-  const { senderAllowed, commandAuthorized } = await resolveWeixinInboundAuthorization({
-    accountId: deps.accountId,
-    senderId,
-    rawBody,
-    config: deps.config,
-    commands: deps.channelRuntime.commands,
-    allowFrom: fromStore.length > 0 ? fromStore : uid ? [uid] : [],
-  });
-
-  if (!senderAllowed) {
-    logger.info(`authorization: dropping message from=${senderId} outcome=unauthorized`);
-    return;
-  }
-
   ctx.CommandAuthorized = commandAuthorized;
   logger.debug(
     `authorization: senderId=${senderId} commandAuthorized=${String(commandAuthorized)} senderAllowed=${String(senderAllowed)}`,

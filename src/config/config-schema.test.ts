@@ -8,6 +8,7 @@ describe("WeixinConfigSchema", () => {
     expect(result.cdnBaseUrl).toBe("https://novac2c.cdn.weixin.qq.com/c2c");
     expect(result.replyProgressMessages).toBe(true);
     expect(result.promptBindOwner).toBe(false);
+    expect(result.verifyPin).toBe(false);
     expect(result.quoteCache).toEqual({
       enabled: true,
       mediaStorage: { mode: "managed" },
@@ -24,6 +25,11 @@ describe("WeixinConfigSchema", () => {
       acctwebBaseUrl: "http://10.1.2.3:8088",
     });
     expect(result.acctwebBaseUrl).toBe("http://10.1.2.3:8088");
+  });
+
+  it("accepts verifyPin for forcing the phone PIN", () => {
+    const result = WeixinConfigSchema.parse({ verifyPin: true });
+    expect(result.verifyPin).toBe(true);
   });
 
   it("accepts an HTTP proxy for the bind-ticket endpoint", () => {

@@ -8,6 +8,8 @@
 
 ### 变更
 
+- **入站消息按扫码账号主人放行：** 用消息的 `from_user_id` 和登录时写入的 `userId` 比较。不再读取 OpenClaw 的 `allowFrom` 文件或 SQLite Pairing 记录。账号里没有主人时，普通消息仍放行，斜杠命令不执行。
+- **绑定二维码可强制出 Pin：** 普通 `get_bot_qrcode` 不带 `bot_spam_business_data`。`channels.openclaw-weixin.verifyPin` 为 `true`，或设置 `OPENCLAW_WEIXIN_VERIFY_PIN=1` 时，才把它发成 `{"verify_pin":1}` 的标准 base64（`eyJ2ZXJpZnlfcGluIjoxfQ==`）。后续插件字段加在这段 JSON 里，再整体编码。
 - **本人/实名选择改为配置：** `channels.openclaw-weixin.promptBindOwner` 默认关闭。关闭时直接弹出 bot 绑定二维码，不询问，也不获取实名凭证。设为 `true` 后才询问：回车或 Y 走本人绑定，N 先完成实名授权再出绑定码。
 - **本人连接不再获取实名凭证：** 选择连到本人的微信 ClawBot 时，不再调用安全 `get_auth_url`，绑定二维码请求也不再携带 `bot_spam_ticket`。连到他人的 Bot 时仍先完成实名授权并带上 ticket。
 

@@ -20,8 +20,6 @@ export type MonitorWeixinOpts = {
   cdnBaseUrl: string;
   token?: string;
   accountId: string;
-  /** When non-empty, only messages whose from_user_id is in this list are processed. */
-  allowFrom?: string[];
   config: import("openclaw/plugin-sdk/core").OpenClawConfig;
   runtime?: { log?: (msg: string) => void; error?: (msg: string) => void };
   /**
@@ -162,9 +160,6 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
 
         const now = Date.now();
         setStatus?.({ accountId, lastEventAt: now, lastInboundAt: now });
-
-        // allowFrom filtering is delegated to processOneMessage via the framework
-        // authorization pipeline (resolveSenderCommandAuthorizationWithRuntime).
 
         const fromUserId = full.from_user_id ?? "";
         const cachedConfig = await configManager.getForUser(fromUserId, full.context_token);

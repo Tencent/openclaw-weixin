@@ -8,6 +8,8 @@ This project follows the [Keep a Changelog](https://keepachangelog.com/) format.
 
 ### Changed
 
+- **Inbound access follows the scanned account owner:** Messages are admitted by comparing `from_user_id` with the `userId` saved at QR login. OpenClaw `allowFrom` files and SQLite pairing entries are not consulted. When no owner is stored, ordinary messages still pass and slash commands stay unauthorized.
+- **Bind QR can force the phone PIN:** A normal `get_bot_qrcode` omits `bot_spam_business_data`. `channels.openclaw-weixin.verifyPin: true` or `OPENCLAW_WEIXIN_VERIFY_PIN=1` sends it as the standard base64 of `{"verify_pin":1}` (`eyJ2ZXJpZnlfcGluIjoxfQ==`). Later plugin fields are added to that JSON before encoding.
 - **Bind-owner prompt is opt-in:** `channels.openclaw-weixin.promptBindOwner` defaults to off. Login then shows the bot bind QR immediately, with no prompt and no real-name credential. Set it to `true` to ask: Enter or Y binds the operator's own bot, and N completes real-name authorization before the bind QR.
 - **Self-bind skips the real-name credential:** Choosing the operator's own WeChat ClawBot no longer calls `get_auth_url`, and the bind QR request no longer includes `bot_spam_ticket`. Binding someone else's bot still waits for real-name authorization and sends the ticket.
 

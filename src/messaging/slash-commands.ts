@@ -8,7 +8,7 @@
 import type { WeixinApiOptions } from "../api/api.js";
 import { logger } from "../util/logger.js";
 
-import { toggleDebugMode, isDebugMode } from "./debug-mode.js";
+import { toggleDebugMode } from "./debug-mode.js";
 import { sendMessageWeixin } from "./send.js";
 
 export interface SlashCommandResult {
@@ -22,6 +22,7 @@ export interface SlashCommandContext {
   baseUrl: string;
   token?: string;
   accountId: string;
+  commandAuthorized: boolean;
   log: (msg: string) => void;
   errLog: (msg: string) => void;
 }
@@ -85,9 +86,11 @@ export async function handleSlashCommand(
   try {
     switch (command) {
       case "/echo":
+        if (!ctx.commandAuthorized) return { handled: true };
         await handleEcho(ctx, args, receivedAt, eventTimestamp);
         return { handled: true };
       case "/toggle-debug": {
+        if (!ctx.commandAuthorized) return { handled: true };
         const enabled = toggleDebugMode(ctx.accountId);
         await sendReply(ctx, enabled ? "Debug 模式已开启" : "Debug 模式已关闭");
         return { handled: true };

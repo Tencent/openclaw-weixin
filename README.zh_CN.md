@@ -102,6 +102,46 @@ openclaw config set 'channels["openclaw-weixin"].acctwebProxy' '"http://proxy.ex
 openclaw config set 'channels["openclaw-weixin"].promptBindOwner' true --strict-json
 ```
 
+### 强制弹出手机 Pin
+
+`channels.openclaw-weixin.verifyPin` 默认关闭。设为 `true` 后，取绑定二维码会带上 `bot_spam_business_data`，要求这次绑定弹出手机 Pin。普通登录不带这个字段，是否出 Pin 仍由安全侧决定。
+
+`openclaw channels login` 不接受 `--verify-pin`。这个参数到不了微信插件。用上面的配置，或设置环境变量 `OPENCLAW_WEIXIN_VERIFY_PIN=1`。
+
+1. 确认插件版本。列表里 `openclaw-weixin` 的 Version 需要是带这个配置的版本（当前开发包是 `3.0.3`）：
+
+```bash
+openclaw plugins list
+```
+
+2. 打开开关：
+
+```bash
+openclaw config set 'channels["openclaw-weixin"].verifyPin' true --strict-json
+openclaw config get 'channels["openclaw-weixin"].verifyPin'
+```
+
+3. 登录。`channels login` 在当前命令里加载插件。Gateway 没在跑时，直接登录就会用到已安装的插件。Gateway 已经在跑、而且内存里还是旧插件时，先重启再登录：
+
+```bash
+openclaw gateway restart
+openclaw channels login --channel openclaw-weixin
+```
+
+4. 看当天日志，例如 `/tmp/openclaw/openclaw-YYYY-MM-DD.log`。强制出 Pin 时有 `fetchQRCode: bot_spam_business_data.verify_pin=1`。请求体里的字段是 `{"verify_pin":1}` 的标准 base64：`eyJ2ZXJpZnlfcGluIjoxfQ==`。普通登录是 `fetchQRCode: omit bot_spam_business_data`。
+
+5. 测完关掉：
+
+```bash
+openclaw config set 'channels["openclaw-weixin"].verifyPin' false --strict-json
+```
+
+也可以不改配置，只对这一次登录生效：
+
+```bash
+OPENCLAW_WEIXIN_VERIFY_PIN=1 openclaw channels login --channel openclaw-weixin
+```
+
 ### 自定义 BotAgent
 
 可以设置一个用于后台日志归因和监控的标识：

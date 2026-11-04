@@ -4,6 +4,7 @@ import { apiGetFetch, apiPostFetch, getPluginVersion } from "../api/api.js";
 import {
   listIndexedWeixinAccountIds,
   loadConfigPromptBindOwner,
+  loadConfigVerifyPin,
   loadWeixinAccount,
 } from "./accounts.js";
 import {
@@ -61,6 +62,8 @@ type ActiveLogin = {
   /** Present only for other-owner binds. Self binds omit the spam ticket. */
   botSpamTicket?: string;
   ticketExpireTimeSec?: number;
+  /** 1 asks the security backend to require the phone PIN. 0 leaves the decision to security. */
+  verifyPin: 0 | 1;
 };
 
 /** Client-side timeout for the long-poll get_qrcode_status request. */
@@ -114,23 +117,71 @@ function getLocalBotTokenList(): string[] {
   return tokens;
 }
 
+/**
+ * UTF-8 JSON, then standard base64. Later plugin fields are added to this
+ * object before encoding, so the wire field stays one opaque string.
+ */
+export function encodeBotSpamBusinessData(data: { verify_pin: 0 | 1 }): string {
+  return Buffer.from(JSON.stringify(data), "utf8").toString("base64");
+}
+
 /** Any status containing this marker asks the operator to type the phone PIN. */
 export function statusNeedsVerifyCode(status: string): boolean {
   return status.includes("need_verifycode");
 }
 
+/**
+ * Dev switch for `bot_spam_business_data.verify_pin`.
+ * An explicit boolean wins. Otherwise `--verify-pin`,
+ * `OPENCLAW_WEIXIN_VERIFY_PIN=1` / `true`, or
+ * `channels.openclaw-weixin.verifyPin: true` selects 1.
+ */
+export function resolveVerifyPinFlag(input?: {
+  verifyPin?: boolean;
+  argv?: readonly string[];
+  env?: NodeJS.ProcessEnv;
+  configVerifyPin?: boolean;
+}): 0 | 1 {
+  if (input?.verifyPin !== undefined) {
+    return input.verifyPin ? 1 : 0;
+  }
+  const argv = input?.argv ?? process.argv;
+  if (argv.includes("--verify-pin")) {
+    return 1;
+  }
+  const raw = (input?.env ?? process.env).OPENCLAW_WEIXIN_VERIFY_PIN?.trim().toLowerCase();
+  if (raw === "1" || raw === "true") {
+    return 1;
+  }
+  if (input?.configVerifyPin === true) {
+    return 1;
+  }
+  return 0;
+}
+
 async function fetchQRCode(
   apiBaseUrl: string,
   botType: string,
-  botSpamTicket?: string,
+  botSpamTicket: string | undefined,
+  verifyPin: 0 | 1,
   fetchImpl?: typeof fetch,
 ): Promise<QRCodeResponse> {
   logger.info(`NewFetching QR code from: ${apiBaseUrl} bot_type=${botType}`);
   const localTokenList = getLocalBotTokenList();
   logger.info(`newfetchQRCode: local_token_list count=${localTokenList.length}`);
-  const payload: { local_token_list: string[]; bot_spam_ticket?: string } = {
+  const payload: {
+    local_token_list: string[];
+    bot_spam_ticket?: string;
+    bot_spam_business_data?: string;
+  } = {
     local_token_list: localTokenList,
   };
+  if (verifyPin === 1) {
+    payload.bot_spam_business_data = encodeBotSpamBusinessData({ verify_pin: 1 });
+    logger.info("fetchQRCode: bot_spam_business_data.verify_pin=1");
+  } else {
+    logger.info("fetchQRCode: omit bot_spam_business_data");
+  }
   if (botSpamTicket !== undefined) {
     if (!TICKET_RE.test(botSpamTicket)) {
       throw new BotSpamTicketError("无法获取绑定凭证，连接已停止。");
@@ -254,7 +305,7 @@ export type WeixinQrWaitResult = {
   botToken?: string;
   accountId?: string;
   baseUrl?: string;
-  /** The user ID of the person who scanned the QR code; add to allowFrom. */
+  /** The user ID of the person who scanned the QR code; used as the account owner. */
   userId?: string;
   message: string;
 };
@@ -265,6 +316,8 @@ export async function startWeixinLoginWithQr(opts: {
   accountId?: string;
   apiBaseUrl: string;
   botType?: string;
+  /** When set, overrides argv and `OPENCLAW_WEIXIN_VERIFY_PIN`. */
+  verifyPin?: boolean;
   io?: LoginIo;
 }): Promise<WeixinQrStartResult> {
   const sessionKey = opts.accountId || randomUUID();
@@ -280,10 +333,14 @@ export async function startWeixinLoginWithQr(opts: {
 
   try {
     const botType = opts.botType || DEFAULT_ILINK_BOT_TYPE;
+    const verifyPin = resolveVerifyPinFlag({
+      verifyPin: opts.verifyPin,
+      configVerifyPin: loadConfigVerifyPin(),
+    });
     const promptBindOwner = loadConfigPromptBindOwner();
     const bindOwnerMode = promptBindOwner ? await readOwnerChoice({ readLine, write }) : "self";
     logger.info(
-      `Starting Weixin login with bot_type=${botType} bindOwnerMode=${bindOwnerMode} promptBindOwner=${promptBindOwner}`,
+      `Starting Weixin login with bot_type=${botType} bindOwnerMode=${bindOwnerMode} promptBindOwner=${promptBindOwner} verify_pin=${verifyPin}`,
     );
     let ticket: BotSpamTicketContext | undefined;
     if (bindOwnerMode === "other") {
@@ -309,6 +366,7 @@ export async function startWeixinLoginWithQr(opts: {
       FIXED_BASE_URL,
       botType,
       ticket?.botSpamTicket,
+      verifyPin,
       io.fetchImpl,
     );
     logger.info(
@@ -325,6 +383,7 @@ export async function startWeixinLoginWithQr(opts: {
       bindOwnerMode,
       botSpamTicket: ticket?.botSpamTicket,
       ticketExpireTimeSec: ticket?.expireTimeSec,
+      verifyPin,
     };
     activeLogins.set(sessionKey, login);
 
@@ -410,7 +469,12 @@ async function refreshQRCode(
     return { success: false, message: "绑定凭证即将过期，请重新开始连接。" };
   }
   try {
-    const qrResponse = await fetchQRCode(FIXED_BASE_URL, botType, activeLogin.botSpamTicket);
+    const qrResponse = await fetchQRCode(
+      FIXED_BASE_URL,
+      botType,
+      activeLogin.botSpamTicket,
+      activeLogin.verifyPin,
+    );
     activeLogin.qrcode = qrResponse.qrcode;
     activeLogin.qrcodeUrl = qrResponse.qrcode_img_content;
     activeLogin.startedAt = Date.now();

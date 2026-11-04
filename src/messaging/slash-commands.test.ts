@@ -31,6 +31,7 @@ describe("handleSlashCommand", () => {
       baseUrl: "https://api.example.com",
       token: "bot-token",
       accountId: "acc1",
+      commandAuthorized: true,
       log: vi.fn(),
       errLog: vi.fn(),
     };
@@ -113,6 +114,29 @@ describe("handleSlashCommand", () => {
   it("trims whitespace from content", async () => {
     const result = await handleSlashCommand("  /echo hello  ", ctx, Date.now());
     expect(result.handled).toBe(true);
+  });
+
+  it("does not execute a native slash command when command authorization is denied", async () => {
+    const result = await handleSlashCommand(
+      "/toggle-debug",
+      { ...ctx, commandAuthorized: false },
+      Date.now(),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(isDebugMode("acc1")).toBe(false);
+    expect(mockSendMessageWeixin).not.toHaveBeenCalled();
+  });
+
+  it("does not send an echo reply when command authorization is denied", async () => {
+    const result = await handleSlashCommand(
+      "/echo secret",
+      { ...ctx, commandAuthorized: false },
+      Date.now(),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(mockSendMessageWeixin).not.toHaveBeenCalled();
   });
 
   it("/toggle-debug enables debug mode and replies", async () => {

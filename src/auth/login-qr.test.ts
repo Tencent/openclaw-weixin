@@ -3,8 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../util/logger.js", () => ({
   logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
-const { loadConfigPromptBindOwner } = vi.hoisted(() => ({
+const { loadConfigPromptBindOwner, loadConfigVerifyPin } = vi.hoisted(() => ({
   loadConfigPromptBindOwner: vi.fn(() => false),
+  loadConfigVerifyPin: vi.fn(() => false),
 }));
 
 vi.mock("./accounts.js", () => ({
@@ -14,12 +15,13 @@ vi.mock("./accounts.js", () => ({
   loadConfigAcctwebProxy: () => undefined,
   loadConfigRouteTag: () => undefined,
   loadConfigPromptBindOwner: () => loadConfigPromptBindOwner(),
+  loadConfigVerifyPin: () => loadConfigVerifyPin(),
 }));
 vi.mock("qrcode-terminal", () => ({ default: { generate: vi.fn() } }));
 
 const fetchImpl = vi.fn();
 
-import { startWeixinLoginWithQr, statusNeedsVerifyCode } from "./login-qr.js";
+import { resolveVerifyPinFlag, startWeixinLoginWithQr, statusNeedsVerifyCode } from "./login-qr.js";
 
 const TICKET = "0a1b2c3d4e5f60718293a4b5c6d7e8f9";
 
@@ -46,10 +48,24 @@ function qrBody(id: string) {
   };
 }
 
+/** Standard base64 of the UTF-8 JSON `{"verify_pin":1}`. */
+const VERIFY_PIN_BUSINESS_DATA = "eyJ2ZXJpZnlfcGluIjoxfQ==";
+
+function bindQrPayload(verifyPin: 0 | 1 = 0, extra: Record<string, unknown> = {}) {
+  return {
+    local_token_list: [],
+    ...(verifyPin === 1 ? { bot_spam_business_data: VERIFY_PIN_BUSINESS_DATA } : {}),
+    ...extra,
+  };
+}
+
 beforeEach(() => {
   fetchImpl.mockReset();
   loadConfigPromptBindOwner.mockReset();
   loadConfigPromptBindOwner.mockReturnValue(false);
+  loadConfigVerifyPin.mockReset();
+  loadConfigVerifyPin.mockReturnValue(false);
+  delete process.env.OPENCLAW_WEIXIN_VERIFY_PIN;
 });
 
 describe("startWeixinLoginWithQr", () => {
@@ -74,9 +90,7 @@ describe("startWeixinLoginWithQr", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     const post = fetchImpl.mock.calls[0][1] as RequestInit;
     expect(String(fetchImpl.mock.calls[0][0])).toContain("get_bot_qrcode");
-    expect(JSON.parse(String(post.body))).toEqual({
-      local_token_list: [],
-    });
+    expect(JSON.parse(String(post.body))).toEqual(bindQrPayload());
     const urls = fetchImpl.mock.calls.map((call) => String(call[0])).join("\n");
     expect(urls).not.toContain("get_auth_url");
     expect(urls).not.toContain("query_auth_result");
@@ -101,9 +115,9 @@ describe("startWeixinLoginWithQr", () => {
     expect(readLine).toHaveBeenCalledOnce();
     expect(result.bindOwnerMode).toBe("self");
     expect(String(fetchImpl.mock.calls[0][0])).toContain("get_bot_qrcode");
-    expect(JSON.parse(String((fetchImpl.mock.calls[0][1] as RequestInit).body))).toEqual({
-      local_token_list: [],
-    });
+    expect(JSON.parse(String((fetchImpl.mock.calls[0][1] as RequestInit).body))).toEqual(
+      bindQrPayload(),
+    );
   });
 
   it("other mode waits for auth_status 1 before posting the bind qr", async () => {
@@ -128,9 +142,9 @@ describe("startWeixinLoginWithQr", () => {
     expect(result.bindOwnerMode).toBe("other");
     expect(write.mock.calls.map((c) => String(c[0])).join("")).toContain("实名信息授权");
     expect(String(fetchImpl.mock.calls[2][0])).toContain("query_auth_result");
-    expect(
-      JSON.parse(String((fetchImpl.mock.calls[3][1] as RequestInit).body)).bot_spam_ticket,
-    ).toBe(TICKET);
+    expect(JSON.parse(String((fetchImpl.mock.calls[3][1] as RequestInit).body))).toEqual(
+      bindQrPayload(0, { bot_spam_ticket: TICKET }),
+    );
   });
 
   it("does not request a bind qr when realname auth fails", async () => {
@@ -204,10 +218,64 @@ describe("startWeixinLoginWithQr", () => {
     expect(first.qrcodeUrl).toBe("https://ilinkai.weixin.qq.com/ilink/q/qr-1");
     expect(second.qrcodeUrl).toBe("https://ilinkai.weixin.qq.com/ilink/q/qr-2");
     for (const call of fetchImpl.mock.calls) {
-      expect(JSON.parse(String((call[1] as RequestInit).body))).toEqual({
-        local_token_list: [],
-      });
+      expect(JSON.parse(String((call[1] as RequestInit).body))).toEqual(bindQrPayload());
     }
+  });
+
+  it("sends verify_pin 1 when the login asks to force the pin", async () => {
+    fetchImpl.mockResolvedValueOnce(jsonResponse(qrBody("qr-pin")));
+    await startWeixinLoginWithQr({
+      apiBaseUrl: "https://ilinkai.weixin.qq.com",
+      accountId: "pin-case",
+      verifyPin: true,
+      io: {
+        fetchImpl,
+        nowMs: () => 1_700_000_000_000,
+        write: () => {},
+        readLine: async () => "",
+      },
+    });
+    expect(JSON.parse(String((fetchImpl.mock.calls[0][1] as RequestInit).body))).toEqual(
+      bindQrPayload(1),
+    );
+  });
+
+  it("sends verify_pin 1 when channels.openclaw-weixin.verifyPin is true", async () => {
+    loadConfigVerifyPin.mockReturnValue(true);
+    fetchImpl.mockResolvedValueOnce(jsonResponse(qrBody("qr-config-pin")));
+    await startWeixinLoginWithQr({
+      apiBaseUrl: "https://ilinkai.weixin.qq.com",
+      accountId: "config-pin-case",
+      io: {
+        fetchImpl,
+        nowMs: () => 1_700_000_000_000,
+        write: () => {},
+        readLine: async () => "",
+      },
+    });
+    expect(JSON.parse(String((fetchImpl.mock.calls[0][1] as RequestInit).body))).toEqual(
+      bindQrPayload(1),
+    );
+  });
+});
+
+describe("resolveVerifyPinFlag", () => {
+  it("is 1 only for --verify-pin or an explicit env value", () => {
+    expect(resolveVerifyPinFlag({ argv: ["openclaw"], env: {} })).toBe(0);
+    expect(resolveVerifyPinFlag({ argv: ["openclaw", "--verify-pin"], env: {} })).toBe(1);
+    expect(resolveVerifyPinFlag({ argv: [], env: { OPENCLAW_WEIXIN_VERIFY_PIN: "1" } })).toBe(1);
+    expect(resolveVerifyPinFlag({ argv: [], env: { OPENCLAW_WEIXIN_VERIFY_PIN: "true" } })).toBe(1);
+    expect(resolveVerifyPinFlag({ argv: [], env: { OPENCLAW_WEIXIN_VERIFY_PIN: "0" } })).toBe(0);
+    expect(resolveVerifyPinFlag({ verifyPin: true, argv: [], env: {} })).toBe(1);
+    expect(resolveVerifyPinFlag({ argv: [], env: {}, configVerifyPin: true })).toBe(1);
+    expect(
+      resolveVerifyPinFlag({
+        verifyPin: false,
+        argv: ["--verify-pin"],
+        env: { OPENCLAW_WEIXIN_VERIFY_PIN: "1" },
+        configVerifyPin: true,
+      }),
+    ).toBe(0);
   });
 });
 

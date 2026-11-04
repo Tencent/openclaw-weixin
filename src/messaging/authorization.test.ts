@@ -9,12 +9,11 @@ const commands = {
 describe("resolveWeixinInboundAuthorization", () => {
   it("preserves legacy message access when no owner is stored", async () => {
     const result = await resolveWeixinInboundAuthorization({
-      accountId: "account",
       senderId: "sender",
+      ownerId: undefined,
       rawBody: "hello",
       config: {},
       commands,
-      allowFrom: [],
     });
 
     expect(result).toEqual({ senderAllowed: true, commandAuthorized: undefined });
@@ -22,12 +21,11 @@ describe("resolveWeixinInboundAuthorization", () => {
 
   it("does not authorize commands when no owner is stored", async () => {
     const result = await resolveWeixinInboundAuthorization({
-      accountId: "account",
       senderId: "sender",
+      ownerId: undefined,
       rawBody: "/status",
       config: {},
       commands,
-      allowFrom: [],
     });
 
     expect(result).toEqual({ senderAllowed: true, commandAuthorized: false });
@@ -35,25 +33,23 @@ describe("resolveWeixinInboundAuthorization", () => {
 
   it("admits the stored owner and authorizes commands", async () => {
     const result = await resolveWeixinInboundAuthorization({
-      accountId: "account",
       senderId: "sender",
+      ownerId: "sender",
       rawBody: "/status",
       config: {},
       commands,
-      allowFrom: ["sender"],
     });
 
     expect(result).toEqual({ senderAllowed: true, commandAuthorized: true });
   });
 
-  it("rejects a sender outside the stored allowlist", async () => {
+  it("rejects a sender who is not the QR-scanned account owner", async () => {
     const result = await resolveWeixinInboundAuthorization({
-      accountId: "account",
       senderId: "sender",
+      ownerId: "owner",
       rawBody: "/status",
       config: {},
       commands,
-      allowFrom: ["other"],
     });
 
     expect(result).toEqual({ senderAllowed: false, commandAuthorized: false });

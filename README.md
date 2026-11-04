@@ -102,6 +102,46 @@ When `channels.openclaw-weixin.routeTag` is set, every Weixin API request adds `
 openclaw config set 'channels["openclaw-weixin"].promptBindOwner' true --strict-json
 ```
 
+### Force the phone PIN
+
+`channels.openclaw-weixin.verifyPin` is off by default. Set it to `true` and the bind QR request includes `bot_spam_business_data`, asking security to require the phone PIN. A normal login omits the field and leaves that decision to security.
+
+`openclaw channels login` does not accept `--verify-pin`. That option never reaches the Weixin plugin. Use the config below, or set `OPENCLAW_WEIXIN_VERIFY_PIN=1`.
+
+1. Check the plugin version. `openclaw-weixin` must be a build that reads this config (the current development package is `3.0.3`):
+
+```bash
+openclaw plugins list
+```
+
+2. Turn the switch on:
+
+```bash
+openclaw config set 'channels["openclaw-weixin"].verifyPin' true --strict-json
+openclaw config get 'channels["openclaw-weixin"].verifyPin'
+```
+
+3. Log in. `channels login` loads the plugin in the current command. If the Gateway is not running, login uses the installed plugin immediately. If the Gateway is already running on an older plugin, restart it first:
+
+```bash
+openclaw gateway restart
+openclaw channels login --channel openclaw-weixin
+```
+
+4. Read that day's log, for example `/tmp/openclaw/openclaw-YYYY-MM-DD.log`. A forced PIN logs `fetchQRCode: bot_spam_business_data.verify_pin=1`. The field is the standard base64 of `{"verify_pin":1}`: `eyJ2ZXJpZnlfcGluIjoxfQ==`. A normal login logs `fetchQRCode: omit bot_spam_business_data`.
+
+5. Turn it off after the test:
+
+```bash
+openclaw config set 'channels["openclaw-weixin"].verifyPin' false --strict-json
+```
+
+To force the PIN for one login without changing config:
+
+```bash
+OPENCLAW_WEIXIN_VERIFY_PIN=1 openclaw channels login --channel openclaw-weixin
+```
+
 ### Custom BotAgent
 
 Set an optional identifier for backend log attribution and monitoring:

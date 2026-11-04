@@ -7,7 +7,6 @@ import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 
 import { resolveStateDir } from "../storage/state-dir.js";
 import { deleteQuoteCacheForAccount } from "../messaging/quote-store.js";
-import { resolveFrameworkAllowFromPath } from "./pairing.js";
 import { logger } from "../util/logger.js";
 
 export const DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com";
@@ -223,7 +222,6 @@ export function saveWeixinAccount(
  *   - accounts/{accountId}.json                  (credentials)
  *   - accounts/{accountId}.sync.json             (getUpdates sync buf)
  *   - accounts/{accountId}.context-tokens.json   (context tokens on disk)
- *   - credentials/openclaw-weixin-{accountId}-allowFrom.json (authorized users)
  */
 export function clearWeixinAccount(accountId: string): void {
   deleteQuoteCacheForAccount(accountId);
@@ -239,11 +237,6 @@ export function clearWeixinAccount(accountId: string): void {
     } catch {
       // ignore if not found
     }
-  }
-  try {
-    fs.unlinkSync(resolveFrameworkAllowFromPath(accountId));
-  } catch {
-    // ignore if not found
   }
 }
 
@@ -348,6 +341,15 @@ export function loadConfigAcctwebProxy(accountId?: string): string | undefined {
 export function loadConfigPromptBindOwner(): boolean {
   const section = loadRouteTagSection();
   return section?.promptBindOwner === true;
+}
+
+/**
+ * Read `verifyPin` from `channels.openclaw-weixin.verifyPin`.
+ * Only an explicit `true` asks security to require the phone PIN on this bind.
+ */
+export function loadConfigVerifyPin(): boolean {
+  const section = loadRouteTagSection();
+  return section?.verifyPin === true;
 }
 
 export function loadConfigBotAgent(): string | undefined {

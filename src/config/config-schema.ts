@@ -62,6 +62,11 @@ export const WeixinConfigSchema = weixinAccountSchema.extend({
    * Default false: show the bot bind QR with no prompt and no bot_spam_ticket.
    */
   promptBindOwner: z.boolean().default(false),
+  /**
+   * When true, get_bot_qrcode sends bot_spam_business_data so security requires the phone PIN.
+   * Default false: omit the field and leave the PIN decision to security.
+   */
+  verifyPin: z.boolean().default(false),
   quoteCache: quoteCacheSchema.default({
     enabled: true,
     mediaStorage: { mode: "managed" },

@@ -257,6 +257,15 @@ Self-bind request body, without `bot_spam_ticket`:
 }
 ```
 
+A normal login omits `bot_spam_business_data`. The field is present when `channels.openclaw-weixin.verifyPin` is `true`, or `OPENCLAW_WEIXIN_VERIFY_PIN=1`. It is then one string: the plugin builds a JSON object, encodes that UTF-8 text as standard base64, and sends the result. The current plaintext is `{"verify_pin":1}`, encoded as `eyJ2ZXJpZnlfcGluIjoxfQ==`, which asks security to require the PIN for this bind. Later plugin fields are added to that JSON before encoding, so the wire field stays a single string. The business backend forwards the string as-is; security base64-decodes it and then parses the JSON. A refreshed bind QR keeps the field when this login included it, and keeps omitting it otherwise. `openclaw channels login` does not accept `--verify-pin`, so that option never reaches the plugin. The development steps are in [README](../README.md) under "Force the phone PIN".
+
+```json
+{
+  "local_token_list": [],
+  "bot_spam_business_data": "eyJ2ZXJpZnlfcGluIjoxfQ=="
+}
+```
+
 `local_token_list` holds at most the ten most recent local bot tokens and may be an empty array. When `bot_spam_ticket` is present, it must be 32 hexadecimal characters.
 
 Response body:
