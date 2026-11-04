@@ -26,6 +26,8 @@ export type WeixinApiOptions = {
   baseUrl: string;
   token?: string;
   timeoutMs?: number;
+  /** Cancel requests during channel stop or reload. */
+  abortSignal?: AbortSignal;
   /** Long-poll timeout for getUpdates (server may hold the request up to this). */
   longPollTimeoutMs?: number;
 };
@@ -340,7 +342,6 @@ export async function apiGetFetch(params: {
       headers: hdrs,
       ...(controller ? { signal: controller.signal } : {}),
     });
-    if (t !== undefined) clearTimeout(t);
     const rawText = await res.text();
     logger.debug(`${params.label} status=${res.status} raw=${redactBody(rawText)}`);
     if (!res.ok) {
@@ -354,6 +355,8 @@ export async function apiGetFetch(params: {
       `${params.label}: GET fetch failed url=${redactUrl(url.toString())} timeoutMs=${timeoutMs ?? "none"} type=${classified.type} description=${classified.description}${classified.code ? ` code=${classified.code}` : ""} error=${String(err)}`,
     );
     throw err;
+  } finally {
+    if (t !== undefined) clearTimeout(t);
   }
 }
 
@@ -426,7 +429,6 @@ export async function apiPostFetch(params: {
       body: params.body,
       ...(signal ? { signal } : {}),
     });
-    if (t !== undefined) clearTimeout(t);
     const rawText = await res.text();
     logger.debug(`${params.label} status=${res.status} raw=${redactBody(rawText)}`);
     if (!res.ok) {
@@ -441,6 +443,7 @@ export async function apiPostFetch(params: {
     );
     throw err;
   } finally {
+    if (t !== undefined) clearTimeout(t);
     cleanup();
   }
 }
@@ -597,6 +600,7 @@ export async function sendMessage(
     token: params.token,
     timeoutMs: params.timeoutMs ?? DEFAULT_API_TIMEOUT_MS,
     label: "sendMessage",
+    abortSignal: params.abortSignal,
   });
   const resp = parseWeixinApiJson<SendMessageResp>(rawText);
   if (resp.ret && resp.ret !== 0) {

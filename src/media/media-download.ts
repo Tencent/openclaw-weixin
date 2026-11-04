@@ -19,7 +19,7 @@ type SaveMediaFn = (
 
 /**
  * Download and decrypt media from a single MessageItem.
- * Returns the populated WeixinInboundMediaOpts fields; empty object on unsupported type or failure.
+ * Returns the populated WeixinInboundMediaOpts fields; empty object on unsupported type or failure unless throwOnError is enabled.
  */
 export async function downloadMediaFromItem(
   item: WeixinMessage["item_list"] extends (infer T)[] | undefined ? T : never,
@@ -31,11 +31,17 @@ export async function downloadMediaFromItem(
     log: (msg: string) => void;
     errLog: (msg: string) => void;
     label: string;
+    abortSignal?: AbortSignal;
+    timeoutMs?: number;
+    /** Inbound requests must report download failures instead of dispatching empty media. */
+    throwOnError?: boolean;
   },
 ): Promise<WeixinInboundMediaOpts> {
   const { cdnBaseUrl, saveMedia, log, errLog, label } = deps;
   const mediaSubdir = deps.mediaSubdir ?? "inbound";
   const result: WeixinInboundMediaOpts = {};
+  const downloadOptions = { abortSignal: deps.abortSignal, timeoutMs: deps.timeoutMs };
+  deps.abortSignal?.throwIfAborted();
 
   if (item.type === MessageItemType.IMAGE) {
     const img = item.image_item;
@@ -54,24 +60,30 @@ export async function downloadMediaFromItem(
             cdnBaseUrl,
             `${label} image`,
             img.media.full_url,
+            downloadOptions,
           )
         : await downloadPlainCdnBuffer(
             img.media.encrypt_query_param ?? "",
             cdnBaseUrl,
             `${label} image-plain`,
             img.media.full_url,
+            downloadOptions,
           );
+      deps.abortSignal?.throwIfAborted();
       const saved = await saveMedia(buf, undefined, mediaSubdir, WEIXIN_MEDIA_MAX_BYTES);
       result.decryptedPicPath = saved.path;
       logger.debug(`${label} image saved: ${saved.path}`);
     } catch (err) {
+      if (deps.abortSignal?.aborted || deps.throwOnError) throw err;
       logger.error(`${label} image download/decrypt failed: ${String(err)}`);
       errLog(`weixin ${label} image download/decrypt failed: ${String(err)}`);
     }
   } else if (item.type === MessageItemType.VOICE) {
     const voice = item.voice_item;
-    if ((!voice?.media?.encrypt_query_param && !voice?.media?.full_url) || !voice?.media?.aes_key)
+    if ((!voice?.media?.encrypt_query_param && !voice?.media?.full_url) || !voice?.media?.aes_key) {
+      if (deps.throwOnError) throw new Error(`${label}: media URL or encryption key is missing`);
       return result;
+    }
     try {
       const silkBuf = await downloadAndDecryptBuffer(
         voice.media.encrypt_query_param ?? "",
@@ -79,21 +91,25 @@ export async function downloadMediaFromItem(
         cdnBaseUrl,
         `${label} voice`,
         voice.media.full_url,
+        downloadOptions,
       );
       logger.debug(`${label} voice: decrypted ${silkBuf.length} bytes, attempting silk transcode`);
       const wavBuf = await silkToWav(silkBuf);
       if (wavBuf) {
+        deps.abortSignal?.throwIfAborted();
         const saved = await saveMedia(wavBuf, "audio/wav", mediaSubdir, WEIXIN_MEDIA_MAX_BYTES);
         result.decryptedVoicePath = saved.path;
         result.voiceMediaType = "audio/wav";
         logger.debug(`${label} voice: saved WAV to ${saved.path}`);
       } else {
+        deps.abortSignal?.throwIfAborted();
         const saved = await saveMedia(silkBuf, "audio/silk", mediaSubdir, WEIXIN_MEDIA_MAX_BYTES);
         result.decryptedVoicePath = saved.path;
         result.voiceMediaType = "audio/silk";
         logger.debug(`${label} voice: silk transcode unavailable, saved raw SILK to ${saved.path}`);
       }
     } catch (err) {
+      if (deps.abortSignal?.aborted || deps.throwOnError) throw err;
       logger.error(`${label} voice download/transcode failed: ${String(err)}`);
       errLog(`weixin ${label} voice download/transcode failed: ${String(err)}`);
     }
@@ -102,8 +118,10 @@ export async function downloadMediaFromItem(
     if (
       (!fileItem?.media?.encrypt_query_param && !fileItem?.media?.full_url) ||
       !fileItem?.media?.aes_key
-    )
+    ) {
+      if (deps.throwOnError) throw new Error(`${label}: media URL or encryption key is missing`);
       return result;
+    }
     try {
       const buf = await downloadAndDecryptBuffer(
         fileItem.media.encrypt_query_param ?? "",
@@ -111,8 +129,10 @@ export async function downloadMediaFromItem(
         cdnBaseUrl,
         `${label} file`,
         fileItem.media.full_url,
+        downloadOptions,
       );
       const mime = getMimeFromFilename(fileItem.file_name ?? "file.bin");
+      deps.abortSignal?.throwIfAborted();
       const saved = await saveMedia(
         buf,
         mime,
@@ -124,6 +144,7 @@ export async function downloadMediaFromItem(
       result.fileMediaType = mime;
       logger.debug(`${label} file: saved to ${saved.path} mime=${mime}`);
     } catch (err) {
+      if (deps.abortSignal?.aborted || deps.throwOnError) throw err;
       logger.error(`${label} file download failed: ${String(err)}`);
       errLog(`weixin ${label} file download failed: ${String(err)}`);
     }
@@ -132,8 +153,10 @@ export async function downloadMediaFromItem(
     if (
       (!videoItem?.media?.encrypt_query_param && !videoItem?.media?.full_url) ||
       !videoItem?.media?.aes_key
-    )
+    ) {
+      if (deps.throwOnError) throw new Error(`${label}: media URL or encryption key is missing`);
       return result;
+    }
     try {
       const buf = await downloadAndDecryptBuffer(
         videoItem.media.encrypt_query_param ?? "",
@@ -141,11 +164,14 @@ export async function downloadMediaFromItem(
         cdnBaseUrl,
         `${label} video`,
         videoItem.media.full_url,
+        downloadOptions,
       );
+      deps.abortSignal?.throwIfAborted();
       const saved = await saveMedia(buf, "video/mp4", mediaSubdir, WEIXIN_MEDIA_MAX_BYTES);
       result.decryptedVideoPath = saved.path;
       logger.debug(`${label} video: saved to ${saved.path}`);
     } catch (err) {
+      if (deps.abortSignal?.aborted || deps.throwOnError) throw err;
       logger.error(`${label} video download failed: ${String(err)}`);
       errLog(`weixin ${label} video download failed: ${String(err)}`);
     }
