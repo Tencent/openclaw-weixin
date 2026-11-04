@@ -104,42 +104,61 @@ openclaw config set 'channels["openclaw-weixin"].promptBindOwner' true --strict-
 
 ### Force the phone PIN
 
-`channels.openclaw-weixin.verifyPin` is off by default. Set it to `true` and the bind QR request includes `bot_spam_business_data`, asking security to require the phone PIN. A normal login omits the field and leaves that decision to security.
+`channels.openclaw-weixin.verifyPin` is off by default. Set it to `true` and the bind QR request includes `bot_spam_business_data`, asking security to require the phone PIN. A normal login omits the field. Whether the phone actually shows the PIN is decided later by `need_verifycode` on `get_qrcode_status`. The QR response does not decide it.
 
-`openclaw channels login` does not accept `--verify-pin`. That option never reaches the Weixin plugin. Use the config below, or set `OPENCLAW_WEIXIN_VERIFY_PIN=1`.
+`openclaw channels login` does not accept `--verify-pin`. That option never reaches the Weixin plugin.
 
-1. Check the plugin version. `openclaw-weixin` must be a build that reads this config (the current development package is `3.0.3`):
+#### Test a PIN bind
+
+Use these steps to confirm, on the test route, that the plugin sends the forced PIN on the bind QR request. Do not publish this test package to the production npm registry.
+
+1. Install a plugin build that logs the full QR request body. The current development package is `3.0.4`. From the plugin directory, build, pack, and replace the installed plugin:
 
 ```bash
+npm run build
+npm pack
+openclaw plugins install ./tencent-weixin-openclaw-weixin-3.0.4.tgz --force
 openclaw plugins list
 ```
 
-2. Turn the switch on:
-
-```bash
-openclaw config set 'channels["openclaw-weixin"].verifyPin' true --strict-json
-openclaw config get 'channels["openclaw-weixin"].verifyPin'
-```
-
-3. Log in. `channels login` loads the plugin in the current command. If the Gateway is not running, login uses the installed plugin immediately. If the Gateway is already running on an older plugin, restart it first:
+`openclaw-weixin` in that list must show Version `3.0.4`. If the Gateway is already running, restart it so it does not keep an older plugin in memory:
 
 ```bash
 openclaw gateway restart
-openclaw channels login --channel openclaw-weixin
 ```
 
-4. Read that day's log, for example `/tmp/openclaw/openclaw-YYYY-MM-DD.log`. A forced PIN logs `fetchQRCode: bot_spam_business_data.verify_pin=1`. The field is the standard base64 of `{"verify_pin":1}`: `eyJ2ZXJpZnlfcGluIjoxfQ==`. A normal login logs `fetchQRCode: omit bot_spam_business_data`.
-
-5. Turn it off after the test:
+2. Turn on the test route and the forced PIN. With `routeTag` set to `10086`, the QR request goes to `https://ilinkai.weixin.qq.com/ilink/bot/get_bot_qrcode?bot_type=3&_cradle_hostname=g10086` and is handled by `GetBotQrcodeCgi` in `ilinkbotlogicsvr`. The body includes `bot_spam_business_data` only when `verifyPin` is `true`. For a self bind, leave `promptBindOwner` off so login skips real-name authorization and omits `bot_spam_ticket`. `acctwebProxy` proxies only the real-name CGI and does not change the QR host.
 
 ```bash
-openclaw config set 'channels["openclaw-weixin"].verifyPin' false --strict-json
+openclaw config set 'channels["openclaw-weixin"].routeTag' 10086 --strict-json
+openclaw config set 'channels["openclaw-weixin"].verifyPin' true --strict-json
+openclaw config set 'channels["openclaw-weixin"].promptBindOwner' false --strict-json
 ```
 
-To force the PIN for one login without changing config:
+To force the PIN for one login without changing `verifyPin`, set `routeTag` first, then:
 
 ```bash
 OPENCLAW_WEIXIN_VERIFY_PIN=1 openclaw channels login --channel openclaw-weixin
+```
+
+3. Log in. Do not pass `--verify-pin`:
+
+```bash
+openclaw channels login --channel openclaw-weixin
+```
+
+4. Read that day's log, `/tmp/openclaw/openclaw-YYYY-MM-DD.log`:
+
+```bash
+grep 'fetchQRCode: body=' /tmp/openclaw/openclaw-YYYY-MM-DD.log
+```
+
+The check passes when that body contains `"bot_spam_business_data":"eyJ2ZXJpZnlfcGluIjoxfQ=="`, the standard base64 of `{"verify_pin":1}`. The same stretch of log also has `fetchQRCode: bot_spam_business_data.verify_pin=1`, then `QR code received`. The older `POST ... body=` line keeps only the first 200 characters, so the field is past the cut. Do not use that line. A normal login logs `fetchQRCode: omit bot_spam_business_data`.
+
+5. Turn the forced PIN off after the test:
+
+```bash
+openclaw config set 'channels["openclaw-weixin"].verifyPin' false --strict-json
 ```
 
 ### Custom BotAgent

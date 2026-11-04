@@ -192,6 +192,7 @@ async function fetchQRCode(
     logger.info("fetchQRCode: omit bot_spam_ticket");
   }
   const body = JSON.stringify(payload);
+  logger.info(`fetchQRCode: body=${body}`);
   if (fetchImpl) {
     const url = `${apiBaseUrl.replace(/\/$/, "")}/ilink/bot/get_bot_qrcode?bot_type=${encodeURIComponent(botType)}`;
     const response = await fetchImpl(url, {

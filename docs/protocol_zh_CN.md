@@ -259,7 +259,7 @@ POST /ilink/bot/get_bot_qrcode?bot_type=3
 
 普通登录不带 `bot_spam_business_data`。`channels.openclaw-weixin.verifyPin` 为 `true`，或设置了 `OPENCLAW_WEIXIN_VERIFY_PIN=1` 时才带上。这时它是一个字符串：插件先把业务信息组成 JSON，再用 UTF-8 做标准 base64。当前明文是 `{"verify_pin":1}`，编码为 `eyJ2ZXJpZnlfcGluIjoxfQ==`，表示这次绑定要求出 Pin。后续插件要加字段时，加在这段 JSON 里，再整体编码，线上字段仍然是一个字符串。业务侧按字符串原样交给安全；安全先 base64 解码，再按 JSON 解析。换码时，这次登录带过该字段就继续带，没带过就继续不带。
 
-`openclaw channels login` 不接受 `--verify-pin`，这个参数到不了插件。开发自测步骤见 [README 中文说明](../README.zh_CN.md) 的「强制弹出手机 Pin」。
+`openclaw channels login` 不接受 `--verify-pin`，这个参数到不了插件。测试 Pin 码绑定时，把 `routeTag` 设为 `10086`，让取码打到 `_cradle_hostname=g10086`，再打开 `verifyPin`。通过的标志是当天日志里 `fetchQRCode: body=` 含有 `"bot_spam_business_data":"eyJ2ZXJpZnlfcGluIjoxfQ=="`。完整步骤见 [README 中文说明](../README.zh_CN.md) 的「测试 Pin 码绑定」。
 
 ```json
 {

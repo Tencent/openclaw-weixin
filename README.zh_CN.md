@@ -104,42 +104,61 @@ openclaw config set 'channels["openclaw-weixin"].promptBindOwner' true --strict-
 
 ### 强制弹出手机 Pin
 
-`channels.openclaw-weixin.verifyPin` 默认关闭。设为 `true` 后，取绑定二维码会带上 `bot_spam_business_data`，要求这次绑定弹出手机 Pin。普通登录不带这个字段，是否出 Pin 仍由安全侧决定。
+`channels.openclaw-weixin.verifyPin` 默认关闭。设为 `true` 后，取绑定二维码会带上 `bot_spam_business_data`，要求这次绑定弹出手机 Pin。普通登录不带这个字段。手机上是否真的弹出 Pin，仍由安全侧在 `get_qrcode_status` 里用 `need_verifycode` 决定，取码响应本身不决定。
 
-`openclaw channels login` 不接受 `--verify-pin`。这个参数到不了微信插件。用上面的配置，或设置环境变量 `OPENCLAW_WEIXIN_VERIFY_PIN=1`。
+`openclaw channels login` 不接受 `--verify-pin`。这个参数到不了微信插件。
 
-1. 确认插件版本。列表里 `openclaw-weixin` 的 Version 需要是带这个配置的版本（当前开发包是 `3.0.3`）：
+#### 测试 Pin 码绑定
+
+要在测试环境确认插件把强制 Pin 带进了取码请求，按下面做。这个测试包不要发到正式 npm。
+
+1. 安装会把完整取码请求体写进日志的插件。当前开发包是 `3.0.4`。在插件目录编译打包，再覆盖本机已安装的插件：
 
 ```bash
+npm run build
+npm pack
+openclaw plugins install ./tencent-weixin-openclaw-weixin-3.0.4.tgz --force
 openclaw plugins list
 ```
 
-2. 打开开关：
-
-```bash
-openclaw config set 'channels["openclaw-weixin"].verifyPin' true --strict-json
-openclaw config get 'channels["openclaw-weixin"].verifyPin'
-```
-
-3. 登录。`channels login` 在当前命令里加载插件。Gateway 没在跑时，直接登录就会用到已安装的插件。Gateway 已经在跑、而且内存里还是旧插件时，先重启再登录：
+列表里 `openclaw-weixin` 的 Version 需要是 `3.0.4`。Gateway 已经在跑时先重启，避免内存里还是旧插件：
 
 ```bash
 openclaw gateway restart
-openclaw channels login --channel openclaw-weixin
 ```
 
-4. 看当天日志，例如 `/tmp/openclaw/openclaw-YYYY-MM-DD.log`。强制出 Pin 时有 `fetchQRCode: bot_spam_business_data.verify_pin=1`。请求体里的字段是 `{"verify_pin":1}` 的标准 base64：`eyJ2ZXJpZnlfcGluIjoxfQ==`。普通登录是 `fetchQRCode: omit bot_spam_business_data`。
-
-5. 测完关掉：
+2. 打开测试路由和强制 Pin。`routeTag` 为 `10086` 时，取码打到 `https://ilinkai.weixin.qq.com/ilink/bot/get_bot_qrcode?bot_type=3&_cradle_hostname=g10086`，由 `ilinkbotlogicsvr` 的 `GetBotQrcodeCgi` 处理。`verifyPin` 为 `true` 时请求体才带 `bot_spam_business_data`。测本人绑定时保持 `promptBindOwner` 关闭，这样不走实名，请求体也不带 `bot_spam_ticket`。`acctwebProxy` 只代理实名接口，不改变取码地址。
 
 ```bash
-openclaw config set 'channels["openclaw-weixin"].verifyPin' false --strict-json
+openclaw config set 'channels["openclaw-weixin"].routeTag' 10086 --strict-json
+openclaw config set 'channels["openclaw-weixin"].verifyPin' true --strict-json
+openclaw config set 'channels["openclaw-weixin"].promptBindOwner' false --strict-json
 ```
 
-也可以不改配置，只对这一次登录生效：
+只想对这一次登录强制出 Pin、又不改 `verifyPin` 时，仍然要先配好 `routeTag`，再这样登录：
 
 ```bash
 OPENCLAW_WEIXIN_VERIFY_PIN=1 openclaw channels login --channel openclaw-weixin
+```
+
+3. 登录。不要加 `--verify-pin`：
+
+```bash
+openclaw channels login --channel openclaw-weixin
+```
+
+4. 看当天日志 `/tmp/openclaw/openclaw-YYYY-MM-DD.log`：
+
+```bash
+grep 'fetchQRCode: body=' /tmp/openclaw/openclaw-YYYY-MM-DD.log
+```
+
+通过的标志是这行 body 里有 `"bot_spam_business_data":"eyJ2ZXJpZnlfcGluIjoxfQ=="`。它是 `{"verify_pin":1}` 的标准 base64。同一段日志还有 `fetchQRCode: bot_spam_business_data.verify_pin=1`，随后出现 `QR code received`。旧的 `POST ... body=` 只保留前 200 个字符，字段在截断之后，不要用那一行判断。普通登录对应的日志是 `fetchQRCode: omit bot_spam_business_data`。
+
+5. 测完关掉强制 Pin：
+
+```bash
+openclaw config set 'channels["openclaw-weixin"].verifyPin' false --strict-json
 ```
 
 ### 自定义 BotAgent
