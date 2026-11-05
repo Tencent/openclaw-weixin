@@ -34,7 +34,10 @@ type SqliteDatabase = {
   close: () => void;
 };
 
-type DatabaseSyncConstructor = new (filePath: string) => SqliteDatabase;
+type DatabaseSyncConstructor = new (
+  filePath: string,
+  options?: { readOnly?: boolean },
+) => SqliteDatabase;
 
 export type QuoteCachePolicy = {
   enabled: boolean;
@@ -44,6 +47,19 @@ export type QuoteCachePolicy = {
   mediaRetentionMs: number;
   maxMediaBytesPerAccount: number;
   maxSingleMediaBytes: number;
+};
+
+export type QuoteMediaRecord = {
+  mediaPath?: string;
+  mediaMime?: string;
+  mediaName?: string;
+  mediaSize?: number;
+};
+
+export type QuoteMediaInput = {
+  sourceMediaPath: string;
+  mediaMime?: string;
+  mediaName?: string;
 };
 
 export type QuoteMessageRecord = {
@@ -56,12 +72,39 @@ export type QuoteMessageRecord = {
   mediaMime?: string;
   mediaName?: string;
   mediaSize?: number;
+  media?: QuoteMediaRecord[];
   createdAt: number;
 };
 
-export type QuoteMessageInput = Omit<QuoteMessageRecord, "mediaPath" | "mediaSize"> & {
+export type QuoteMessageInput = Omit<QuoteMessageRecord, "mediaPath" | "mediaSize" | "media"> & {
   sourceMediaPath?: string;
+  media?: QuoteMediaInput[];
 };
+
+type StoredMedia = { path?: string; owned: boolean; mime?: string; name?: string; size?: number };
+
+function mediaRecord(media: StoredMedia): QuoteMediaRecord {
+  return {
+    ...(media.path ? { mediaPath: media.path } : {}),
+    ...(media.mime ? { mediaMime: media.mime } : {}),
+    ...(media.name ? { mediaName: media.name } : {}),
+    ...(media.size !== undefined ? { mediaSize: media.size } : {}),
+  };
+}
+
+// Shared across store replacement so an old in-flight turn survives channel reload.
+const activeMediaPaths = new Map<string, number>();
+// Only files created in, or verified as owned by, a managed media directory enter here.
+const pendingOwnedMediaPaths = new Map<string, string>();
+
+/** Old on-disk databases can be deleted before the additive migration has run. */
+function mediaReferenceTable(db: SqliteDatabase): string {
+  return db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'view' AND name = 'quote_media_refs'")
+    .get()
+    ? "quote_media_refs"
+    : "quote_messages";
+}
 
 type QuoteCacheConfig = {
   enabled?: boolean;
@@ -88,6 +131,7 @@ type StoredRow = {
   media_mime: string | null;
   media_name: string | null;
   media_size: number | null;
+  media_items: string;
   created_at: number;
 };
 
@@ -200,14 +244,14 @@ function removeUnreferencedMediaFiles(
     return;
   }
   const isReferenced = db.prepare(
-    "SELECT 1 AS found FROM quote_messages WHERE media_path = ? LIMIT 1",
+    `SELECT 1 AS found FROM ${mediaReferenceTable(db)} WHERE media_path = ? LIMIT 1`,
   );
   const visit = (currentDirectory: string) => {
     for (const entry of fs.readdirSync(currentDirectory, { withFileTypes: true })) {
       const fullPath = path.join(currentDirectory, entry.name);
       if (entry.isDirectory()) {
         visit(fullPath);
-      } else if (entry.isFile() && !isReferenced.get(fullPath)) {
+      } else if (entry.isFile() && !activeMediaPaths.has(fullPath) && !isReferenced.get(fullPath)) {
         try {
           fs.unlinkSync(fullPath);
         } catch (err) {
@@ -247,7 +291,9 @@ function resolveConfiguredCustomMediaRoot(): string | null {
       : null;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      logger.warn(`quote cache: failed to read media storage config path=${configPath}: ${String(err)}`);
+      logger.warn(
+        `quote cache: failed to read media storage config path=${configPath}: ${String(err)}`,
+      );
     }
     return null;
   }
@@ -291,23 +337,27 @@ export class QuoteStore {
   private readonly db: SqliteDatabase;
   private readonly mediaRoot: string;
   private readonly mediaStorage: QuoteMediaStorage;
+  private readonly databasePath: string;
   private policy: QuoteCachePolicy;
   private writesSinceGc = 0;
   private gcRunning = false;
   private gcRequested = false;
   private gcScheduled = false;
   private closed = false;
+  private gcDeferred = false;
   private readonly gcTimer: ReturnType<typeof setInterval>;
 
   private constructor(
     db: SqliteDatabase,
     mediaRoot: string,
     policy: QuoteCachePolicy,
+    databasePath: string,
   ) {
     this.db = db;
     this.mediaRoot = mediaRoot;
     this.mediaStorage = policy.mediaStorage;
     this.policy = policy;
+    this.databasePath = databasePath;
     this.initializeSchema();
     this.gcTimer = setInterval(() => this.requestGc(), GC_TIMER_MS);
     this.gcTimer.unref();
@@ -363,7 +413,7 @@ export class QuoteStore {
       } catch {
         // best-effort
       }
-      return new QuoteStore(openedDb, mediaRoot, params.policy);
+      return new QuoteStore(openedDb, mediaRoot, params.policy, dbPath);
     } catch (err) {
       try {
         db?.close();
@@ -400,6 +450,7 @@ export class QuoteStore {
     _contentType: string | undefined,
     maxBytes: number | undefined,
     originalFilename: string | undefined,
+    retain?: (filePath: string) => void,
   ): Promise<{ path: string }> {
     if (maxBytes !== undefined && buffer.length > maxBytes) {
       throw new Error(`media exceeds maximum size of ${maxBytes} bytes`);
@@ -418,8 +469,93 @@ export class QuoteStore {
       : "media";
     const ext = path.extname(safeName).slice(0, 16) || mediaFileExtension(buffer, _contentType);
     const filePath = path.join(accountDir, `${crypto.randomUUID()}${ext}`);
+    retain?.(filePath);
     await fs.promises.writeFile(filePath, buffer, { flag: "wx", mode: 0o600 });
     return { path: filePath };
+  }
+
+  /** Protect paths from write start until the caller releases this entire turn. */
+  createMediaLease(accountId: string) {
+    const paths = new Set<string>();
+    let released = false;
+    const retain = (filePath: string) => {
+      if (released) throw new Error("media lease has been released");
+      const absolutePath = path.resolve(filePath);
+      if (paths.has(absolutePath)) return;
+      paths.add(absolutePath);
+      activeMediaPaths.set(absolutePath, (activeMediaPaths.get(absolutePath) ?? 0) + 1);
+    };
+    return {
+      retain,
+      saveMediaBuffer: (
+        buffer: Buffer,
+        type: string | undefined,
+        maxBytes: number | undefined,
+        name: string | undefined,
+      ) =>
+        this.saveMediaBuffer(accountId, buffer, type, maxBytes, name, (filePath) => {
+          retain(filePath);
+          if (this.mediaStorage.mode !== "inbound")
+            pendingOwnedMediaPaths.set(filePath, this.databasePath);
+        }),
+      release: () => {
+        if (released) return;
+        released = true;
+        for (const filePath of paths) {
+          const count = activeMediaPaths.get(filePath)!;
+          if (count === 1) activeMediaPaths.delete(filePath);
+          else activeMediaPaths.set(filePath, count - 1);
+        }
+        this.cleanupReleasedMedia();
+        if (this.gcDeferred) {
+          this.gcDeferred = false;
+          this.requestGc();
+        }
+      },
+    };
+  }
+
+  private isMediaActive(filePath: string): boolean {
+    if (!activeMediaPaths.has(filePath)) return false;
+    this.gcDeferred = true;
+    return true;
+  }
+
+  /** Finish postponed owned-file deletion even after account removal or store close. */
+  private cleanupReleasedMedia(): void {
+    const candidates = [...pendingOwnedMediaPaths].filter(
+      ([filePath, databasePath]) =>
+        databasePath === this.databasePath && !activeMediaPaths.has(filePath),
+    );
+    if (!candidates.length) return;
+    let reopened: SqliteDatabase | undefined;
+    try {
+      if (this.closed) {
+        const require = createRequire(import.meta.url);
+        const { DatabaseSync } = require("node:sqlite") as {
+          DatabaseSync: DatabaseSyncConstructor;
+        };
+        reopened = new DatabaseSync(this.databasePath, { readOnly: true });
+      }
+      const db = reopened ?? this.db;
+      const referenced = db.prepare(
+        `SELECT 1 FROM ${mediaReferenceTable(db)} WHERE media_path = ? LIMIT 1`,
+      );
+      for (const [filePath] of candidates) {
+        if (!referenced.get(filePath)) {
+          try {
+            fs.unlinkSync(filePath);
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          }
+        }
+        pendingOwnedMediaPaths.delete(filePath);
+      }
+    } catch (error) {
+      logger.warn(`quote cache: deferred media cleanup failed: ${String(error)}`);
+    } finally {
+      reopened?.close();
+    }
   }
 
   private initializeSchema(): void {
@@ -452,6 +588,20 @@ export class QuoteStore {
     if (!columns.some((column) => column.name === "media_owned")) {
       this.db.exec("ALTER TABLE quote_messages ADD COLUMN media_owned INTEGER NOT NULL DEFAULT 1");
     }
+    if (!columns.some((column) => column.name === "media_items")) {
+      this.db.exec("ALTER TABLE quote_messages ADD COLUMN media_items TEXT NOT NULL DEFAULT '[]'");
+    }
+    this.db.exec(`
+      CREATE VIEW IF NOT EXISTS quote_media_refs AS
+        SELECT account_id, conversation_id, message_id, media_path, media_owned, media_size, created_at
+          FROM quote_messages WHERE media_path IS NOT NULL
+        UNION ALL
+        SELECT q.account_id, q.conversation_id, q.message_id,
+               json_extract(m.value, '$.path'), json_extract(m.value, '$.owned'),
+               json_extract(m.value, '$.size'), q.created_at
+          FROM quote_messages q, json_each(q.media_items) m
+          WHERE json_extract(m.value, '$.path') IS NOT NULL;
+    `);
   }
 
   find(accountId: string, conversationId: string, messageId: string): QuoteMessageRecord | null {
@@ -460,7 +610,7 @@ export class QuoteStore {
       this.db
         .prepare(`
           SELECT account_id, conversation_id, message_id, direction, body,
-                 media_path, media_owned, media_mime, media_name, media_size, created_at
+                 media_path, media_owned, media_mime, media_name, media_size, media_items, created_at
           FROM quote_messages
           WHERE account_id = ? AND conversation_id = ? AND message_id = ?
         `)
@@ -471,6 +621,13 @@ export class QuoteStore {
       this.deleteMessage(accountId, conversationId, messageId);
       return null;
     }
+    const extraMedia = (JSON.parse(row.media_items) as StoredMedia[]).map(mediaRecord);
+    const firstMedia: QuoteMediaRecord = {
+      ...(row.media_path ? { mediaPath: row.media_path } : {}),
+      ...(row.media_mime ? { mediaMime: row.media_mime } : {}),
+      ...(row.media_name ? { mediaName: row.media_name } : {}),
+      ...(typeof row.media_size === "number" ? { mediaSize: row.media_size } : {}),
+    };
     return {
       accountId: row.account_id,
       conversationId: row.conversation_id,
@@ -481,21 +638,51 @@ export class QuoteStore {
       ...(row.media_mime ? { mediaMime: row.media_mime } : {}),
       ...(row.media_name ? { mediaName: row.media_name } : {}),
       ...(typeof row.media_size === "number" ? { mediaSize: row.media_size } : {}),
+      ...(extraMedia.length ? { media: [firstMedia, ...extraMedia] } : {}),
       createdAt: row.created_at,
     };
   }
 
   async put(input: QuoteMessageInput): Promise<void> {
-    if (this.closed || !input.messageId || (!input.body && !input.sourceMediaPath)) return;
-    const media = input.sourceMediaPath
-      ? await this.registerMedia(input.accountId, input.sourceMediaPath, input.mediaMime)
-      : null;
+    if (
+      this.closed ||
+      !input.messageId ||
+      (!input.body && !input.sourceMediaPath && !input.media?.length)
+    )
+      return;
+    const inputs =
+      input.media ??
+      (input.sourceMediaPath
+        ? [
+            {
+              sourceMediaPath: input.sourceMediaPath,
+              mediaMime: input.mediaMime,
+              mediaName: input.mediaName,
+            },
+          ]
+        : []);
+    const registered: StoredMedia[] = [];
+    for (const item of inputs) {
+      const result = await this.registerMedia(
+        input.accountId,
+        item.sourceMediaPath,
+        item.mediaMime,
+      );
+      registered.push({
+        ...(result ?? { owned: false }),
+        ...(item.mediaMime ? { mime: item.mediaMime } : {}),
+        ...(item.mediaName ? { name: item.mediaName } : {}),
+      });
+    }
+    // A channel can stop while file metadata is being read.
+    if (this.closed) return;
+    const media = registered[0];
     this.db
       .prepare(`
         INSERT INTO quote_messages (
           account_id, conversation_id, message_id, direction, body,
-          media_path, media_owned, media_mime, media_name, media_size, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          media_path, media_owned, media_mime, media_name, media_size, created_at, media_items
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(account_id, conversation_id, message_id) DO UPDATE SET
           direction = excluded.direction,
           body = excluded.body,
@@ -505,7 +692,8 @@ export class QuoteStore {
           media_mime = COALESCE(excluded.media_mime, quote_messages.media_mime),
           media_name = COALESCE(excluded.media_name, quote_messages.media_name),
           media_size = COALESCE(excluded.media_size, quote_messages.media_size),
-          created_at = excluded.created_at
+          created_at = excluded.created_at,
+          media_items = CASE WHEN ? THEN excluded.media_items ELSE quote_messages.media_items END
       `)
       .run(
         input.accountId,
@@ -515,10 +703,12 @@ export class QuoteStore {
         input.body,
         media?.path ?? null,
         media ? Number(media.owned) : 1,
-        input.mediaMime ?? media?.mime ?? null,
-        input.mediaName ?? media?.name ?? null,
+        media?.mime ?? input.mediaMime ?? null,
+        media?.name ?? input.mediaName ?? null,
         media?.size ?? null,
         Number.isFinite(input.createdAt) && input.createdAt > 0 ? input.createdAt : Date.now(),
+        JSON.stringify(registered.slice(1)),
+        inputs.length > 0 ? 1 : 0,
       );
 
     this.writesSinceGc += 1;
@@ -535,7 +725,7 @@ export class QuoteStore {
     if (this.closed) return;
     const ownedPaths = this.db
       .prepare(`
-        SELECT DISTINCT media_path FROM quote_messages
+        SELECT DISTINCT media_path FROM quote_media_refs
         WHERE account_id = ? AND media_owned = 1 AND media_path IS NOT NULL
       `)
       .all(accountId) as Array<{ media_path: string }>;
@@ -637,9 +827,9 @@ export class QuoteStore {
       const sweepAccounts = new Set([
         ...activeAccounts,
         ...(
-          this.db
-            .prepare("SELECT DISTINCT account_id FROM quote_messages")
-            .all() as Array<{ account_id: string }>
+          this.db.prepare("SELECT DISTINCT account_id FROM quote_messages").all() as Array<{
+            account_id: string;
+          }>
         ).map(({ account_id }) => account_id),
       ]);
       const messageCutoff = now - this.policy.retentionMs;
@@ -664,6 +854,7 @@ export class QuoteStore {
         this.enforceMediaBudget(accountId);
       }
       this.pruneOrphanMediaFiles(sweepAccounts);
+      this.cleanupReleasedMedia();
     } catch (err) {
       logger.warn(`quote cache GC failed: ${String(err)}`);
     } finally {
@@ -680,7 +871,7 @@ export class QuoteStore {
       .prepare(`
         SELECT media_path, MAX(COALESCE(media_size, 0)) AS media_size,
                MAX(created_at) AS newest_at
-        FROM quote_messages
+        FROM quote_media_refs
         WHERE account_id = ? AND media_path IS NOT NULL AND media_owned = 1
         GROUP BY media_path
         ORDER BY newest_at ASC
@@ -690,7 +881,7 @@ export class QuoteStore {
 
   private expireOldMedia(accountId: string, cutoff: number): void {
     for (const media of this.listMedia(accountId)) {
-      if (media.newest_at >= cutoff) continue;
+      if (media.newest_at >= cutoff || this.isMediaActive(media.media_path)) continue;
       this.detachMedia(media.media_path);
     }
   }
@@ -700,23 +891,46 @@ export class QuoteStore {
     let total = rows.reduce((sum, row) => sum + Math.max(0, row.media_size), 0);
     for (const row of rows) {
       if (total <= this.policy.maxMediaBytesPerAccount) break;
+      if (this.isMediaActive(row.media_path)) continue;
       this.detachMedia(row.media_path);
       total -= Math.max(0, row.media_size);
     }
   }
 
   private detachMedia(mediaPath: string): void {
+    if (this.isMediaActive(mediaPath)) return;
     this.db
       .prepare(
         "UPDATE quote_messages SET media_path = NULL WHERE media_path = ? AND media_owned = 1",
       )
       .run(mediaPath);
+    const rows = this.db
+      .prepare("SELECT rowid, media_items FROM quote_messages WHERE media_items != '[]'")
+      .all() as Array<{ rowid: number; media_items: string }>;
+    for (const row of rows) {
+      const items = JSON.parse(row.media_items) as StoredMedia[];
+      let changed = false;
+      for (const item of items) {
+        if (item.path === mediaPath && item.owned) {
+          delete item.path;
+          changed = true;
+        }
+      }
+      if (changed)
+        this.db
+          .prepare("UPDATE quote_messages SET media_items = ? WHERE rowid = ?")
+          .run(JSON.stringify(items), row.rowid);
+    }
     this.removeMediaIfOrphaned(mediaPath);
   }
 
   private removeMediaIfOrphaned(mediaPath: string): void {
+    if (this.isMediaActive(mediaPath)) {
+      pendingOwnedMediaPaths.set(mediaPath, this.databasePath);
+      return;
+    }
     const row = this.db
-      .prepare("SELECT 1 AS found FROM quote_messages WHERE media_path = ? LIMIT 1")
+      .prepare("SELECT 1 AS found FROM quote_media_refs WHERE media_path = ? LIMIT 1")
       .get(mediaPath) as { found?: number } | undefined;
     if (row?.found) return;
     try {
@@ -740,7 +954,7 @@ export class QuoteStore {
     const known = new Set(
       (
         this.db
-          .prepare("SELECT DISTINCT media_path FROM quote_messages WHERE media_path IS NOT NULL")
+          .prepare("SELECT DISTINCT media_path FROM quote_media_refs WHERE media_path IS NOT NULL")
           .all() as Array<{ media_path: string }>
       ).map((row) => row.media_path),
     );
@@ -749,6 +963,10 @@ export class QuoteStore {
         const fullPath = path.join(dir, entry.name);
         if (entry.isDirectory()) visit(fullPath);
         else if (entry.isFile() && !known.has(fullPath)) {
+          if (this.isMediaActive(fullPath)) {
+            pendingOwnedMediaPaths.set(fullPath, this.databasePath);
+            continue;
+          }
           try {
             fs.unlinkSync(fullPath);
           } catch {
@@ -821,7 +1039,11 @@ export function getQuoteStore(): QuoteStore | null {
 }
 
 export function getActiveQuoteMediaSubdir(accountId: string): string | undefined {
-  if (!activeStore || activeStore.usesInboundMediaStorage() || activeStore.usesCustomMediaStorage()) {
+  if (
+    !activeStore ||
+    activeStore.usesInboundMediaStorage() ||
+    activeStore.usesCustomMediaStorage()
+  ) {
     return undefined;
   }
   return resolveQuoteMediaSubdir(accountId);
@@ -854,18 +1076,21 @@ export function deleteQuoteCacheForAccount(accountId: string): void {
     if (!columns.some((column) => column.name === "media_owned")) {
       db.exec("ALTER TABLE quote_messages ADD COLUMN media_owned INTEGER NOT NULL DEFAULT 1");
     }
+    const mediaTable = mediaReferenceTable(db);
     const ownedPaths = db
       .prepare(`
-        SELECT DISTINCT media_path FROM quote_messages
+        SELECT DISTINCT media_path FROM ${mediaTable}
         WHERE account_id = ? AND media_owned = 1 AND media_path IS NOT NULL
       `)
       .all(accountId) as Array<{ media_path: string }>;
     db.prepare("DELETE FROM quote_messages WHERE account_id = ?").run(accountId);
     for (const { media_path: mediaPath } of ownedPaths) {
       const remaining = db
-        .prepare("SELECT 1 AS found FROM quote_messages WHERE media_path = ? LIMIT 1")
+        .prepare(`SELECT 1 AS found FROM ${mediaTable} WHERE media_path = ? LIMIT 1`)
         .get(mediaPath) as { found?: number } | undefined;
-      if (!remaining?.found) {
+      if (!remaining?.found && activeMediaPaths.has(mediaPath)) {
+        pendingOwnedMediaPaths.set(mediaPath, dbPath);
+      } else if (!remaining?.found) {
         try {
           fs.unlinkSync(mediaPath);
         } catch (err) {

@@ -24,11 +24,12 @@ export class WeixinConfigManager {
   private cache = new Map<string, ConfigCacheEntry>();
 
   constructor(
-    private apiOpts: { baseUrl: string; token?: string },
+    private apiOpts: { baseUrl: string; token?: string; abortSignal?: AbortSignal },
     private log: (msg: string) => void,
   ) {}
 
   async getForUser(userId: string, contextToken?: string): Promise<CachedConfig> {
+    this.apiOpts.abortSignal?.throwIfAborted();
     const now = Date.now();
     const entry = this.cache.get(userId);
     const shouldFetch = !entry || now >= entry.nextFetchAt;
@@ -41,6 +42,7 @@ export class WeixinConfigManager {
           token: this.apiOpts.token,
           ilinkUserId: userId,
           contextToken,
+          abortSignal: this.apiOpts.abortSignal,
         });
         if (resp.ret === 0) {
           this.cache.set(userId, {
@@ -55,6 +57,7 @@ export class WeixinConfigManager {
           fetchOk = true;
         }
       } catch (err) {
+        this.apiOpts.abortSignal?.throwIfAborted();
         this.log(`[weixin] getConfig failed for ${userId} (ignored): ${String(err)}`);
       }
       if (!fetchOk) {

@@ -11,7 +11,7 @@ import { redactUrl } from "../util/redact.js";
 import { getExtensionFromContentTypeOrUrl } from "../media/mime.js";
 import { tempFileName } from "../util/random.js";
 import { UploadMediaType } from "../api/types.js";
-import { withDownloadTimeout } from "./download-timeout.js";
+import { readDownloadBody, withDownloadTimeout } from "./download-timeout.js";
 import type { DownloadOptions } from "./download-timeout.js";
 
 export type UploadedFileInfo = {
@@ -37,16 +37,17 @@ export async function downloadRemoteImageToTemp(
 ): Promise<string> {
   logger.debug(`downloadRemoteImageToTemp: fetching url=${redactUrl(url)}`);
   const { res, buf } = await withDownloadTimeout(
-    async (signal) => {
+    async (signal, onProgress) => {
       const res = await fetch(url, { signal });
       signal.throwIfAborted();
+      onProgress();
       if (!res.ok) {
         void res.body?.cancel().catch(() => {});
         const msg = `remote media download failed: ${res.status} ${res.statusText} url=${redactUrl(url)}`;
         logger.error(`downloadRemoteImageToTemp: ${msg}`);
         throw new Error(msg);
       }
-      const buf = Buffer.from(await res.arrayBuffer());
+      const buf = await readDownloadBody(res, signal, onProgress);
       signal.throwIfAborted();
       return { res, buf };
     },
@@ -76,7 +77,8 @@ async function uploadMediaToCdn(params: {
 }): Promise<UploadedFileInfo> {
   const { filePath, toUserId, opts, cdnBaseUrl, mediaType, label } = params;
 
-  const plaintext = await fs.readFile(filePath);
+  opts.abortSignal?.throwIfAborted();
+  const plaintext = await fs.readFile(filePath, { signal: opts.abortSignal });
   const rawsize = plaintext.length;
   const rawfilemd5 = crypto.createHash("md5").update(plaintext).digest("hex");
   const filesize = aesEcbPaddedSize(rawsize);
@@ -116,6 +118,7 @@ async function uploadMediaToCdn(params: {
     cdnBaseUrl,
     aeskey,
     label: `${label}[orig filekey=${filekey}]`,
+    abortSignal: opts.abortSignal,
   });
 
   return {

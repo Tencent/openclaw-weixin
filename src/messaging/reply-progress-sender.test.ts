@@ -108,3 +108,28 @@ describe("WeixinReplyProgressSender", () => {
     });
   });
 });
+
+it("discards queued tool progress messages after cancellation", async () => {
+  const controller = new AbortController();
+  let release!: () => void;
+  mockSendMessageItemWeixin.mockReset();
+  mockSendMessageItemWeixin.mockImplementationOnce(
+    () =>
+      new Promise<void>((r) => {
+        release = r;
+      }),
+  );
+  const sender = new WeixinReplyProgressSender({
+    runId: "run",
+    to: "user",
+    accountId: "account",
+    opts: { baseUrl: "https://invalid.test", abortSignal: controller.signal },
+  });
+  sender.replyOptions.onItemEvent({ kind: "tool", phase: "start", name: "first" });
+  sender.replyOptions.onItemEvent({ kind: "tool", phase: "end", name: "second" });
+  await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+  controller.abort();
+  release();
+  await sender.finalize();
+  expect(mockSendMessageItemWeixin).toHaveBeenCalledTimes(1);
+});

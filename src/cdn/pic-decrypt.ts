@@ -1,34 +1,37 @@
 import { decryptAesEcb } from "./aes-ecb.js";
 import { buildCdnDownloadUrl, ENABLE_CDN_URL_FALLBACK } from "./cdn-url.js";
 import { logger } from "../util/logger.js";
-import { withDownloadTimeout } from "./download-timeout.js";
+import { readDownloadBody, withDownloadTimeout } from "./download-timeout.js";
 import type { DownloadOptions } from "./download-timeout.js";
 
 export type CdnDownloadOptions = DownloadOptions;
 
-/** Download raw bytes with one deadline for headers and body. */
+/** Download bytes with progress-aware inactivity and an optional total deadline. */
 async function fetchCdnBytes(
   url: string,
   label: string,
   options: CdnDownloadOptions = {},
 ): Promise<Buffer> {
   return withDownloadTimeout(
-    async (signal) => {
+    async (signal, onProgress) => {
       try {
         const res = await fetch(url, { signal });
         signal.throwIfAborted();
+        onProgress();
         logger.debug(`${label}: response status=${res.status} ok=${res.ok}`);
         if (!res.ok) {
-          const body = await res.text().catch(() => {
-            signal.throwIfAborted();
-            return "(unreadable)";
-          });
+          const body = await readDownloadBody(res, signal, onProgress)
+            .then((bytes) => bytes.toString("utf8"))
+            .catch(() => {
+              signal.throwIfAborted();
+              return "(unreadable)";
+            });
           signal.throwIfAborted();
           throw new Error(`${label}: CDN download ${res.status} ${res.statusText} body=${body}`);
         }
-        const bytes = await res.arrayBuffer();
+        const bytes = await readDownloadBody(res, signal, onProgress);
         signal.throwIfAborted();
-        return Buffer.from(bytes);
+        return bytes;
       } catch (err) {
         const cause =
           (err as NodeJS.ErrnoException)?.cause ??

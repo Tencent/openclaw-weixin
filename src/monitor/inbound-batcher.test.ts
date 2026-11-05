@@ -254,4 +254,27 @@ describe("createInboundBatcher", () => {
     batcher.flush();
     expect(processed).toEqual([{ at: 0, msg: "I(1)" }]);
   });
+  it("stop clears image timers and never dispatches waiting or newly pushed input", async () => {
+    const batcher = createInboundBatcher({ imageWindowMs: 1500, process });
+    batcher.push(image("waiting"));
+    await batcher.stop();
+    batcher.push(text("late"));
+    batcher.flush();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(processed).toEqual([]);
+  });
+  it("stop waits for the active task without pumping its follow-up", async () => {
+    const batcher = createInboundBatcher({ imageWindowMs: 1500, process });
+    batcher.push(text("active"));
+    batcher.push(text("queued"));
+    let stopped = false;
+    const stopping = batcher.stop().then(() => {
+      stopped = true;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stopped).toBe(false);
+    await finishTurn();
+    await stopping;
+    expect(processed.map((p) => p.msg)).toEqual(["T(active)"]);
+  });
 });

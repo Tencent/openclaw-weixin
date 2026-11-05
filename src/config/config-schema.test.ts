@@ -7,6 +7,8 @@ describe("WeixinConfigSchema", () => {
     expect(result.baseUrl).toBe("https://ilinkai.weixin.qq.com");
     expect(result.cdnBaseUrl).toBe("https://novac2c.cdn.weixin.qq.com/c2c");
     expect(result.replyProgressMessages).toBe(true);
+    expect(result.errorNotices).toBe(false);
+    expect(result.mediaDownload).toEqual({ timeoutMs: 0, idleTimeoutMs: 30_000 });
     expect(result.promptBindOwner).toBe(false);
     expect(result.verifyPin).toBe(false);
     expect(result.quoteCache).toEqual({
@@ -67,6 +69,28 @@ describe("WeixinConfigSchema", () => {
       replyProgressMessages: false,
     });
     expect(result.replyProgressMessages).toBe(false);
+  });
+
+  it("accepts explicit error notices and configurable media deadlines", () => {
+    const result = WeixinConfigSchema.parse({
+      errorNotices: true,
+      mediaDownload: { timeoutMs: 600_000, idleTimeoutMs: 60_000 },
+    });
+    expect(result.errorNotices).toBe(true);
+    expect(result.mediaDownload).toEqual({ timeoutMs: 600_000, idleTimeoutMs: 60_000 });
+  });
+
+  it("rejects invalid media deadlines and non-boolean error notices", () => {
+    for (const mediaDownload of [
+      { timeoutMs: -1 },
+      { timeoutMs: 0.5 },
+      { timeoutMs: 2_147_483_648 },
+      { idleTimeoutMs: 0 },
+      { idleTimeoutMs: -1 },
+    ]) {
+      expect(WeixinConfigSchema.safeParse({ mediaDownload }).success).toBe(false);
+    }
+    expect(WeixinConfigSchema.safeParse({ errorNotices: "true" }).success).toBe(false);
   });
 
   it("accepts disabling quote caching for hosts without SQLite", () => {

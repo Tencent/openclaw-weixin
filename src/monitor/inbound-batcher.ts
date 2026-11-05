@@ -1,16 +1,11 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 
-import type { MessageItem, RefMessage, WeixinMessage } from "../api/types.js";
+import type { WeixinMessage } from "../api/types.js";
 import { MessageItemType } from "../api/types.js";
+import { mergeInboundMessages } from "../messaging/inbound-sources.js";
+export { mergeInboundMessages } from "../messaging/inbound-sources.js";
 
 const CHANNEL_ID = "openclaw-weixin";
-
-const MEDIA_LABELS: Record<number, string> = {
-  [MessageItemType.IMAGE]: "[图片]",
-  [MessageItemType.VIDEO]: "[视频]",
-  [MessageItemType.FILE]: "[文件]",
-  [MessageItemType.VOICE]: "[语音]",
-};
 
 /**
  * Resolve the image batching window from `messages.inbound.byChannel["openclaw-weixin"]`,
@@ -43,52 +38,6 @@ function isCommandMessage(msg: WeixinMessage): boolean {
   );
 }
 
-/** Render a quote as inline text, since merged messages lose native ReplyTo* context. */
-function quoteSummary(ref: RefMessage): string {
-  const parts: string[] = [];
-  if (ref.title?.trim()) parts.push(ref.title.trim());
-  const item = ref.message_item;
-  if (item?.type === MessageItemType.TEXT && item.text_item?.text) {
-    parts.push(String(item.text_item.text));
-  } else if (item?.type === MessageItemType.VOICE && item.voice_item?.text) {
-    parts.push(String(item.voice_item.text));
-  } else if (item?.type === MessageItemType.FILE && item.file_item?.file_name) {
-    parts.push(`[文件 ${item.file_item.file_name}]`);
-  } else if (item?.type !== undefined && MEDIA_LABELS[item.type]) {
-    parts.push(MEDIA_LABELS[item.type]);
-  }
-  return parts.length ? `（引用：${parts.join(" | ")}）` : "（引用了之前的一条消息）";
-}
-
-/**
- * Merge several inbound messages from one sender into a single message: all texts
- * (including transcribed voice and inline-rendered quotes) joined into one TEXT item,
- * followed by every media item. Envelope fields (context_token, message_id, ...) come
- * from the last message so replies use the freshest context token.
- */
-export function mergeInboundMessages(msgs: WeixinMessage[]): WeixinMessage {
-  if (msgs.length === 1) return msgs[0];
-  const texts: string[] = [];
-  const media: MessageItem[] = [];
-  for (const msg of msgs) {
-    for (const item of msg.item_list ?? []) {
-      if (item.type === MessageItemType.TEXT && item.text_item?.text != null) {
-        texts.push((item.ref_msg ? quoteSummary(item.ref_msg) : "") + String(item.text_item.text));
-      } else if (item.type === MessageItemType.VOICE && item.voice_item?.text) {
-        texts.push(String(item.voice_item.text));
-      } else if (item.type !== undefined && MEDIA_LABELS[item.type]) {
-        media.push(item);
-      }
-    }
-  }
-  const item_list: MessageItem[] = [];
-  if (texts.length) {
-    item_list.push({ type: MessageItemType.TEXT, text_item: { text: texts.join("\n") } });
-  }
-  item_list.push(...media);
-  return { ...msgs[msgs.length - 1], item_list };
-}
-
 type BatchUnit = { batch: WeixinMessage[] } | { single: WeixinMessage };
 
 type SenderState = {
@@ -119,6 +68,8 @@ export type InboundBatcherOpts = {
  */
 export function createInboundBatcher(opts: InboundBatcherOpts) {
   const senders = new Map<string, SenderState>();
+  const active = new Set<Promise<void>>();
+  let stopped = false;
 
   const stateOf = (sender: string): SenderState => {
     let s = senders.get(sender);
@@ -143,7 +94,7 @@ export function createInboundBatcher(opts: InboundBatcherOpts) {
 
   const pump = (sender: string): void => {
     const s = stateOf(sender);
-    if (s.running || s.queue.length === 0) return;
+    if (stopped || s.running || s.queue.length === 0) return;
     const unit = s.queue.shift()!;
     let msg: WeixinMessage;
     if ("batch" in unit) {
@@ -163,13 +114,15 @@ export function createInboundBatcher(opts: InboundBatcherOpts) {
       msg = unit.single;
     }
     s.running = true;
-    opts
+    const task = opts
       .process(msg)
       .catch((err) => opts.onError?.(err))
       .finally(() => {
+        active.delete(task);
         s.running = false;
         pump(sender);
       });
+    active.add(task);
   };
 
   const closeOpen = (s: SenderState): void => {
@@ -181,6 +134,7 @@ export function createInboundBatcher(opts: InboundBatcherOpts) {
 
   return {
     push(msg: WeixinMessage): void {
+      if (stopped) return;
       const sender = msg.from_user_id ?? "";
       const s = stateOf(sender);
       if (isImageMessage(msg)) {
@@ -204,12 +158,23 @@ export function createInboundBatcher(opts: InboundBatcherOpts) {
       }
       pump(sender);
     },
-    /** Dispatch pending image bursts immediately (used on shutdown). */
+    /** Dispatch pending image bursts immediately while accepting work. */
     flush(): void {
+      if (stopped) return;
       for (const [sender, s] of senders) {
         closeOpen(s);
         pump(sender);
       }
+    },
+    /** Stop dispatching, discard in-memory queues, and await owned preparation/dispatch. */
+    async stop(): Promise<void> {
+      stopped = true;
+      for (const s of senders.values()) {
+        clearTimeout(s.timer);
+        s.open = null;
+        s.queue = [];
+      }
+      await Promise.allSettled(active);
     },
   };
 }

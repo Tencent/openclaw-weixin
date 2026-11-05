@@ -45,7 +45,7 @@ const params = () => ({
   baseUrl: "https://example.invalid",
   accountId: "test-account",
   runId: "test-run",
-  config: {},
+  config: { channels: { "openclaw-weixin": { errorNotices: true } } },
   errLog: vi.fn(),
 });
 beforeEach(() => {
@@ -59,6 +59,39 @@ beforeEach(() => {
 });
 
 describe("durable error notices", () => {
+  it.each([undefined, {}, { channels: { "openclaw-weixin": { errorNotices: false } } }])(
+    "does not create or send notices without an explicit opt-in (%j)",
+    async (config) => {
+      expect(await sendWeixinErrorNotice({ ...params(), config })).toEqual({ status: "disabled" });
+      expect(mocks.send).not.toHaveBeenCalled();
+      expect(mocks.direct).not.toHaveBeenCalled();
+    },
+  );
+
+  it("leaves queued notices alone while the feature is disabled", async () => {
+    await flushWeixinErrorNotices({ ...params(), config: {} });
+    expect(mocks.drain).not.toHaveBeenCalled();
+    expect(mocks.legacyDrain).not.toHaveBeenCalled();
+  });
+
+  it("rechecks the opt-in before recovering each queued notice", async () => {
+    const p = params();
+    const delivered: string[] = [];
+    mocks.drain.mockImplementation(async ({ selectEntry }) => {
+      for (const id of ["first", "second"]) {
+        const entry = {
+          id: `weixin-error-${id}`,
+          channel: "openclaw-weixin",
+          accountId: p.accountId,
+        };
+        if (selectEntry(entry).match) delivered.push(id);
+        p.config.channels["openclaw-weixin"].errorNotices = false;
+      }
+    });
+    await flushWeixinErrorNotices(p);
+    expect(delivered).toEqual(["first"]);
+  });
+
   it("uses required write-ahead custody with a stable bounded recovery intent", async () => {
     mocks.send.mockImplementation(async (p) => {
       p.onDeliveryIntent();
@@ -73,6 +106,7 @@ describe("durable error notices", () => {
       maxRetries: 4,
       channel: "openclaw-weixin",
       accountId: "test-account",
+      identity: { name: "openclaw-weixin:error-notice" },
     });
     expect(first).not.toHaveProperty("token");
     expect(first).not.toHaveProperty("contextToken");
@@ -159,7 +193,7 @@ describe("durable error notices", () => {
 describe("standalone compatibility sends", () => {
   it("preserves recipient, context, run and optional cancellation on direct calls", async () => {
     mocks.direct.mockResolvedValue({ messageId: "sent" });
-    const p = { ...params(), config: undefined };
+    const p = { ...params(), accountId: undefined };
     expect(await sendWeixinErrorNotice(p)).toEqual({ status: "sent" });
     expect(mocks.direct).toHaveBeenCalledWith({
       to: p.to,
@@ -175,13 +209,13 @@ describe("standalone compatibility sends", () => {
   it("retains standalone send support without a context token", async () => {
     mocks.direct.mockResolvedValue({ messageId: "sent" });
     expect(
-      await sendWeixinErrorNotice({ ...params(), config: undefined, contextToken: undefined }),
+      await sendWeixinErrorNotice({ ...params(), accountId: undefined, contextToken: undefined }),
     ).toEqual({ status: "sent" });
     expect(mocks.direct).toHaveBeenCalledTimes(1);
   });
   it("reports direct failure without throwing or claiming a pending durable notice", async () => {
     mocks.direct.mockRejectedValue(new Error("send failed"));
-    const p = { ...params(), config: undefined };
+    const p = { ...params(), accountId: undefined };
     expect(await sendWeixinErrorNotice(p)).toEqual({ status: "failed" });
     expect(p.errLog).toHaveBeenCalledWith(expect.stringContaining("error notice delivery failed"));
   });

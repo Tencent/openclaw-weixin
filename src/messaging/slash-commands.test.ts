@@ -37,6 +37,37 @@ describe("handleSlashCommand", () => {
     };
   });
 
+  it.each(["/echo hello", "/toggle-debug"])(
+    "does not execute %s when admission fails",
+    async (command) => {
+      ctx.beforeExecute = () => {
+        throw new Error("inbox unavailable");
+      };
+      await expect(handleSlashCommand(command, ctx, Date.now())).rejects.toThrow(
+        "inbox unavailable",
+      );
+      expect(mockSendMessageWeixin).not.toHaveBeenCalled();
+      expect(isDebugMode("acc1")).toBe(false);
+    },
+  );
+  it("leaves unknown commands unadmitted for the agent pipeline", async () => {
+    ctx.beforeExecute = () => {
+      throw new Error("too early");
+    };
+    await expect(handleSlashCommand("/unknown", ctx, Date.now())).resolves.toEqual({
+      handled: false,
+    });
+  });
+  it("does not send a command error notice after cancellation", async () => {
+    const controller = new AbortController();
+    ctx.abortSignal = controller.signal;
+    mockSendMessageWeixin.mockImplementationOnce(async () => {
+      controller.abort();
+      throw controller.signal.reason;
+    });
+    await expect(handleSlashCommand("/echo hello", ctx, Date.now())).rejects.toThrow();
+    expect(mockSendMessageWeixin).toHaveBeenCalledTimes(1);
+  });
   it("returns handled=false for non-slash messages", async () => {
     const result = await handleSlashCommand("hello world", ctx, Date.now());
     expect(result.handled).toBe(false);

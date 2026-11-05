@@ -159,7 +159,9 @@ flowchart TD
 
 `channels.openclaw-weixin.acctwebBaseUrl` 只替换源（scheme、host、port），路径不变。`channels.openclaw-weixin.acctwebProxy` 只代理 `get_auth_url` 和 `query_auth_result`。配置了 `routeTag` 时，查询串增加 `_cradle_hostname=g<routeTag>`；值本身已经以 `g` 开头则原样使用。账号级 `accounts.<accountId>` 里的同名字段优先于渠道级配置。
 
-业务字段可以在 JSON 顶层，也可以包在 `data` 对象里，客户端两边都读。顶层 `ret` 或 `errcode` 为非 0 数字时视为失败。`expire_time` 和 `auth_status` 可以是数字，也可以是十进制数字字符串。
+实名接口的已知返回字段为：`get_auth_url` 返回 `bot_spam_ticket`、`auth_url` 和 `expire_time`；`query_auth_result` 返回 `auth_status`。这两个接口不定义 `ret` / `errcode` 返回字段，授权结果以 `auth_status` 为准。`get_auth_url` 的业务失败回包尚未定义，不应套用其他 Bot API 的错误码格式。
+
+客户端兼容 JSON 顶层字段和 `data` 包装；`expire_time` 和 `auth_status` 也兼容数字及十进制数字字符串。这些兼容处理不扩展接口本身的返回字段约定。
 
 #### 获取 ticket
 
@@ -173,18 +175,16 @@ GET /security/acct/botrealnameverifycgi?step=get_auth_url&plugin_version=<插件
 
 ```json
 {
-  "ret": 0,
   "bot_spam_ticket": "0123456789abcdef0123456789abcdef",
   "auth_url": "liteapp://wxalite.../pages/realname-verify/entry?bot_spam_ticket=0123456789abcdef0123456789abcdef",
   "expire_time": 1800000000
 }
 ```
 
-字段也可以包在 `data` 里：
+客户端也兼容以下 `data` 包装：
 
 ```json
 {
-  "ret": 0,
   "data": {
     "bot_spam_ticket": "0123456789abcdef0123456789abcdef",
     "auth_url": "liteapp://wxalite.../pages/realname-verify/entry?bot_spam_ticket=0123456789abcdef0123456789abcdef",
@@ -199,7 +199,7 @@ GET /security/acct/botrealnameverifycgi?step=get_auth_url&plugin_version=<插件
 | `auth_url` | 非空字符串。客户端把它画成实名二维码 |
 | `expire_time` | Unix 秒，必须大于当前时间 |
 
-任一字段不满足，或 `ret` / `errcode` 非 0，客户端停止。操作者看到「无法获取绑定凭证，连接已停止。」之后不再调用 `get_bot_qrcode`。
+任一字段不满足，客户端停止。操作者看到「无法获取绑定凭证，连接已停止。」之后不再调用 `get_bot_qrcode`。
 
 #### 查询授权结果
 
@@ -213,12 +213,11 @@ GET /security/acct/botrealnameverifycgi?step=query_auth_result&bot_spam_ticket=0
 
 ```json
 {
-  "ret": 0,
   "auth_status": 1
 }
 ```
 
-`auth_status` 同样可以出现在 `data.auth_status`。
+客户端同样兼容 `data.auth_status`。
 
 | `auth_status` | 客户端行为 |
 | --- | --- |
@@ -228,7 +227,7 @@ GET /security/acct/botrealnameverifycgi?step=query_auth_result&bot_spam_ticket=0
 | `3` | ticket 无效。重新调用一次 `get_auth_url`，换新的 `auth_url` 再展示。第二次仍是 `3`，或重取失败，停止并提示「绑定凭证无效，请重新开始连接。」 |
 | 其它值 | 停止，处理方式与获取 ticket 失败相同 |
 
-这一次查询本身失败（HTTP 错误、非 JSON、非 0 的 `ret`）时，客户端把这一轮当作 `0` 继续等，不立刻停止。
+这一次查询本身失败（如 HTTP 错误或非 JSON）时，客户端把这一轮当作 `0` 继续等，不立刻停止。
 
 等待上限取 480 秒和 `expire_time` 中较早的时刻。超时提示「实名授权超时，请重新开始连接。」
 

@@ -2,6 +2,10 @@ import path from "node:path";
 import { z } from "zod";
 
 import { CDN_BASE_URL, DEFAULT_BASE_URL } from "../auth/accounts.js";
+import {
+  DEFAULT_MEDIA_DOWNLOAD_IDLE_TIMEOUT_MS,
+  MAX_DOWNLOAD_TIMEOUT_MS,
+} from "./media-download.js";
 
 // ---------------------------------------------------------------------------
 // Zod config schema
@@ -56,6 +60,21 @@ const quoteCacheSchema = z.object({
 export const WeixinConfigSchema = weixinAccountSchema.extend({
   accounts: z.record(z.string(), weixinAccountSchema).optional(),
   replyProgressMessages: z.boolean().default(true),
+  /** Send and recover user-visible failure notices only when explicitly enabled. */
+  errorNotices: z.boolean().default(false),
+  mediaDownload: z
+    .object({
+      /** Zero disables the total download deadline. */
+      timeoutMs: z.number().int().min(0).max(MAX_DOWNLOAD_TIMEOUT_MS).default(0),
+      /** Maximum time without response headers or a non-empty body chunk. */
+      idleTimeoutMs: z
+        .number()
+        .int()
+        .positive()
+        .max(MAX_DOWNLOAD_TIMEOUT_MS)
+        .default(DEFAULT_MEDIA_DOWNLOAD_IDLE_TIMEOUT_MS),
+    })
+    .default({ timeoutMs: 0, idleTimeoutMs: DEFAULT_MEDIA_DOWNLOAD_IDLE_TIMEOUT_MS }),
   /**
    * Ask whether this OpenClaw connects to the operator's own WeChat ClawBot.
    * Y shows the bot bind QR directly. N completes real-name authorization first.

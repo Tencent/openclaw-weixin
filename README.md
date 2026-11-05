@@ -112,16 +112,16 @@ openclaw config set 'channels["openclaw-weixin"].promptBindOwner' true --strict-
 
 Use these steps to confirm, on the test route, that the plugin sends the forced PIN on the bind QR request. Do not publish this test package to the production npm registry.
 
-1. Install a plugin build that logs the full QR request body. The current development package is `3.0.4`. From the plugin directory, build, pack, and replace the installed plugin:
+1. Install a plugin build that logs the full QR request body. The current development package is `3.0.0-beta-1`. From the plugin directory, build, pack, and replace the installed plugin:
 
 ```bash
 npm run build
 npm pack
-openclaw plugins install ./tencent-weixin-openclaw-weixin-3.0.4.tgz --force
+openclaw plugins install ./tencent-weixin-openclaw-weixin-3.0.0-beta-1.tgz --force
 openclaw plugins list
 ```
 
-`openclaw-weixin` in that list must show Version `3.0.4`. If the Gateway is already running, restart it so it does not keep an older plugin in memory:
+`openclaw-weixin` in that list must show Version `3.0.0-beta-1`. If the Gateway is already running, restart it so it does not keep an older plugin in memory:
 
 ```bash
 openclaw gateway restart
@@ -212,12 +212,55 @@ A window that is too short can split a multi-image send into two turns, while a 
 - Everything that arrives while a reply is still running is merged into one follow-up turn: texts are joined, all attachments are downloaded, and quoted replies are rendered inline as text.
 - Slash commands always run as their own turn, in arrival order.
 
+附件按原消息的到达顺序、以及每条消息内部的附件顺序下载，并按相同顺序交给 Agent，不再按图片、视频等类型调整顺序。合并只影响当前回复轮次；引用缓存仍按每条原消息的 ID 保存正文及全部附件。处理中的受管附件从落盘开始受到临时保护，正常结束、失败或取消后释放，再按原有缓存策略清理。
+
+合并批次按微信原始消息分别准备附件。某一条下载、解密或保存失败时，只结束这一条，其他正常消息仍按原顺序合并交给 Agent；失败消息的正文、引用及残缺附件不进入本轮输入。单条原始消息有多个附件时，其中任一附件失败则整条消息失败。已成功下载的正常附件直接复用，不重复下载。
+
+失败消息单独更新收件记录，正常消息仅在进入 Agent 前标记为处理中；主动取消仍保留尚未执行的正常消息供重启恢复。部分失败提示只在 `errorNotices` 显式开启时发送，并在正常消息处理后发送。合并后的 Agent 执行失败仍按整轮失败处理，不自动拆开重跑。
+
+### 停止与重载时的消息恢复
+
+插件把原始入站消息和轮询游标一起原子保存到账号的 `accounts/<accountId>.sync.json`，独立于引用缓存，无需开启额外开关。配置准备、附件下载、图片合并窗口及队列中的消息保持待处理状态；停止时取消在途操作，清理合并计时器并等待处理收尾，不再强制派发队列。重启后先按原接收顺序重新入队，再接收新消息；合并仍按发送人隔离，命令保持原顺序。
+
+Agent 或本地命令开始执行前会先落盘“处理中”状态。正常完成或明确失败后移除原始记录；单条失败继续处理后面的消息。执行期间停止或进程退出的记录保留为“已中断”，启动时在日志中报告数量，不自动重跑，避免重复工具调用或发送消息；需要继续时请先核实执行结果，再重新发送请求。写入失败或状态文件损坏时停止该账号处理，保留已有文件供恢复，不跳过记录继续推进游标。
+
+有原始消息 ID 时，按账号、发送人和消息 ID 去重；待处理及已中断记录持续参与去重，已结束消息保留最近 10000 个 ID。没有消息 ID 的输入仍可从本地恢复，但无法可靠识别服务端重复投递。本机制不能保证外部工具或消息发送恰好执行一次。如果在写入“处理中”和实际调用之间崩溃，或持久化故障导致无法回写待处理状态，也会保守地保留为已中断，需要人工核实。
+
+状态文件包含待处理及已中断消息原文，文件权限为 `0600`，随正常账号状态一起备份；它不受引用缓存的容量及过期清理影响。成功或明确失败后删除对应原文，已中断原文保留供核实。旧版只有游标的文件会自动迁移；升级前已经丢失的消息无法补回。请避免降级到仍会覆盖该文件的旧版插件。
+
+### 失败提示与媒体下载
+
+单条入站消息处理失败后，插件会记录错误并继续处理同批次中的其他消息。给用户发送失败提示默认关闭；只有显式设置 `channels.openclaw-weixin.errorNotices: true` 才会发送。本版本创建的提示在恢复发送前也会检查开关。正常消息回复不受该开关影响。
+
+```bash
+openclaw config set 'channels["openclaw-weixin"].errorNotices' true --strict-json
+```
+
+升级前已进入宿主队列、且没有通知标记的提示，当前宿主接口无法可靠识别，仍可能恢复发送；关闭开关会停止插件主动恢复它们，但不能保证拦截宿主自己的恢复。
+
+入站附件及出站远程媒体下载默认不限制总时长，只要持续收到数据，就可以下载超过 30 秒；等待响应或连续没有收到数据超过 30 秒时仍会中断。可在 `channels.openclaw-weixin.mediaDownload` 配置这两个独立时限，单位为毫秒：
+
+| 配置项 | 默认值 | 含义 |
+| --- | ---: | --- |
+| `timeoutMs` | `0` | 总下载时限，包含等待响应和读取正文；`0` 表示不限制总时长。 |
+| `idleTimeoutMs` | `30000` | 等待响应或连续没有收到有效数据的最长时间，必须大于 `0`；收到响应头或非空数据后重新计时。 |
+
+例如，总时长不限制，并允许连续等待数据最多 60 秒：
+
+```bash
+openclaw config set 'channels["openclaw-weixin"].mediaDownload' '{"timeoutMs":0,"idleTimeoutMs":60000}' --strict-json
+```
+
+要限制总时长为 10 分钟，把 `timeoutMs` 设为 `600000`。这些配置不改变 Bot API 的请求时限；通道停止或重载仍可主动取消进行中的入站下载。修改后重启 Gateway。
+
 ## Local quote cache
 
 Newer WeChat clients may send only a server message ID for a quoted message. The plugin
 stores the required text and media metadata locally so later quotes can restore their
 context. The cache is enabled by default and failures do not interrupt normal message
 delivery.
+
+引用旧附件时优先复用本地可用缓存；没有可用缓存才尝试下载。旧附件下载失败时，会向 Agent 标记引用附件暂不可用，当前消息的正文仍正常处理，也不会因此发送整条请求失败提示。此行为同样适用于合并消息；当前消息自身的附件下载失败和主动取消仍按原有规则处理。
 
 Configure it under `channels.openclaw-weixin.quoteCache` when you need different
 retention or size limits. The default limits are 30 days and 10,000 text records per

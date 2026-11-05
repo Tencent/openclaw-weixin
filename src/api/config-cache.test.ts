@@ -22,6 +22,19 @@ afterEach(() => {
 });
 
 describe("WeixinConfigManager", () => {
+  it("propagates cancellation instead of treating it as an empty configuration", async () => {
+    const controller = new AbortController();
+    mockGetConfig.mockImplementationOnce(async () => {
+      controller.abort(new Error("stopped"));
+      throw controller.signal.reason;
+    });
+    const manager = new WeixinConfigManager(
+      { baseUrl: "https://api.com", abortSignal: controller.signal },
+      vi.fn(),
+    );
+    await expect(manager.getForUser("user")).rejects.toThrow("stopped");
+  });
+
   it("fetches and caches config on first getForUser call", async () => {
     mockGetConfig.mockResolvedValueOnce({ ret: 0, typing_ticket: "ticket-1" });
     const logFn = vi.fn();

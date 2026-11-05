@@ -265,6 +265,24 @@ describe("parseWeixinApiJson", () => {
 });
 
 describe("getConfig", () => {
+  it("cancels an in-flight configuration request when the channel stops", async () => {
+    const controller = new AbortController();
+    mockFetch.mockImplementationOnce(
+      (_url, opts) =>
+        new Promise((_, reject) => {
+          opts.signal.addEventListener("abort", () => reject(opts.signal.reason), { once: true });
+        }),
+    );
+    const request = getConfig({
+      baseUrl: "https://api.example.com/",
+      ilinkUserId: "user",
+      abortSignal: controller.signal,
+    });
+    const stopped = expect(request).rejects.toThrow();
+    controller.abort();
+    await stopped;
+  });
+
   it("returns parsed response", async () => {
     const resp = { ret: 0, typing_ticket: "ticket" };
     mockFetch.mockResolvedValueOnce(mockResponse(resp));

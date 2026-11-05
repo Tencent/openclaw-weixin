@@ -56,9 +56,10 @@ export class WeixinReplyProgressSender {
   }
 
   private enqueueMessage(item: MessageItem, label: string): void {
-    if (this.finalized) return;
+    if (this.finalized || this.opts.abortSignal?.aborted) return;
     this.sendChain = this.sendChain
       .then(async () => {
+        if (this.opts.abortSignal?.aborted) return;
         await sendMessageItemWeixin({
           to: this.to,
           item,
@@ -74,7 +75,7 @@ export class WeixinReplyProgressSender {
   }
 
   private handleToolItemEvent(payload: ToolItemEventPayload): void {
-    if (this.finalized) return;
+    if (this.finalized || this.opts.abortSignal?.aborted) return;
     if (payload.kind !== "tool") return;
     if (payload.phase !== "start" && payload.phase !== "end") return;
 

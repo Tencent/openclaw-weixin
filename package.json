@@ -1,6 +1,6 @@
 {
   "name": "@tencent-weixin/openclaw-weixin",
-  "version": "3.0.4",
+  "version": "3.0.0-beta-1",
   "description": "OpenClaw Weixin channel",
   "license": "MIT",
   "author": "Tencent",
@@ -15,7 +15,9 @@
     "README.md",
     "README.zh_CN.md",
     "CHANGELOG.md",
-    "CHANGELOG.zh_CN.md"
+    "CHANGELOG.zh_CN.md",
+    "docs/release-notes-bot-realname-auth_zh_CN.md",
+    "docs/quote-cache_zh_CN.md"
   ],
   "scripts": {
     "format:check": "oxfmt --check src index.ts",

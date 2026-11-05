@@ -1,10 +1,12 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   updates: vi.fn(),
   process: vi.fn(),
   flush: vi.fn(),
-  save: vi.fn(),
   getForUser: vi.fn(),
   log: {
     debug: vi.fn(),
@@ -31,16 +33,20 @@ vi.mock("../api/session-guard.js", () => ({
 }));
 vi.mock("../messaging/process-message.js", () => ({ processOneMessage: mocks.process }));
 vi.mock("../messaging/error-notice.js", () => ({ flushWeixinErrorNotices: mocks.flush }));
-vi.mock("../storage/sync-buf.js", () => ({
-  getSyncBufFilePath: () => "/test",
-  loadGetUpdatesBuf: () => "",
-  saveGetUpdatesBuf: mocks.save,
-}));
 vi.mock("../util/logger.js", () => ({
   logger: { ...mocks.log, withAccount: () => mocks.log },
 }));
 import { monitorWeixinProvider } from "./monitor.js";
 
+let stateRoot: string;
+beforeEach(() => {
+  stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "weixin-monitor-"));
+  vi.stubEnv("OPENCLAW_STATE_DIR", stateRoot);
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+  fs.rmSync(stateRoot, { recursive: true, force: true });
+});
 const deferred = () => {
   let resolve!: () => void;
   const promise = new Promise<void>((r) => (resolve = r));

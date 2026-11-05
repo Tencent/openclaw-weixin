@@ -33,6 +33,7 @@ export async function downloadMediaFromItem(
     label: string;
     abortSignal?: AbortSignal;
     timeoutMs?: number;
+    idleTimeoutMs?: number;
     /** Inbound requests must report download failures instead of dispatching empty media. */
     throwOnError?: boolean;
   },
@@ -40,7 +41,11 @@ export async function downloadMediaFromItem(
   const { cdnBaseUrl, saveMedia, log, errLog, label } = deps;
   const mediaSubdir = deps.mediaSubdir ?? "inbound";
   const result: WeixinInboundMediaOpts = {};
-  const downloadOptions = { abortSignal: deps.abortSignal, timeoutMs: deps.timeoutMs };
+  const downloadOptions = {
+    abortSignal: deps.abortSignal,
+    timeoutMs: deps.timeoutMs,
+    idleTimeoutMs: deps.idleTimeoutMs,
+  };
   deps.abortSignal?.throwIfAborted();
 
   if (item.type === MessageItemType.IMAGE) {

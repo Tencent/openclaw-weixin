@@ -43,6 +43,12 @@ import {
 import { sendWeixinMediaFile } from "./messaging/send-media.js";
 import { sendMessageWeixin, StreamingMarkdownFilter } from "./messaging/send.js";
 import { downloadRemoteImageToTemp } from "./cdn/upload.js";
+import { resolveMediaDownloadPolicy } from "./config/media-download.js";
+import {
+  resolveErrorNoticesEnabled,
+  WEIXIN_ERROR_NOTICE_PREFIX,
+  WEIXIN_ERROR_NOTICE_SENDER,
+} from "./config/error-notices.js";
 
 /** Returns true when mediaUrl refers to a local filesystem path (absolute or relative). */
 function isLocalFilePath(mediaUrl: string): boolean {
@@ -271,6 +277,14 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
     deliveryMode: "direct",
     textChunkLimit: 4000,
     sendText: async (ctx) => {
+      // Core startup recovery can bypass the provider's own recovery loop.
+      if (
+        (ctx.identity?.name === WEIXIN_ERROR_NOTICE_SENDER ||
+          ctx.deliveryQueueId?.startsWith(WEIXIN_ERROR_NOTICE_PREFIX)) &&
+        !resolveErrorNoticesEnabled(ctx.cfg)
+      ) {
+        return { channel: "openclaw-weixin", messageId: "", outcome: "not_sent" };
+      }
       const accountId = ctx.accountId || resolveOutboundAccountId(ctx.cfg, ctx.to);
       const result = await sendWeixinOutbound({
         cfg: ctx.cfg,
@@ -315,7 +329,11 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
           aLog.debug(`sendMedia: uploading local file ${filePath}`);
         } else {
           aLog.debug(`sendMedia: downloading remote mediaUrl=${mediaUrl.slice(0, 80)}...`);
-          filePath = await downloadRemoteImageToTemp(mediaUrl, MEDIA_OUTBOUND_TEMP_DIR);
+          filePath = await downloadRemoteImageToTemp(
+            mediaUrl,
+            MEDIA_OUTBOUND_TEMP_DIR,
+            resolveMediaDownloadPolicy(ctx.cfg),
+          );
           aLog.debug(`sendMedia: remote image downloaded to ${filePath}`);
         }
         const contextToken = getContextToken(account.accountId, ctx.to);

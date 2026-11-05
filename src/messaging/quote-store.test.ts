@@ -485,6 +485,266 @@ describe("QuoteStore", () => {
   });
 });
 
+describe("multiple cached attachments and active media leases", () => {
+  it("upgrades a legacy single-attachment database without losing its path", async () => {
+    const source = managedMediaPath("account", "legacy.png");
+    fs.writeFileSync(source, "legacy image");
+    const { DatabaseSync } = await import("node:sqlite");
+    const db = new DatabaseSync(path.join(rootDir, "ref-messages.sqlite"));
+    db.exec(`CREATE TABLE quote_messages (
+      account_id TEXT NOT NULL, conversation_id TEXT NOT NULL, message_id TEXT NOT NULL,
+      direction TEXT NOT NULL, body TEXT NOT NULL, media_path TEXT, media_mime TEXT,
+      media_name TEXT, media_size INTEGER, created_at INTEGER NOT NULL,
+      PRIMARY KEY (account_id, conversation_id, message_id)
+    )`);
+    db.prepare("INSERT INTO quote_messages VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+      "account",
+      "user",
+      "legacy",
+      "inbound",
+      "old body",
+      source,
+      "image/png",
+      "old.png",
+      12,
+      Date.now(),
+    );
+    db.close();
+    const store = await open();
+    expect(store.find("account", "user", "legacy")).toMatchObject({
+      body: "old body",
+      mediaPath: source,
+      mediaName: "old.png",
+      mediaMime: "image/png",
+    });
+    store.runGc();
+    expect(fs.readFileSync(source, "utf8")).toBe("legacy image");
+  });
+
+  it("persists every attachment in order across reopening and deletes all owned files", async () => {
+    const store = await open();
+    const files = [
+      managedMediaPath("account", "first.pdf"),
+      managedMediaPath("account", "second.png"),
+    ];
+    files.forEach((file, i) => fs.writeFileSync(file, String(i)));
+    await store.put({
+      accountId: "account",
+      conversationId: "user",
+      messageId: "multi",
+      direction: "inbound",
+      body: "both files",
+      createdAt: Date.now(),
+      media: files.map((sourceMediaPath, i) => ({
+        sourceMediaPath,
+        mediaMime: i ? "image/png" : "application/pdf",
+        mediaName: i ? "second.png" : "first.pdf",
+      })),
+    });
+    store.close();
+    const reopened = await open();
+    const record = reopened.find("account", "user", "multi");
+    expect(record?.mediaPath).toBe(files[0]);
+    expect(record?.media?.map((item) => [item.mediaPath, item.mediaName])).toEqual([
+      [files[0], "first.pdf"],
+      [files[1], "second.png"],
+    ]);
+    reopened.runGc();
+    expect(files.map((file) => fs.existsSync(file))).toEqual([true, true]);
+    reopened.deleteAccount("account");
+    expect(files.map((file) => fs.existsSync(file))).toEqual([false, false]);
+  });
+
+  it("counts additional attachments in the byte budget and expires their media", async () => {
+    const store = await open({ maxMediaBytesPerAccount: 4, mediaRetentionMs: 10 });
+    const files = [
+      managedMediaPath("account", "first.bin"),
+      managedMediaPath("account", "second.bin"),
+    ];
+    files.forEach((file) => fs.writeFileSync(file, "1234"));
+    const now = Date.now();
+    await store.put({
+      accountId: "account",
+      conversationId: "user",
+      messageId: "multi",
+      direction: "inbound",
+      body: "files",
+      createdAt: now,
+      media: files.map((sourceMediaPath) => ({
+        sourceMediaPath,
+        mediaMime: "application/octet-stream",
+      })),
+    });
+    expect(files.filter((file) => fs.existsSync(file))).toHaveLength(1);
+    store.runGc(now + 11);
+    expect(files.map((file) => fs.existsSync(file))).toEqual([false, false]);
+    expect(store.find("account", "user", "multi")?.media?.every((item) => !item.mediaPath)).toBe(
+      true,
+    );
+  });
+
+  it("retains a shared path until the final lease is released", async () => {
+    const store = await open();
+    await store.put({
+      accountId: "account",
+      conversationId: "user",
+      messageId: "text",
+      direction: "inbound",
+      body: "known account",
+      createdAt: Date.now(),
+    });
+    const first = store.createMediaLease("account");
+    const second = store.createMediaLease("account");
+    const saved = await first.saveMediaBuffer(
+      Buffer.from("active"),
+      undefined,
+      undefined,
+      undefined,
+    );
+    second.retain(saved.path);
+    try {
+      store.runGc();
+      expect(fs.existsSync(saved.path)).toBe(true);
+      first.release();
+      first.release();
+      store.runGc();
+      expect(fs.existsSync(saved.path)).toBe(true);
+    } finally {
+      first.release();
+      second.release();
+    }
+    store.runGc();
+    expect(fs.existsSync(saved.path)).toBe(false);
+  });
+
+  it("finishes deferred media deletion after the account record is gone", async () => {
+    const store = await open();
+    const lease = store.createMediaLease("account");
+    const saved = await lease.saveMediaBuffer(
+      Buffer.from("active"),
+      undefined,
+      undefined,
+      undefined,
+    );
+    try {
+      await store.put({
+        accountId: "account",
+        conversationId: "user",
+        messageId: "file",
+        direction: "inbound",
+        body: "file",
+        sourceMediaPath: saved.path,
+        createdAt: Date.now(),
+      });
+      store.deleteAccount("account");
+      expect(fs.existsSync(saved.path)).toBe(true);
+    } finally {
+      lease.release();
+    }
+    store.runGc();
+    expect(fs.existsSync(saved.path)).toBe(false);
+  });
+
+  it("finishes deletion of a quoted file even after the account's store has closed", async () => {
+    const store = await open();
+    const source = managedMediaPath("account", "cached.bin");
+    fs.writeFileSync(source, "cached");
+    await store.put({
+      accountId: "account",
+      conversationId: "user",
+      messageId: "cached",
+      direction: "inbound",
+      body: "cached",
+      sourceMediaPath: source,
+      createdAt: Date.now(),
+    });
+    const lease = store.createMediaLease("account");
+    lease.retain(source);
+    store.deleteAccount("account");
+    store.close();
+    expect(fs.existsSync(source)).toBe(true);
+    lease.release();
+    expect(fs.existsSync(source)).toBe(false);
+  });
+
+  it("protects a file before its asynchronous save finishes", async () => {
+    const store = await open();
+    await store.put({
+      accountId: "account",
+      conversationId: "user",
+      messageId: "text",
+      direction: "inbound",
+      body: "known account",
+      createdAt: Date.now(),
+    });
+    const lease = store.createMediaLease("account");
+    const write = fs.promises.writeFile;
+    const spy = vi.spyOn(fs.promises, "writeFile").mockImplementation(async (...args) => {
+      await write(...args);
+      store.runGc();
+    });
+    try {
+      const saved = await lease.saveMediaBuffer(
+        Buffer.from("active"),
+        undefined,
+        undefined,
+        undefined,
+      );
+      expect(fs.existsSync(saved.path)).toBe(true);
+    } finally {
+      spy.mockRestore();
+      lease.release();
+    }
+  });
+
+  it("preserves active files when the store is replaced during channel reload", async () => {
+    const store = await open();
+    await store.put({
+      accountId: "account",
+      conversationId: "user",
+      messageId: "text",
+      direction: "inbound",
+      body: "known account",
+      createdAt: Date.now(),
+    });
+    const lease = store.createMediaLease("account");
+    const saved = await lease.saveMediaBuffer(
+      Buffer.from("active"),
+      undefined,
+      undefined,
+      undefined,
+    );
+    store.close();
+    const replacement = await open();
+    try {
+      expect(fs.existsSync(saved.path)).toBe(true);
+    } finally {
+      lease.release();
+    }
+    replacement.runGc();
+    expect(fs.existsSync(saved.path)).toBe(false);
+  });
+
+  it("keeps external additional attachments when the account is removed", async () => {
+    const store = await open();
+    const owned = managedMediaPath("account", "owned.bin");
+    const outside = path.join(rootDir, "external.bin");
+    [owned, outside].forEach((file) => fs.writeFileSync(file, "x"));
+    await store.put({
+      accountId: "account",
+      conversationId: "user",
+      messageId: "multi",
+      direction: "inbound",
+      body: "files",
+      createdAt: Date.now(),
+      media: [owned, outside].map((sourceMediaPath) => ({ sourceMediaPath })),
+    });
+    store.deleteAccount("account");
+    expect(fs.existsSync(owned)).toBe(false);
+    expect(fs.existsSync(outside)).toBe(true);
+  });
+});
+
 describe("global quote store lifecycle", () => {
   it("shares one store across active accounts and closes after the last account stops", async () => {
     process.env.OPENCLAW_STATE_DIR = rootDir;
@@ -562,6 +822,37 @@ describe("global quote store lifecycle", () => {
     const reopened = await QuoteStore.open({ rootDir: managedRoot, policy: policy() });
     expect(reopened?.find("account", "user", "1")).toBeNull();
     reopened?.close();
+  });
+
+  it("deletes every owned attachment from a closed on-disk database", async () => {
+    process.env.OPENCLAW_STATE_DIR = rootDir;
+    const store = (await initializeQuoteStore({}, "account"))!;
+    const first = await store.saveMediaBuffer(
+      "account",
+      Buffer.from("one"),
+      undefined,
+      undefined,
+      undefined,
+    );
+    const extra = await store.saveMediaBuffer(
+      "account",
+      Buffer.from("two"),
+      undefined,
+      undefined,
+      undefined,
+    );
+    await store.put({
+      accountId: "account",
+      conversationId: "user",
+      messageId: "multi",
+      direction: "inbound",
+      body: "files",
+      createdAt: Date.now(),
+      media: [first, extra].map((item) => ({ sourceMediaPath: item.path })),
+    });
+    closeQuoteStore();
+    deleteQuoteCacheForAccount("account");
+    expect([first, extra].map((item) => fs.existsSync(item.path))).toEqual([false, false]);
   });
 });
 

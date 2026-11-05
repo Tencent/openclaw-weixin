@@ -27,7 +27,13 @@ export async function sendWeixinMediaFile(params: {
 }): Promise<{ messageId: string }> {
   const { filePath, to, text, opts, cdnBaseUrl } = params;
   const mime = getMimeFromFilename(filePath);
-  const uploadOpts: WeixinApiOptions = { baseUrl: opts.baseUrl, token: opts.token };
+  opts.abortSignal?.throwIfAborted();
+  const uploadOpts: WeixinApiOptions = {
+    baseUrl: opts.baseUrl,
+    token: opts.token,
+    timeoutMs: opts.timeoutMs,
+    abortSignal: opts.abortSignal,
+  };
 
   if (mime.startsWith("video/")) {
     logger.info(`[weixin] sendWeixinMediaFile: uploading video filePath=${filePath} to=${to}`);

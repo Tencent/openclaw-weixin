@@ -2,9 +2,14 @@ import { createHash, randomUUID } from "node:crypto";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 
 import { logger } from "../util/logger.js";
+import {
+  resolveErrorNoticesEnabled,
+  WEIXIN_ERROR_NOTICE_PREFIX,
+  WEIXIN_ERROR_NOTICE_SENDER,
+} from "../config/error-notices.js";
 import { sendMessageWeixin } from "./send.js";
 
-const INTENT_PREFIX = "weixin-error-";
+const INTENT_PREFIX = WEIXIN_ERROR_NOTICE_PREFIX;
 const MAX_RECOVERY_ATTEMPTS = 4;
 
 type NoticeParams = {
@@ -21,7 +26,7 @@ type NoticeParams = {
 };
 
 export type ErrorNoticeResult = {
-  status: "sent" | "pending" | "failed" | "suppressed" | "cancelled";
+  status: "sent" | "pending" | "failed" | "suppressed" | "cancelled" | "disabled";
 };
 
 // Older supported hosts have no durable message SDK. Feature-detect it instead
@@ -35,6 +40,7 @@ type DurableSend = (params: {
   durability: "required";
   runId?: string;
   deliveryIntentId: string;
+  identity: { name: string };
   completionRetention: { idPrefix: string; maxAgeMs: number; maxEntries: number };
   maxRetries: number;
   signal?: AbortSignal;
@@ -71,9 +77,11 @@ async function discoverDurableSend(): Promise<DurableSend | undefined> {
 /** Persist an error notice with the core delivery owner before attempting I/O. */
 export async function sendWeixinErrorNotice(params: NoticeParams): Promise<ErrorNoticeResult> {
   if (params.abortSignal?.aborted) return { status: "cancelled" };
+  if (!resolveErrorNoticesEnabled(params.config)) return { status: "disabled" };
   let persisted = false;
   try {
     const sendDurable = params.config && params.accountId ? await loadDurableSend() : undefined;
+    if (!resolveErrorNoticesEnabled(params.config)) return { status: "disabled" };
     if (sendDurable && params.config && params.accountId) {
       const intentId =
         INTENT_PREFIX +
@@ -89,6 +97,8 @@ export async function sendWeixinErrorNotice(params: NoticeParams): Promise<Error
         durability: "required",
         runId: params.runId,
         deliveryIntentId: intentId,
+        // Sender metadata survives core recovery even when deliveryQueueId is omitted.
+        identity: { name: WEIXIN_ERROR_NOTICE_SENDER },
         completionRetention: {
           idPrefix: INTENT_PREFIX,
           maxAgeMs: 7 * 24 * 60 * 60_000,
@@ -178,7 +188,9 @@ export function flushWeixinErrorNotices(params: {
   abortSignal?: AbortSignal;
   errLog: (m: string) => void;
 }): Promise<void> {
-  if (params.abortSignal?.aborted) return Promise.resolve();
+  const canRecover = () =>
+    resolveErrorNoticesEnabled(params.config) && !params.abortSignal?.aborted;
+  if (!canRecover()) return Promise.resolve();
   const existing = activeDrains.get(params.accountId);
   if (existing) return existing;
   const task = (async () => {
@@ -191,12 +203,12 @@ export function flushWeixinErrorNotices(params: {
       log: { info: (s) => logger.debug(s), warn: params.errLog, error: params.errLog },
       selectEntry: (entry) => ({
         match:
-          !params.abortSignal?.aborted &&
+          canRecover() &&
           entry.channel === "openclaw-weixin" &&
           entry.accountId === params.accountId &&
           entry.id.startsWith(INTENT_PREFIX),
       }),
-      shouldContinue: () => !params.abortSignal?.aborted,
+      shouldContinue: canRecover,
     });
   })()
     .catch((error) => {

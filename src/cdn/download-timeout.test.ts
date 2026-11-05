@@ -38,12 +38,8 @@ it("successful response body that never settles is bounded", async () => {
   await assert.rejects(runPlain({ timeoutMs: 15 }), { name: "TimeoutError" });
 });
 it("error response body that never settles is bounded", async () => {
-  (globalThis as any).fetch = async () => ({
-    ok: false,
-    status: 503,
-    statusText: "unavailable",
-    text: never,
-  });
+  (globalThis as any).fetch = async () =>
+    new Response(new ReadableStream(), { status: 503, statusText: "unavailable" });
   await assert.rejects(runPlain({ timeoutMs: 15 }), { name: "TimeoutError" });
 });
 it("channel cancellation interrupts stalled fetch with exact reason", async () => {

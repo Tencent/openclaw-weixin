@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
+  debug: false,
   authorize: vi.fn(),
   notice: vi.fn(),
   download: vi.fn(),
@@ -9,6 +10,7 @@ const state = vi.hoisted(() => ({
   token: vi.fn(),
   finalize: vi.fn(),
   quote: vi.fn(),
+  remoteDownload: vi.fn(),
 }));
 vi.mock("openclaw/plugin-sdk/temp-path", () => ({ resolvePreferredOpenClawTmpDir: () => "/tmp" }));
 vi.mock("../auth/accounts.js", () => ({ loadWeixinAccount: () => ({ userId: "allowed" }) }));
@@ -18,15 +20,17 @@ vi.mock("../util/logger.js", () => ({
 vi.mock("./authorization.js", () => ({ resolveWeixinInboundAuthorization: state.authorize }));
 vi.mock("./error-notice.js", () => ({ sendWeixinErrorNotice: state.notice }));
 vi.mock("../media/media-download.js", () => ({ downloadMediaFromItem: state.download }));
+vi.mock("../cdn/upload.js", () => ({ downloadRemoteImageToTemp: state.remoteDownload }));
 vi.mock("./typing.js", () => ({ loadTypingCallbacksFactory: state.typing }));
 vi.mock("./send.js", () => ({ sendMessageWeixin: state.send }));
-vi.mock("./debug-mode.js", () => ({ isDebugMode: () => false }));
+vi.mock("./debug-mode.js", () => ({ isDebugMode: () => state.debug }));
 vi.mock("./slash-commands.js", () => ({ handleSlashCommand: async () => ({ handled: false }) }));
 vi.mock("./quote-store.js", () => ({
   getQuoteStore: () => undefined,
   getActiveQuoteMediaSubdir: () => "test",
 }));
-vi.mock("./inbound.js", () => ({
+vi.mock("./inbound.js", async (original) => ({
+  ...(await original()),
   weixinMessageToMsgContext: (m: any) => ({
     To: m.from_user_id,
     From: m.from_user_id,
@@ -85,7 +89,7 @@ function fixture() {
   };
   const deps = {
     accountId: "account",
-    config: {},
+    config: { channels: { "openclaw-weixin": { errorNotices: true } } },
     channelRuntime: runtime as any,
     baseUrl: "https://invalid.test",
     cdnBaseUrl: "https://invalid.test",
@@ -102,6 +106,7 @@ function fixture() {
 }
 beforeEach(() => {
   vi.clearAllMocks();
+  state.debug = false;
   state.authorize.mockResolvedValue({ senderAllowed: true, commandAuthorized: true });
   state.notice.mockResolvedValue(undefined);
   state.download.mockResolvedValue({});
@@ -111,6 +116,40 @@ beforeEach(() => {
 });
 
 describe("authorized inbound failure reporting", () => {
+  it("logs request failures without a user notice by default", async () => {
+    const f = fixture();
+    f.deps.config = {} as typeof f.deps.config;
+    f.runtime.session.recordInboundSession.mockRejectedValue(new Error("session unavailable"));
+    await expect(processOneMessage(f.msg, f.deps)).rejects.toThrow("session unavailable");
+    expect(state.notice).not.toHaveBeenCalled();
+  });
+
+  it("does not send dispatcher failure notices when disabled", async () => {
+    const f = fixture();
+    f.deps.config.channels["openclaw-weixin"].errorNotices = false;
+    f.runtime.reply.dispatchReplyFromConfig.mockImplementation(async () => {
+      f.error()(new Error("delivery failed"), { kind: "final" });
+    });
+    await processOneMessage(f.msg, f.deps);
+    expect(state.notice).not.toHaveBeenCalled();
+    expect(f.deps.errLog).toHaveBeenCalledWith(expect.stringContaining("delivery failed"));
+  });
+
+  it("passes configured deadlines to inbound media downloads", async () => {
+    const f = fixture();
+    Object.assign(f.deps.config.channels["openclaw-weixin"], {
+      mediaDownload: { timeoutMs: 600_000, idleTimeoutMs: 60_000 },
+    });
+    f.msg.item_list = [
+      { type: 2, image_item: { media: { full_url: "https://invalid.test/pic" } } } as any,
+    ];
+    await processOneMessage(f.msg, f.deps);
+    expect(state.download).toHaveBeenCalledWith(
+      f.msg.item_list[0],
+      expect.objectContaining({ timeoutMs: 600_000, idleTimeoutMs: 60_000 }),
+    );
+  });
+
   it("reports a session setup rejection once using sanitized text", async () => {
     const f = fixture();
     f.runtime.session.recordInboundSession.mockRejectedValue(new Error("secret=test"));
@@ -124,6 +163,26 @@ describe("authorized inbound failure reporting", () => {
     });
     expect(state.notice.mock.calls[0][0].message).not.toContain("secret");
     expect(f.runtime.reply.dispatchReplyFromConfig).not.toHaveBeenCalled();
+  });
+  it("passes deadlines and cancellation to outbound remote media downloads", async () => {
+    const f = fixture();
+    Object.assign(f.deps.config.channels["openclaw-weixin"], {
+      mediaDownload: { timeoutMs: 600_000, idleTimeoutMs: 60_000 },
+    });
+    state.remoteDownload.mockRejectedValue(new Error("download failed"));
+    f.runtime.reply.dispatchReplyFromConfig.mockImplementation(async ({ dispatcher }) =>
+      dispatcher.deliver({ mediaUrl: "https://offline.invalid/media" }, { kind: "final" }),
+    );
+    await expect(processOneMessage(f.msg, f.deps)).rejects.toThrow("download failed");
+    expect(state.remoteDownload).toHaveBeenCalledWith(
+      "https://offline.invalid/media",
+      expect.any(String),
+      {
+        timeoutMs: 600_000,
+        idleTimeoutMs: 60_000,
+        abortSignal: f.controller.signal,
+      },
+    );
   });
   it("reports typing adapter load failure", async () => {
     const f = fixture();
@@ -186,6 +245,23 @@ describe("authorized inbound failure reporting", () => {
     expect(state.send).toHaveBeenCalledTimes(1);
     expect(state.notice).not.toHaveBeenCalled();
   });
+
+  it("reports a later final delivery failure when notices are enabled", async () => {
+    const f = fixture();
+    state.send
+      .mockResolvedValueOnce({ messageId: "first" })
+      .mockRejectedValueOnce(new Error("second delivery failed"));
+    f.runtime.reply.dispatchReplyFromConfig.mockImplementation(async ({ dispatcher }) => {
+      await dispatcher.deliver({ text: "first part" }, { kind: "final" });
+      try {
+        await dispatcher.deliver({ text: "second part" }, { kind: "final" });
+      } catch (error) {
+        f.error()(error as Error, { kind: "final" });
+      }
+    });
+    await processOneMessage(f.msg, f.deps);
+    expect(state.notice).toHaveBeenCalledTimes(1);
+  });
   it("reports cleanup failure if only progress was delivered", async () => {
     const f = fixture();
     f.runtime.reply.dispatchReplyFromConfig.mockImplementation(async ({ dispatcher }) =>
@@ -233,6 +309,31 @@ describe("authorized inbound failure reporting", () => {
     expect(f.runtime.reply.dispatchReplyFromConfig).toHaveBeenCalledTimes(1);
     expect(state.notice).not.toHaveBeenCalled();
   });
+
+  it.each([false, true])(
+    "does not report the new request as failed when only a quoted download fails (notices: %s)",
+    async (enabled) => {
+      const f = fixture();
+      f.deps.config.channels["openclaw-weixin"].errorNotices = enabled;
+      f.msg.item_list = [
+        {
+          type: 1,
+          text_item: { text: "new question" },
+          ref_msg: {
+            message_item: {
+              type: 2,
+              image_item: { media: { full_url: "https://invalid.test/old" } },
+            },
+          },
+        } as any,
+      ];
+      state.download.mockRejectedValue(new Error("quoted media failed"));
+      await processOneMessage(f.msg, f.deps);
+      expect(f.runtime.reply.dispatchReplyFromConfig).toHaveBeenCalledTimes(1);
+      expect(state.notice).not.toHaveBeenCalled();
+      expect(f.deps.errLog).toHaveBeenCalledWith(expect.stringContaining("quoted media failed"));
+    },
+  );
 });
 
 it.each([false, true])(
@@ -267,3 +368,124 @@ it.each([false, true])(
     expect(await result).toBe(cleanupFails ? "cleanup failed" : "resolved");
   },
 );
+
+describe("durable execution admission", () => {
+  it("keeps downloads recoverable and admits immediately before agent dispatch", async () => {
+    const f = fixture();
+    let admitted = false;
+    const beforeExecute = () => {
+      admitted = true;
+    };
+    f.msg.item_list = [{ type: 2 }] as any;
+    state.download.mockImplementationOnce(async () => {
+      expect(admitted).toBe(false);
+      return {};
+    });
+    f.runtime.reply.dispatchReplyFromConfig.mockImplementationOnce(async () => {
+      expect(admitted).toBe(true);
+      return {};
+    });
+    await processOneMessage(f.msg, { ...f.deps, beforeExecute });
+    expect(admitted).toBe(true);
+  });
+  it("prevents agent execution if the admission record cannot be saved", async () => {
+    const f = fixture();
+    await expect(
+      processOneMessage(f.msg, {
+        ...f.deps,
+        beforeExecute: () => {
+          throw new Error("admission failed");
+        },
+      }),
+    ).rejects.toThrow("admission failed");
+    expect(f.runtime.reply.dispatchReplyFromConfig).not.toHaveBeenCalled();
+  });
+});
+
+it("does not send a debug summary after the channel is cancelled", async () => {
+  const f = fixture();
+  state.debug = true;
+  f.runtime.reply.dispatchReplyFromConfig.mockImplementationOnce(async () => {
+    f.controller.abort();
+    throw f.controller.signal.reason;
+  });
+  await expect(processOneMessage(f.msg, f.deps)).rejects.toThrow();
+  expect(state.send).not.toHaveBeenCalled();
+});
+it("forwards channel cancellation to an in-flight text delivery", async () => {
+  const f = fixture();
+  let started = false;
+  state.send.mockImplementationOnce(async ({ opts }) => {
+    started = true;
+    return new Promise((_, reject) => {
+      opts.abortSignal?.addEventListener("abort", () => reject(opts.abortSignal.reason), {
+        once: true,
+      });
+    });
+  });
+  f.runtime.reply.dispatchReplyFromConfig.mockImplementationOnce(async ({ dispatcher }: any) => {
+    await dispatcher.deliver({ text: "reply" }, { kind: "final" });
+  });
+  const done = processOneMessage(f.msg, f.deps);
+  const stopped = expect(done).rejects.toThrow();
+  await vi.waitFor(() => expect(started).toBe(true));
+  f.controller.abort();
+  await stopped;
+});
+
+// Real preparation and merge logic; only the external downloader and sender are replaced.
+import { mergeInboundMessages } from "./inbound-sources.js";
+const batchImage = (id: string) => ({
+  from_user_id: "allowed",
+  message_id: id,
+  context_token: "context",
+  item_list: [{ type: 2, image_item: { media: { full_url: `https://offline.invalid/${id}` } } }],
+});
+it.each([false, true])(
+  "sends one partial-batch failure notice only after healthy dispatch (enabled=%s)",
+  async (enabled) => {
+    const f = fixture();
+    f.deps.config.channels["openclaw-weixin"].errorNotices = enabled;
+    const events: string[] = [];
+    state.download.mockImplementation(async (item) => {
+      if (item.image_item.media.full_url.endsWith("/broken"))
+        throw new Error("private download error");
+      return {};
+    });
+    state.notice.mockImplementation(async () => {
+      events.push("notice");
+    });
+    f.runtime.reply.dispatchReplyFromConfig.mockImplementation(async () => {
+      events.push("agent");
+      return {};
+    });
+    await processOneMessage(
+      mergeInboundMessages([batchImage("broken"), batchImage("healthy")]),
+      f.deps,
+    );
+    expect(events).toEqual(enabled ? ["agent", "notice"] : ["agent"]);
+    expect(state.notice).toHaveBeenCalledTimes(enabled ? 1 : 0);
+    if (enabled)
+      expect(state.notice.mock.calls[0][0].message).not.toContain("private download error");
+  },
+);
+it("treats channel cancellation as recoverable rather than another failed source", async () => {
+  const f = fixture();
+  const failed: string[] = [];
+  state.download.mockImplementation(async (item) => {
+    if (item.image_item.media.full_url.endsWith("/broken")) throw new Error("download error");
+    f.controller.abort();
+    throw f.controller.signal.reason;
+  });
+  await expect(
+    processOneMessage(mergeInboundMessages([batchImage("broken"), batchImage("cancelled")]), {
+      ...f.deps,
+      onPreparationFailure: (message) => {
+        failed.push(message.message_id!);
+      },
+    }),
+  ).rejects.toThrow();
+  expect(failed).toEqual(["broken"]);
+  expect(f.runtime.reply.dispatchReplyFromConfig).not.toHaveBeenCalled();
+  expect(state.notice).not.toHaveBeenCalled();
+});

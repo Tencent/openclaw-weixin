@@ -523,6 +523,7 @@ export async function getUploadUrl(
     token: params.token,
     timeoutMs: params.timeoutMs ?? DEFAULT_API_TIMEOUT_MS,
     label: "getUploadUrl",
+    abortSignal: params.abortSignal,
   });
   const resp: GetUploadUrlResp = JSON.parse(rawText);
   return resp;
@@ -624,6 +625,7 @@ export async function getConfig(
     token: params.token,
     timeoutMs: params.timeoutMs ?? DEFAULT_CONFIG_TIMEOUT_MS,
     label: "getConfig",
+    abortSignal: params.abortSignal,
   });
   const resp: GetConfigResp = JSON.parse(rawText);
   return resp;
@@ -640,6 +642,7 @@ export async function sendTyping(
     token: params.token,
     timeoutMs: params.timeoutMs ?? DEFAULT_CONFIG_TIMEOUT_MS,
     label: "sendTyping",
+    abortSignal: params.abortSignal,
   });
 }
 

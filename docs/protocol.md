@@ -159,7 +159,9 @@ The real-name CGI is not the ilink host. The default origin is `https://weixin11
 
 `channels.openclaw-weixin.acctwebBaseUrl` replaces only the origin (scheme, host, and port). The CGI path stays the same. `channels.openclaw-weixin.acctwebProxy` proxies only `get_auth_url` and `query_auth_result`. A configured `routeTag` adds `_cradle_hostname=g<routeTag>`; a value that already starts with `g` is kept as-is. The same fields under `accounts.<accountId>` override the channel values.
 
-Business fields may be at the top level or inside a `data` object. The client reads both. A numeric top-level `ret` or `errcode` other than `0` is a failure. `expire_time` and `auth_status` may be a number or a decimal digit string.
+The documented real-name response fields are `bot_spam_ticket`, `auth_url`, and `expire_time` for `get_auth_url`, and `auth_status` for `query_auth_result`. Neither endpoint defines a `ret` or `errcode` response field. Authorization is determined by `auth_status`. The business-error response for `get_auth_url` is unspecified; do not assume the error-code format of other Bot APIs applies.
+
+The client accepts business fields at the top level or inside a `data` object, and accepts `expire_time` and `auth_status` as numbers or decimal digit strings. These compatibility checks do not add fields to the endpoint contract.
 
 #### Fetch a ticket
 
@@ -173,18 +175,16 @@ Success response:
 
 ```json
 {
-  "ret": 0,
   "bot_spam_ticket": "0123456789abcdef0123456789abcdef",
   "auth_url": "liteapp://wxalite.../pages/realname-verify/entry?bot_spam_ticket=0123456789abcdef0123456789abcdef",
   "expire_time": 1800000000
 }
 ```
 
-The same fields may be nested:
+The client also accepts this `data` wrapper:
 
 ```json
 {
-  "ret": 0,
   "data": {
     "bot_spam_ticket": "0123456789abcdef0123456789abcdef",
     "auth_url": "liteapp://wxalite.../pages/realname-verify/entry?bot_spam_ticket=0123456789abcdef0123456789abcdef",
@@ -199,7 +199,7 @@ The same fields may be nested:
 | `auth_url` | Non-empty string. The client renders it as the real-name QR code |
 | `expire_time` | Unix seconds, and it must be later than the current time |
 
-If any field fails that check, or `ret` / `errcode` is non-zero, the client stops. The operator sees "无法获取绑定凭证，连接已停止。" The client does not call `get_bot_qrcode` after that.
+If any field fails that check, the client stops. The operator sees "无法获取绑定凭证，连接已停止。" The client does not call `get_bot_qrcode` after that.
 
 #### Query the authorization result
 
@@ -213,12 +213,11 @@ Success response:
 
 ```json
 {
-  "ret": 0,
   "auth_status": 1
 }
 ```
 
-`auth_status` may instead be `data.auth_status`.
+The client also accepts `data.auth_status`.
 
 | `auth_status` | Client behavior |
 | --- | --- |
@@ -228,7 +227,7 @@ Success response:
 | `3` | The ticket is invalid. Call `get_auth_url` once more, show the new `auth_url`, and continue. A second `3`, or a failed refresh, stops with "绑定凭证无效，请重新开始连接。" |
 | any other value | Stop, using the same failure path as a bad `get_auth_url` response |
 
-If this query itself fails (HTTP error, non-JSON body, or non-zero `ret`), the client treats that round as `0` and keeps waiting.
+If this query itself fails (for example, an HTTP error or non-JSON body), the client treats that round as `0` and keeps waiting.
 
 The wait ends at the earlier of 480 seconds and `expire_time`. A timeout says "实名授权超时，请重新开始连接。"
 

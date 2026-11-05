@@ -10,7 +10,8 @@ import { MessageItemType, TypingStatus } from "../api/types.js";
 import { loadWeixinAccount } from "../auth/accounts.js";
 import { downloadRemoteImageToTemp } from "../cdn/upload.js";
 import { resolveReplyProgressMessagesEnabled } from "../config/reply-progress.js";
-import { downloadMediaFromItem } from "../media/media-download.js";
+import { resolveErrorNoticesEnabled } from "../config/error-notices.js";
+import { resolveMediaDownloadPolicy } from "../config/media-download.js";
 import { logger } from "../util/logger.js";
 import { redactBody, redactToken } from "../util/redact.js";
 
@@ -18,15 +19,12 @@ import { isDebugMode } from "./debug-mode.js";
 import { sendWeixinErrorNotice } from "./error-notice.js";
 import { applyWeixinMessageSendingHook, emitWeixinMessageSent } from "./outbound-hooks.js";
 import {
-  attachAdditionalMedia,
+  downloadedMediaEntry,
   setContextToken,
   weixinMessageToMsgContext,
   getContextTokenFromMsgContext,
   getWeixinMessageId,
-  isMediaItem,
-  resolveStoredQuoteContext,
 } from "./inbound.js";
-import type { WeixinInboundMediaOpts } from "./inbound.js";
 import { sendWeixinMediaFile } from "./send-media.js";
 import { StreamingMarkdownFilter } from "./markdown-filter.js";
 import { sendMessageWeixin } from "./send.js";
@@ -34,7 +32,14 @@ import { WeixinReplyProgressSender } from "./reply-progress-sender.js";
 import { withPublishedModelRuntime } from "./dispatch-options.js";
 import { resolveWeixinInboundAuthorization } from "./authorization.js";
 import { loadTypingCallbacksFactory } from "./typing.js";
-import { getActiveQuoteMediaSubdir, getQuoteStore } from "./quote-store.js";
+import { getQuoteStore } from "./quote-store.js";
+import { getInboundSources, mergeInboundMessages } from "./inbound-sources.js";
+import {
+  prepareInboundMessage,
+  combinePreparedMedia,
+  preparedQuoteBodies,
+} from "./prepare-inbound.js";
+import type { PreparedInboundMessage } from "./prepare-inbound.js";
 import { handleSlashCommand } from "./slash-commands.js";
 
 const MEDIA_OUTBOUND_TEMP_DIR = path.join(
@@ -53,7 +58,10 @@ export type ProcessMessageDeps = {
   typingTicket?: string;
   /** Channel lifetime, forwarded to the core dispatch owner. */
   abortSignal?: AbortSignal;
-  /** Release ordered ingress only after the core has admitted this run. */
+  /** Persist admission immediately before an irreversible command or agent run. */
+  beforeExecute?: () => void;
+  /** Settle one failed source without ending its healthy merged neighbors. */
+  onPreparationFailure?: (message: WeixinMessage, error: unknown) => void;
   log: (msg: string) => void;
   errLog: (m: string) => void;
 };
@@ -91,10 +99,10 @@ export async function processOneMessage(
   const debugTrace: string[] = [];
   const debugTs: Record<string, number> = { received: receivedAt };
 
-  const textBody = extractTextBody(full.item_list);
+  let textBody = extractTextBody(full.item_list);
   const senderId = full.from_user_id ?? "";
   const ownerId = loadWeixinAccount(deps.accountId)?.userId?.trim();
-  const { senderAllowed, commandAuthorized } = await resolveWeixinInboundAuthorization({
+  let { senderAllowed, commandAuthorized } = await resolveWeixinInboundAuthorization({
     senderId,
     ownerId,
     rawBody: textBody.trim(),
@@ -107,7 +115,7 @@ export async function processOneMessage(
     return;
   }
 
-  if (textBody.startsWith("/")) {
+  if (getInboundSources(full).length === 1 && textBody.startsWith("/")) {
     const slashResult = await handleSlashCommand(
       textBody,
       {
@@ -117,6 +125,8 @@ export async function processOneMessage(
         token: deps.token,
         accountId: deps.accountId,
         commandAuthorized: commandAuthorized === true,
+        beforeExecute: deps.beforeExecute,
+        abortSignal: deps.abortSignal,
         log: deps.log,
         errLog: deps.errLog,
       },
@@ -140,7 +150,7 @@ export async function processOneMessage(
   }
 
   let ctx = weixinMessageToMsgContext(full, deps.accountId, {});
-  const rawBody = ctx.Body?.trim() ?? "";
+  let rawBody = ctx.Body?.trim() ?? "";
   ctx.CommandBody = rawBody;
   ctx.CommandAuthorized = commandAuthorized;
   logger.debug(
@@ -154,122 +164,94 @@ export async function processOneMessage(
     );
   }
 
-  const contextToken = getContextTokenFromMsgContext(ctx);
+  let contextToken = getContextTokenFromMsgContext(ctx);
   const runId = randomUUID();
+  const downloadPolicy = resolveMediaDownloadPolicy(deps.config);
   let failureNoticeSent = false;
   let failureNotice: ReturnType<typeof sendWeixinErrorNotice> | undefined;
   let visibleFinalDelivered = false;
+  let deliveryFailure: unknown;
+  const quoteStore = getQuoteStore();
+  const prepared: PreparedInboundMessage[] = [];
+  let preparationFailures = 0;
+  let mediaDownloadMs = 0;
   try {
     if (contextToken) {
       setContextToken(deps.accountId, full.from_user_id ?? "", contextToken);
     }
-    const mediaOpts: WeixinInboundMediaOpts = {};
-
-    // Find the first downloadable media item (priority: IMAGE > VIDEO > FILE > VOICE).
-    // When none found in the main item_list, fall back to media referenced via a quoted message.
-    const hasDownloadableMedia = (m?: { encrypt_query_param?: string; full_url?: string }) =>
-      m?.encrypt_query_param || m?.full_url;
-    const mainMediaItem =
-      full.item_list?.find(
-        (i) => i.type === MessageItemType.IMAGE && hasDownloadableMedia(i.image_item?.media),
-      ) ??
-      full.item_list?.find(
-        (i) => i.type === MessageItemType.VIDEO && hasDownloadableMedia(i.video_item?.media),
-      ) ??
-      full.item_list?.find(
-        (i) => i.type === MessageItemType.FILE && hasDownloadableMedia(i.file_item?.media),
-      ) ??
-      full.item_list?.find(
-        (i) =>
-          i.type === MessageItemType.VOICE &&
-          hasDownloadableMedia(i.voice_item?.media) &&
-          !i.voice_item?.text,
-      );
-    const refMediaCandidate = !mainMediaItem
-      ? full.item_list?.find(
-          (i) =>
-            i.type === MessageItemType.TEXT &&
-            i.ref_msg?.message_item &&
-            isMediaItem(i.ref_msg.message_item!),
-        )?.ref_msg?.message_item
-      : undefined;
-
-    // A quoted attachment may contain only metadata; cached quote resolution below
-    // can still supply its content. Strict downloads apply only to actual URLs.
-    const refMediaItem =
-      refMediaCandidate &&
-      (hasDownloadableMedia(refMediaCandidate.image_item?.media) ||
-        hasDownloadableMedia(refMediaCandidate.video_item?.media) ||
-        hasDownloadableMedia(refMediaCandidate.file_item?.media) ||
-        hasDownloadableMedia(refMediaCandidate.voice_item?.media))
-        ? refMediaCandidate
-        : undefined;
-
+    const sources = getInboundSources(full);
     const mediaDownloadStart = Date.now();
-    const mediaItem = mainMediaItem ?? refMediaItem;
-    if (mediaItem) {
-      const label = refMediaItem ? "ref" : "inbound";
-      const downloaded = await downloadMediaFromItem(mediaItem, {
-        cdnBaseUrl: deps.cdnBaseUrl,
-        saveMedia: deps.channelRuntime.media.saveMediaBuffer,
-        mediaSubdir: getActiveQuoteMediaSubdir(deps.accountId),
-        log: deps.log,
-        errLog: deps.errLog,
-        label,
-        abortSignal: deps.abortSignal,
-        throwOnError: true,
-      });
-      Object.assign(mediaOpts, downloaded);
-      if (refMediaItem) mediaOpts.referencedMedia = true;
+    for (const source of sources) {
+      deps.abortSignal?.throwIfAborted();
+      try {
+        prepared.push(await prepareInboundMessage(source, deps));
+      } catch (error) {
+        if (deps.abortSignal?.aborted || sources.length === 1) throw error;
+        deps.onPreparationFailure?.(source, error);
+        preparationFailures++;
+        deps.errLog(
+          `weixin source preparation failed: messageId=${getWeixinMessageId(source) ?? "unknown"} error=${String(error)}`,
+        );
+      }
     }
-    const mediaDownloadMs = Date.now() - mediaDownloadStart;
-
-    if (debug) {
-      debugTrace.push(
-        mediaItem
-          ? `│ mediaDownload: type=${mediaItem.type} cost=${mediaDownloadMs}ms`
-          : "│ mediaDownload: none",
-      );
-    }
-
     deps.abortSignal?.throwIfAborted();
-    ctx = weixinMessageToMsgContext(full, deps.accountId, mediaOpts);
+    if (!prepared.length) return;
+    mediaDownloadMs = Date.now() - mediaDownloadStart;
+    full = mergeInboundMessages(
+      prepared.map((item) => item.message),
+      preparedQuoteBodies(prepared),
+    );
+    textBody = extractTextBody(full.item_list);
+    // Filtering can change the command body; recompute its authorization from surviving input.
+    if (preparationFailures) {
+      ({ commandAuthorized } = await resolveWeixinInboundAuthorization({
+        senderId,
+        ownerId,
+        rawBody: textBody.trim(),
+        config: deps.config,
+        commands: deps.channelRuntime.commands,
+      }));
+    }
+    ctx =
+      prepared.length === 1 ? prepared[0].ctx : weixinMessageToMsgContext(full, deps.accountId, {});
+    if (prepared.length > 1) combinePreparedMedia(ctx, prepared);
+    rawBody = ctx.Body?.trim() ?? "";
     ctx.CommandBody = rawBody;
     ctx.CommandAuthorized = commandAuthorized;
-
-    // A batched message may carry several attachments. The quote cache below
-    // keeps recording only the first one, as for any single message.
-    if (mainMediaItem) {
-      await attachAdditionalMedia(ctx, full, mainMediaItem, (item) =>
-        downloadMediaFromItem(item, {
-          cdnBaseUrl: deps.cdnBaseUrl,
-          saveMedia: deps.channelRuntime.media.saveMediaBuffer,
-          mediaSubdir: getActiveQuoteMediaSubdir(deps.accountId),
-          log: deps.log,
-          errLog: deps.errLog,
-          label: "inbound",
-          abortSignal: deps.abortSignal,
-          throwOnError: true,
-        }),
+    contextToken = getContextTokenFromMsgContext(ctx);
+    if (contextToken) setContextToken(deps.accountId, senderId, contextToken);
+    const downloadedItems = new Map(prepared.flatMap((item) => [...item.downloadedItems]));
+    if (debug)
+      debugTrace.push(
+        `│ mediaDownload: sources=${prepared.length} cost=${mediaDownloadMs}ms failed=${preparationFailures}`,
       );
-    }
 
-    resolveStoredQuoteContext(ctx, full, deps.accountId);
-    const inboundMessageId = getWeixinMessageId(full);
-    if (inboundMessageId) {
+    // Keep each original ID/body and its own attachments, never the merged envelope's ID.
+    for (const source of getInboundSources(full)) {
+      const inboundMessageId = getWeixinMessageId(source);
+      if (!inboundMessageId) continue;
+      const attachments = (source.item_list ?? []).flatMap((item) => {
+        const downloaded = downloadedItems.get(item);
+        const entry = downloaded && downloadedMediaEntry(item, downloaded);
+        return entry
+          ? [
+              {
+                sourceMediaPath: entry.path,
+                mediaMime: entry.contentType,
+                mediaName: entry.fileName,
+              },
+            ]
+          : [];
+      });
       try {
-        await getQuoteStore()?.put({
+        await quoteStore?.put({
           accountId: deps.accountId,
           conversationId: senderId,
           messageId: inboundMessageId,
           direction: "inbound",
-          body: ctx.Body,
-          ...(ctx.MediaPath ? { sourceMediaPath: ctx.MediaPath } : {}),
-          ...(ctx.MediaType ? { mediaMime: ctx.MediaType } : {}),
-          ...(mainMediaItem?.file_item?.file_name
-            ? { mediaName: mainMediaItem.file_item.file_name }
-            : {}),
-          createdAt: full.create_time_ms ?? Date.now(),
+          body: weixinMessageToMsgContext(source, deps.accountId).Body,
+          media: attachments,
+          createdAt: source.create_time_ms ?? Date.now(),
         });
       } catch (err) {
         logger.warn(
@@ -342,6 +324,7 @@ export async function processOneMessage(
           opts: {
             baseUrl: deps.baseUrl,
             token: deps.token,
+            abortSignal: deps.abortSignal,
             contextToken,
             accountId: deps.accountId,
           },
@@ -360,6 +343,7 @@ export async function processOneMessage(
             sendTyping({
               baseUrl: deps.baseUrl,
               token: deps.token,
+              abortSignal: deps.abortSignal,
               body: {
                 ilink_user_id: ctx.To,
                 typing_ticket: deps.typingTicket!,
@@ -372,6 +356,7 @@ export async function processOneMessage(
             sendTyping({
               baseUrl: deps.baseUrl,
               token: deps.token,
+              abortSignal: deps.abortSignal,
               body: {
                 ilink_user_id: ctx.To,
                 typing_ticket: deps.typingTicket!,
@@ -393,6 +378,8 @@ export async function processOneMessage(
         humanDelay,
         typingCallbacks,
         deliver: async (payload, info) => {
+          deps.abortSignal?.throwIfAborted();
+          deliveryFailure = undefined;
           const rawText = payload.text ?? "";
           let text = (() => {
             const f = new StreamingMarkdownFilter();
@@ -425,6 +412,7 @@ export async function processOneMessage(
             return;
           }
           text = sendingResult.text;
+          deps.abortSignal?.throwIfAborted();
 
           try {
             if (mediaUrl) {
@@ -442,6 +430,7 @@ export async function processOneMessage(
               } else if (mediaUrl.startsWith("http://") || mediaUrl.startsWith("https://")) {
                 logger.debug(`outbound: downloading remote mediaUrl=${mediaUrl.slice(0, 80)}...`);
                 filePath = await downloadRemoteImageToTemp(mediaUrl, MEDIA_OUTBOUND_TEMP_DIR, {
+                  ...downloadPolicy,
                   abortSignal: deps.abortSignal,
                 });
                 logger.debug(`outbound: remote image downloaded to filePath=${filePath}`);
@@ -455,6 +444,7 @@ export async function processOneMessage(
                   opts: {
                     baseUrl: deps.baseUrl,
                     token: deps.token,
+                    abortSignal: deps.abortSignal,
                     contextToken,
                     runId,
                     accountId: deps.accountId,
@@ -478,6 +468,7 @@ export async function processOneMessage(
                 opts: {
                   baseUrl: deps.baseUrl,
                   token: deps.token,
+                  abortSignal: deps.abortSignal,
                   contextToken,
                   runId,
                   accountId: deps.accountId,
@@ -501,6 +492,7 @@ export async function processOneMessage(
                 opts: {
                   baseUrl: deps.baseUrl,
                   token: deps.token,
+                  abortSignal: deps.abortSignal,
                   contextToken,
                   runId,
                   accountId: deps.accountId,
@@ -517,6 +509,7 @@ export async function processOneMessage(
               logger.info(`outbound: text sent OK to=${ctx.To}`);
             }
           } catch (err) {
+            deliveryFailure = err;
             emitWeixinMessageSent({
               to: ctx.To,
               content: text,
@@ -532,9 +525,15 @@ export async function processOneMessage(
           }
         },
         onError: (err, info) => {
-          if (deps.abortSignal?.aborted || visibleFinalDelivered || failureNoticeSent) return;
-          failureNoticeSent = true;
+          if (
+            deps.abortSignal?.aborted ||
+            failureNoticeSent ||
+            (visibleFinalDelivered && err !== deliveryFailure)
+          )
+            return;
           deps.errLog(`weixin reply ${info.kind}: ${String(err)}`);
+          if (!resolveErrorNoticesEnabled(deps.config)) return;
+          failureNoticeSent = true;
           const errMsg = err instanceof Error ? err.message : String(err);
           let notice: string;
           if (errMsg.includes("remote media download failed") || errMsg.includes("fetch")) {
@@ -566,6 +565,7 @@ export async function processOneMessage(
     logger.debug(`dispatchReplyFromConfig: starting agentId=${route.agentId ?? "(none)"}`);
     try {
       deps.abortSignal?.throwIfAborted();
+      deps.beforeExecute?.();
       await deps.channelRuntime.reply.withReplyDispatcher({
         dispatcher,
         run: () =>
@@ -592,7 +592,7 @@ export async function processOneMessage(
         `debug-check: accountId=${deps.accountId} debug=${String(debug)} hasContextToken=${Boolean(contextToken)}`,
       );
 
-      if (debug && contextToken) {
+      if (debug && contextToken && !deps.abortSignal?.aborted) {
         const dispatchDoneAt = Date.now();
         const eventTs = full.create_time_ms ?? 0;
         const platformDelay = eventTs > 0 ? `${receivedAt - eventTs}ms` : "N/A";
@@ -631,6 +631,7 @@ export async function processOneMessage(
             opts: {
               baseUrl: deps.baseUrl,
               token: deps.token,
+              abortSignal: deps.abortSignal,
               contextToken,
               runId,
               accountId: deps.accountId,
@@ -645,7 +646,12 @@ export async function processOneMessage(
   } catch (err) {
     logger.error(`inbound processing failed: ${String(err)}`);
     // Only a cancelled channel is silent. Internal AbortError/TimeoutError is a failure.
-    if (!failureNoticeSent && !visibleFinalDelivered && !deps.abortSignal?.aborted) {
+    if (
+      !failureNoticeSent &&
+      (!visibleFinalDelivered || err === deliveryFailure) &&
+      !deps.abortSignal?.aborted &&
+      resolveErrorNoticesEnabled(deps.config)
+    ) {
       failureNoticeSent = true;
       await sendWeixinErrorNotice({
         config: deps.config,
@@ -663,6 +669,32 @@ export async function processOneMessage(
     throw err;
   } finally {
     // Keep dispatcher error delivery owned until the notice has settled.
-    await failureNotice;
+    try {
+      await failureNotice;
+    } finally {
+      try {
+        if (
+          preparationFailures &&
+          !failureNoticeSent &&
+          !deps.abortSignal?.aborted &&
+          resolveErrorNoticesEnabled(deps.config)
+        ) {
+          await sendWeixinErrorNotice({
+            config: deps.config,
+            abortSignal: deps.abortSignal,
+            to: senderId,
+            contextToken,
+            message: `⚠️ 有 ${preparationFailures} 条消息未能完成处理。`,
+            baseUrl: deps.baseUrl,
+            token: deps.token,
+            runId,
+            accountId: deps.accountId,
+            errLog: deps.errLog,
+          });
+        }
+      } finally {
+        for (const item of prepared) item.release();
+      }
+    }
   }
 }

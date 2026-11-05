@@ -245,7 +245,7 @@ export type WeixinInboundMediaOpts = {
  * Convert a WeixinMessage from getUpdates to the inbound MsgContext for the core pipeline.
  * Media: only pass MediaPath (local file, after CDN download + decrypt).
  * We never pass MediaUrl — the upstream CDN URL is encrypted/auth-only.
- * Priority when multiple media types present: image > video > file > voice.
+ * Additional attachments are appended in their original item order below.
  */
 export function weixinMessageToMsgContext(
   msg: WeixinMessage,
@@ -297,7 +297,7 @@ export function weixinMessageToMsgContext(
   return ctx;
 }
 
-function downloadableMediaItems(msg: WeixinMessage): MessageItem[] {
+export function downloadableMediaItems(msg: WeixinMessage): MessageItem[] {
   const hasMedia = (m?: { encrypt_query_param?: string; full_url?: string }) =>
     Boolean(m?.encrypt_query_param || m?.full_url);
   return (
@@ -309,6 +309,28 @@ function downloadableMediaItems(msg: WeixinMessage): MessageItem[] {
         (i.type === MessageItemType.VOICE && hasMedia(i.voice_item?.media) && !i.voice_item?.text),
     ) ?? []
   );
+}
+
+/** Describe the one file produced by downloading an item, without changing its order. */
+export function downloadedMediaEntry(item: MessageItem, media: WeixinInboundMediaOpts) {
+  const mediaPath =
+    media.decryptedPicPath ??
+    media.decryptedVideoPath ??
+    media.decryptedFilePath ??
+    media.decryptedVoicePath;
+  if (!mediaPath) return undefined;
+  const contentType = media.decryptedPicPath
+    ? "image/*"
+    : media.decryptedVideoPath
+      ? "video/mp4"
+      : media.decryptedFilePath
+        ? (media.fileMediaType ?? "application/octet-stream")
+        : (media.voiceMediaType ?? "audio/wav");
+  return {
+    path: mediaPath,
+    contentType,
+    ...(item.file_item?.file_name ? { fileName: item.file_item.file_name } : {}),
+  };
 }
 
 /**
@@ -369,7 +391,7 @@ function findReferenceItem(msg: WeixinMessage): MessageItem | undefined {
   return msg.item_list?.find((item) => item.ref_msg);
 }
 
-function inlineQuoteBody(item: MessageItem): string | undefined {
+export function inlineQuoteBody(item: MessageItem): string | undefined {
   const ref = item.ref_msg;
   if (!ref) return undefined;
   const parts: string[] = [];
@@ -402,72 +424,91 @@ function expiredMediaLabel(mime?: string, name?: string): string {
   return name ? `[引用的${kind}已过期: ${name}]` : `[引用的${kind}已过期]`;
 }
 
-/** Resolve an ID-only quote after sender authorization has succeeded. */
+/** Resolve stored quotes after authorization; return whether cached media was attached. */
 export function resolveStoredQuoteContext(
   ctx: WeixinMsgContext,
   msg: WeixinMessage,
   accountId: string,
   store: Pick<QuoteStore, "find"> | null = getQuoteStore(),
-): void {
+): boolean {
   const item = findReferenceItem(msg);
   const ref = item?.ref_msg;
   const referenceId = ref?.svr_id?.trim() || ref?.message_item?.msg_id?.trim();
-  if (!item || !ref || !referenceId) return;
+  if (!item || !ref || !referenceId) return false;
 
   ctx.ReplyToId = referenceId;
   ctx.ReplyToIsQuote = true;
-  if (ctx.ReplyToBody && (ref.title?.trim() || ref.message_item)) return;
+  const hasInlineBody = Boolean(ctx.ReplyToBody && inlineQuoteBody(item));
+  // Inline media metadata supplies a label, but its bytes can still come from storage.
+  if (hasInlineBody && (!ref.message_item || !isMediaItem(ref.message_item))) return false;
   const record = store?.find(accountId, ctx.From, referenceId);
   if (!record) {
     if (!ctx.ReplyToBody) ctx.ReplyToBody = "[引用消息内容未缓存]";
-    return;
+    return false;
   }
 
-  ctx.ReplyToBody = record.body || expiredMediaLabel(record.mediaMime, record.mediaName);
-  if (ref.partial_text && record.body) {
-    const partial = resolvePartialQuote(record.body, ref.partial_text);
-    if (!partial.fallback && partial.resolved) ctx.ReplyToQuoteText = partial.resolved;
-  }
-
-  if (!record.mediaPath) {
-    if (record.mediaMime || record.mediaName) {
-      ctx.ReplyToBody = expiredMediaLabel(record.mediaMime, record.mediaName);
+  if (!hasInlineBody) {
+    ctx.ReplyToBody = record.body || expiredMediaLabel(record.mediaMime, record.mediaName);
+    if (ref.partial_text && record.body) {
+      const partial = resolvePartialQuote(record.body, ref.partial_text);
+      if (!partial.fallback && partial.resolved) ctx.ReplyToQuoteText = partial.resolved;
     }
-    return;
   }
-  if (!fs.existsSync(record.mediaPath)) {
-    ctx.ReplyToBody = expiredMediaLabel(record.mediaMime, record.mediaName);
-    return;
+
+  const attachments = record.media ?? [record];
+  const available = attachments.filter((item) => item.mediaPath && fs.existsSync(item.mediaPath));
+  const expired = attachments.filter(
+    (item) =>
+      (!item.mediaPath || !fs.existsSync(item.mediaPath)) &&
+      (item.mediaMime || item.mediaName || item.mediaPath),
+  );
+  if (expired.length) {
+    const labels = expired
+      .map((item) => expiredMediaLabel(item.mediaMime, item.mediaName))
+      .join("\n");
+    ctx.ReplyToBody = available.length || hasInlineBody ? `${ctx.ReplyToBody}\n${labels}` : labels;
+  }
+  if (!available.length) {
+    return false;
   }
   const currentPaths = ctx.MediaPaths ?? (ctx.MediaPath ? [ctx.MediaPath] : []);
   const currentTypes =
     ctx.MediaTypes ?? (ctx.MediaPath ? [ctx.MediaType ?? "application/octet-stream"] : []);
-  ctx.MediaPaths = [...currentPaths, record.mediaPath];
-  ctx.MediaTypes = [...currentTypes, record.mediaMime ?? "application/octet-stream"];
-  ctx.media = ctx.MediaPaths.map((mediaPath, index) => ({
-    path: mediaPath,
-    contentType: ctx.MediaTypes?.[index] ?? "application/octet-stream",
-    ...(index === ctx.MediaPaths!.length - 1 && record.mediaName
-      ? { fileName: record.mediaName }
-      : {}),
-    ...(index === ctx.MediaPaths!.length - 1 ? { messageId: referenceId } : {}),
-  }));
-  const quotedAttachment = {
-    message_id: referenceId,
-    original_filename: record.mediaName ?? path.basename(record.mediaPath),
-    managed_source_path: record.mediaPath,
-    workspace_directory: "media/inbound/",
-  };
+  ctx.media = [
+    ...(ctx.media ??
+      currentPaths.map((mediaPath, index) => ({
+        path: mediaPath,
+        contentType: currentTypes[index] ?? "application/octet-stream",
+      }))),
+    ...available.map((item) => ({
+      path: item.mediaPath!,
+      contentType: item.mediaMime ?? "application/octet-stream",
+      ...(item.mediaName ? { fileName: item.mediaName } : {}),
+      messageId: referenceId,
+    })),
+  ];
+  ctx.MediaPaths = ctx.media.map((item) => item.path!);
+  ctx.MediaTypes = ctx.media.map((item) => item.contentType!);
+  delete ctx.MediaPath;
+  delete ctx.MediaType;
   ctx.ChannelPromptContext = [
     ...(ctx.ChannelPromptContext ?? []),
-    [
-      "Quoted attachment tool access:",
-      JSON.stringify(quotedAttachment),
-      "The attachment is staged into the agent workspace under media/inbound/. " +
-        "If automatic extraction fails and the user asks about its contents, use the available " +
-        "file/PDF tools to locate it by original_filename and read it.",
-    ].join("\n"),
+    ...available.map((item) =>
+      [
+        "Quoted attachment tool access:",
+        JSON.stringify({
+          message_id: referenceId,
+          original_filename: item.mediaName ?? path.basename(item.mediaPath!),
+          managed_source_path: item.mediaPath,
+          workspace_directory: "media/inbound/",
+        }),
+        "The attachment is staged into the agent workspace under media/inbound/. " +
+          "If automatic extraction fails and the user asks about its contents, use the available " +
+          "file/PDF tools to locate it by original_filename and read it.",
+      ].join("\n"),
+    ),
   ];
+  return true;
 }
 
 /** Extract the context_token from an inbound WeixinMsgContext. */

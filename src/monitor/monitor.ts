@@ -7,7 +7,9 @@ import { STALE_TOKEN_ERRCODE, pauseSession, getRemainingPauseMs } from "../api/s
 import type { WeixinMessage } from "../api/types.js";
 import { processOneMessage } from "../messaging/process-message.js";
 import { flushWeixinErrorNotices } from "../messaging/error-notice.js";
-import { getSyncBufFilePath, loadGetUpdatesBuf, saveGetUpdatesBuf } from "../storage/sync-buf.js";
+import { getSyncBufFilePath } from "../storage/sync-buf.js";
+import { InboundJournal, InboundJournalError } from "../storage/inbound-journal.js";
+import { getInboundSources } from "../messaging/inbound-sources.js";
 import { logger } from "../util/logger.js";
 import type { Logger } from "../util/logger.js";
 import { redactBody } from "../util/redact.js";
@@ -49,10 +51,13 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
     accountId,
     config,
     channelRuntime,
-    abortSignal,
     longPollTimeoutMs,
     setStatus,
   } = opts;
+  const lifetime = new AbortController();
+  const abortSignal = opts.abortSignal
+    ? AbortSignal.any([opts.abortSignal, lifetime.signal])
+    : lifetime.signal;
   const log = opts.runtime?.log ?? (() => {});
   const errLog = opts.runtime?.error ?? ((m: string) => log(m));
   const aLog: Logger = logger.withAccount(accountId);
@@ -72,8 +77,14 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
   const syncFilePath = getSyncBufFilePath(accountId);
   aLog.debug(`syncFilePath: ${syncFilePath}`);
 
-  const previousGetUpdatesBuf = loadGetUpdatesBuf(syncFilePath);
-  let getUpdatesBuf = previousGetUpdatesBuf ?? "";
+  const journal = new InboundJournal(syncFilePath);
+  const previousGetUpdatesBuf = journal.cursor;
+  let getUpdatesBuf = previousGetUpdatesBuf;
+  if (journal.interruptedCount) {
+    errLog(
+      `weixin: ${journal.interruptedCount} interrupted inbound message(s) retained; automatic replay disabled`,
+    );
+  }
 
   if (previousGetUpdatesBuf) {
     log(`[weixin] resuming from previous sync buf (${getUpdatesBuf.length} bytes)`);
@@ -83,27 +94,77 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
     aLog.info(`No previous get_updates_buf found, starting fresh`);
   }
 
-  const configManager = new WeixinConfigManager({ baseUrl, token }, log);
+  const configManager = new WeixinConfigManager({ baseUrl, token, abortSignal }, log);
 
   let nextTimeoutMs = longPollTimeoutMs ?? DEFAULT_LONG_POLL_TIMEOUT_MS;
   let consecutiveFailures = 0;
 
+  let fatalError: InboundJournalError | undefined;
+  const stopForPersistenceError = (error: InboundJournalError): void => {
+    fatalError ??= error;
+    lifetime.abort(error);
+  };
   const processInbound = async (full: WeixinMessage): Promise<void> => {
-    const fromUserId = full.from_user_id ?? "";
-    const cachedConfig = await configManager.getForUser(fromUserId, full.context_token);
-
-    await processOneMessage(full, {
-      accountId,
-      config,
-      channelRuntime,
-      baseUrl,
-      cdnBaseUrl,
-      token,
-      typingTicket: cachedConfig.typingTicket,
-      log: opts.runtime?.log ?? (() => {}),
-      errLog,
-      abortSignal,
-    });
+    let sources = [...getInboundSources(full)];
+    let admitted = false;
+    try {
+      abortSignal.throwIfAborted();
+      const cachedConfig = await configManager.getForUser(
+        full.from_user_id ?? "",
+        full.context_token,
+      );
+      abortSignal.throwIfAborted();
+      await processOneMessage(full, {
+        accountId,
+        config,
+        channelRuntime,
+        baseUrl,
+        cdnBaseUrl,
+        token,
+        typingTicket: cachedConfig.typingTicket,
+        log,
+        errLog,
+        abortSignal,
+        onPreparationFailure: (source) => {
+          try {
+            journal.finish([source]);
+            sources = sources.filter((message) => message !== source);
+          } catch (error) {
+            if (error instanceof InboundJournalError) stopForPersistenceError(error);
+            throw error;
+          }
+        },
+        beforeExecute: () => {
+          abortSignal.throwIfAborted();
+          if (!admitted) {
+            try {
+              journal.start(sources);
+              admitted = true;
+            } catch (error) {
+              if (error instanceof InboundJournalError) stopForPersistenceError(error);
+              throw error;
+            }
+          }
+        },
+      });
+      if (abortSignal.aborted) {
+        if (admitted) journal.interrupt(sources);
+      } else if (sources.length) journal.finish(sources);
+    } catch (error) {
+      if (error instanceof InboundJournalError) {
+        stopForPersistenceError(error);
+      } else {
+        try {
+          if (abortSignal.aborted) {
+            if (admitted) journal.interrupt(sources);
+          } else if (sources.length) journal.finish(sources);
+        } catch (persistError) {
+          if (persistError instanceof InboundJournalError) stopForPersistenceError(persistError);
+          else throw persistError;
+        }
+      }
+      throw error;
+    }
   };
 
   // Opt-in inbound batching (messages.inbound.byChannel["openclaw-weixin"] / debounceMs).
@@ -124,7 +185,25 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
 
   // Recover notices through existing channel activity without delaying new input.
   let noticeRecovery = flushWeixinErrorNotices({ config, accountId, abortSignal, errLog });
+  const stopBatcher = () => {
+    void batcher?.stop();
+  };
+  abortSignal.addEventListener("abort", stopBatcher, { once: true });
+  const deliver = async (list: WeixinMessage[]): Promise<void> => {
+    for (const full of list) {
+      if (abortSignal.aborted) break;
+      const now = Date.now();
+      setStatus?.({ accountId, lastEventAt: now, lastInboundAt: now });
+      try {
+        if (batcher) batcher.push(full);
+        else await processInbound(full);
+      } catch (error) {
+        if (!abortSignal.aborted) errLog(`weixin inbound processing failed: ${String(error)}`);
+      }
+    }
+  };
   try {
+    await deliver(journal.pending());
     while (!abortSignal?.aborted) {
       let pollCompleted = false;
       try {
@@ -202,35 +281,17 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
           lastEventAt: pollTime,
           lastError: null,
         });
-        if (resp.get_updates_buf != null && resp.get_updates_buf !== "") {
-          saveGetUpdatesBuf(syncFilePath, resp.get_updates_buf);
-          getUpdatesBuf = resp.get_updates_buf;
-          aLog.debug(`Saved new get_updates_buf (${getUpdatesBuf.length} bytes)`);
-        }
-        const list = resp.msgs ?? [];
-        for (const full of list) {
-          aLog.info(
-            `inbound message: from=${full.from_user_id} types=${full.item_list?.map((i) => i.type).join(",") ?? "none"}`,
-          );
-
-          const now = Date.now();
-          setStatus?.({ accountId, lastEventAt: now, lastInboundAt: now });
-
-          if (abortSignal?.aborted) break;
-          try {
-            if (batcher) batcher.push(full);
-            else await processInbound(full);
-          } catch (error) {
-            if (!abortSignal?.aborted) {
-              errLog(`weixin inbound processing failed: ${String(error)}`);
-            }
-          }
-        }
+        const list = journal.accept(resp.msgs ?? [], resp.get_updates_buf);
+        getUpdatesBuf = journal.cursor;
+        await deliver(list);
       } catch (err) {
         if (abortSignal?.aborted) {
-          batcher?.flush();
           aLog.info(`Monitor stopped (aborted)`);
-          return;
+          break;
+        }
+        if (err instanceof InboundJournalError) {
+          stopForPersistenceError(err);
+          break;
         }
         if (!pollCompleted) {
           setStatus?.({ accountId, connected: false });
@@ -257,24 +318,33 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
         }
       }
     }
+  } catch (error) {
+    if (!abortSignal.aborted) throw error;
   } finally {
+    lifetime.abort();
+    await batcher?.stop();
+    abortSignal.removeEventListener("abort", stopBatcher);
     await noticeRecovery;
     setStatus?.({ accountId, connected: false });
   }
-  batcher?.flush();
+  if (fatalError) throw fatalError;
   aLog.info(`Monitor ended`);
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
-    const t = setTimeout(resolve, ms);
-    signal?.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(t);
-        reject(new Error("aborted"));
-      },
-      { once: true },
-    );
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
 }
