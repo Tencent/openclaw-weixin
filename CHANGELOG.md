@@ -8,7 +8,7 @@ This project follows the [Keep a Changelog](https://keepachangelog.com/) format.
 
 ### Added
 
-- **Inbound message batching (opt-in):** With `messages.inbound.byChannel.openclaw-weixin` (or `messages.inbound.debounceMs`) set, multi-image sends and messages that arrive while a reply is running are merged into a single turn per sender, with every attachment downloaded. Slash commands stay separate. Disabled by default (#359).
+- **Inbound message batching:** Messages that arrive while a reply is running are merged into a single follow-up turn per sender, with every attachment downloaded; slash commands stay separate. On by default. An opt-in image window (`messages.inbound.byChannel.openclaw-weixin`, falling back to `messages.inbound.debounceMs`) also merges multi-image sends into one turn (#359).
 
 ## [2.4.10] - 2026-10-10
 

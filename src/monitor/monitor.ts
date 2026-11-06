@@ -106,21 +106,18 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
     });
   };
 
-  // Opt-in inbound batching (messages.inbound.byChannel["openclaw-weixin"] / debounceMs).
-  // When disabled, messages are processed one by one exactly as before.
+  // Messages arriving while a reply is running are always merged into one follow-up turn.
+  // The image window (messages.inbound.byChannel["openclaw-weixin"] / debounceMs) is opt-in.
   const imageWindowMs = resolveInboundBatchWindowMs(config);
-  const batcher =
-    imageWindowMs > 0
-      ? createInboundBatcher({
-          imageWindowMs,
-          process: processInbound,
-          onError: (err) =>
-            aLog.error(`processOneMessage failed: ${String(err)} stack=${(err as Error)?.stack}`),
-          onMerged: ({ from, count, media }) =>
-            aLog.info(`inbound batching: merged ${count} messages (media=${media}) from=${from}`),
-        })
-      : undefined;
-  if (batcher) aLog.info(`inbound batching enabled: imageWindow=${imageWindowMs}ms`);
+  const batcher = createInboundBatcher({
+    imageWindowMs,
+    process: processInbound,
+    onError: (err) =>
+      aLog.error(`processOneMessage failed: ${String(err)} stack=${(err as Error)?.stack}`),
+    onMerged: ({ from, count, media }) =>
+      aLog.info(`inbound batching: merged ${count} messages (media=${media}) from=${from}`),
+  });
+  aLog.info(`inbound batching: imageWindow=${imageWindowMs}ms`);
 
   while (!abortSignal?.aborted) {
     try {
@@ -202,15 +199,11 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
         // allowFrom filtering is delegated to processOneMessage via the framework
         // authorization pipeline (resolveSenderCommandAuthorizationWithRuntime).
 
-        if (batcher) {
-          batcher.push(full);
-        } else {
-          await processInbound(full);
-        }
+        batcher.push(full);
       }
     } catch (err) {
       if (abortSignal?.aborted) {
-        batcher?.flush();
+        batcher.flush();
         aLog.info(`Monitor stopped (aborted)`);
         return;
       }
@@ -234,7 +227,7 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
       }
     }
   }
-  batcher?.flush();
+  batcher.flush();
   aLog.info(`Monitor ended`);
 }
 

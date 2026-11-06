@@ -38,7 +38,7 @@ function describeMsg(msg: WeixinMessage): string {
 }
 
 describe("resolveInboundBatchWindowMs", () => {
-  it("is disabled when not configured", () => {
+  it("is 0 when not configured", () => {
     expect(resolveInboundBatchWindowMs(undefined)).toBe(0);
     expect(resolveInboundBatchWindowMs({} as never)).toBe(0);
   });
@@ -246,6 +246,42 @@ describe("createInboundBatcher", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(onError).toHaveBeenCalledOnce();
     expect(failing).toHaveBeenCalledTimes(2);
+  });
+
+  describe("without an image window", () => {
+    it("dispatches images immediately while idle", async () => {
+      const batcher = createInboundBatcher({ imageWindowMs: 0, process });
+      batcher.push(image("1"));
+      expect(processed).toEqual([{ at: 0, msg: "I(1)" }]);
+    });
+
+    it("still merges everything that arrives during a running turn", async () => {
+      const batcher = createInboundBatcher({ imageWindowMs: 0, process });
+      batcher.push(text("a"));
+      batcher.push(text("b"));
+      batcher.push(image("1"));
+      batcher.push(text("c"));
+
+      await finishTurn();
+      expect(processed.map((p) => p.msg)).toEqual(["T(a)", "T(b|c) I(1)"]);
+      await finishTurn();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(processed).toHaveLength(2);
+    });
+
+    it("keeps commands as their own turn", async () => {
+      const batcher = createInboundBatcher({ imageWindowMs: 0, process });
+      batcher.push(text("a"));
+      batcher.push(text("b"));
+      batcher.push(text("/new"));
+      batcher.push(image("1"));
+
+      await finishTurn();
+      expect(processed.map((p) => p.msg)).toEqual(["T(a)", "T(b)"]);
+      await finishTurn();
+      await finishTurn();
+      expect(processed.map((p) => p.msg).slice(2)).toEqual(["T(/new)", "I(1)"]);
+    });
   });
 
   it("flush() dispatches a pending image burst immediately", async () => {

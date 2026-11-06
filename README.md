@@ -122,18 +122,19 @@ added in a future version if needed.
 
 ### Inbound message batching
 
-By default every inbound message gets its own reply. To merge messages that a user sends in quick succession, set an image batching window (milliseconds):
+Messages that arrive while a reply is running are merged into one follow-up reply instead of getting one reply each. This is on by default and applies per sender:
+
+- While idle, text, files, video, voice, quoted replies, and images are processed immediately.
+- Everything that arrives while a reply is still running is merged into one follow-up turn: texts are joined, all attachments are downloaded, and quoted replies are rendered inline as text.
+- Slash commands always run as their own turn, in arrival order.
+
+You can also enable an image batching window (milliseconds) so a multi-image send becomes a single turn:
 
 ```bash
 openclaw config set messages.inbound.byChannel.openclaw-weixin 3000
 ```
 
-A window that is too short can split a multi-image send into two turns, while a longer one only delays image-only sends, so err on the longer side; around 3 seconds tolerates slower uploads on mobile networks. Text and voice never wait on this window: one arriving while images are pending joins them and dispatches at once. So if users often send images first and type or speak a few seconds later, set it to 30–60 seconds; the cost is that image-only sends wait the full window before a reply starts. `messages.inbound.debounceMs` is used as a fallback; `0` or unset keeps the default one-reply-per-message behavior. Restart the Gateway after changing it. When enabled, per sender:
-
-- While idle, text, files, video, voice, and quoted replies are processed immediately.
-- Images wait until no new image arrives within the window, so a multi-image send becomes a single turn. Any other message arriving inside the window joins the batch and flushes it.
-- Everything that arrives while a reply is still running is merged into one follow-up turn: texts are joined, all attachments are downloaded, and quoted replies are rendered inline as text.
-- Slash commands always run as their own turn, in arrival order.
+With the window set, images wait until no new image arrives within the window; any other message arriving inside the window joins the batch and flushes it. A window that is too short can split a multi-image send into two turns, while a longer one only delays image-only sends, so err on the longer side; around 3 seconds tolerates slower uploads on mobile networks. Text and voice never wait on this window. So if users often send images first and type or speak a few seconds later, set it to 30–60 seconds; the cost is that image-only sends wait the full window before a reply starts. `messages.inbound.debounceMs` is used as a fallback; `0` or unset means images do not wait. Restart the Gateway after changing it.
 
 ## Local quote cache
 

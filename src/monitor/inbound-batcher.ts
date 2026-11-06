@@ -14,7 +14,8 @@ const MEDIA_LABELS: Record<number, string> = {
 
 /**
  * Resolve the image batching window from `messages.inbound.byChannel["openclaw-weixin"]`,
- * falling back to `messages.inbound.debounceMs`. Returns 0 (batching disabled) when unset.
+ * falling back to `messages.inbound.debounceMs`. Returns 0 (no image window) when unset;
+ * messages arriving during a running turn are merged regardless.
  */
 export function resolveInboundBatchWindowMs(config: OpenClawConfig | undefined): number {
   const inbound = (
@@ -100,7 +101,10 @@ type SenderState = {
 };
 
 export type InboundBatcherOpts = {
-  /** Quiet window used to collect a burst of images before dispatching them together. */
+  /**
+   * Quiet window used to collect a burst of images before dispatching them together.
+   * `0` disables the window: images dispatch like any other message.
+   */
   imageWindowMs: number;
   /** Processes one (possibly merged) message; called serially per sender. */
   process: (msg: WeixinMessage) => Promise<void>;
@@ -111,8 +115,9 @@ export type InboundBatcherOpts = {
 /**
  * Per-sender inbound batching:
  * - while idle, text / file / video / voice / quote messages dispatch immediately;
- * - images wait `imageWindowMs` after the last image so a multi-image send becomes one turn;
- *   any non-command message arriving inside that window joins the batch and flushes it;
+ * - when `imageWindowMs` > 0, images wait that long after the last image so a multi-image
+ *   send becomes one turn; any non-command message arriving inside that window joins the
+ *   batch and flushes it;
  * - everything (except slash commands) that arrives while a turn is running is merged
  *   into a single follow-up turn;
  * - slash commands always run as their own turn, in arrival order.
@@ -183,7 +188,7 @@ export function createInboundBatcher(opts: InboundBatcherOpts) {
     push(msg: WeixinMessage): void {
       const sender = msg.from_user_id ?? "";
       const s = stateOf(sender);
-      if (isImageMessage(msg)) {
+      if (opts.imageWindowMs > 0 && isImageMessage(msg)) {
         s.open ??= [];
         s.open.push(msg);
         clearTimeout(s.timer);
