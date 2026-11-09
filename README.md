@@ -9,6 +9,8 @@
 
 OpenClaw's Weixin channel plugin. Connect an OpenClaw Gateway to Weixin with QR-code login and receive and send messages through the Weixin backend.
 
+For the product changes, merged work, and upgrade considerations in the binding and message-processing update, see the [Weixin plugin binding and message-processing release notes (3.0.0-beta-0 prerelease, Simplified Chinese)](./docs/release-notes-bot-realname-auth_zh_CN.md).
+
 ## Highlights
 
 - QR-code login with automatic credential storage.
@@ -110,18 +112,18 @@ openclaw config set 'channels["openclaw-weixin"].promptBindOwner' true --strict-
 
 #### Test a PIN bind
 
-Use these steps to confirm, on the test route, that the plugin sends the forced PIN on the bind QR request. Do not publish this test package to the production npm registry.
+Use these steps in a test environment to confirm that the plugin requests PIN verification when acquiring the bind QR code.
 
-1. Install a plugin build that logs the full QR request body. The current development package is `3.0.0-beta-1`. From the plugin directory, build, pack, and replace the installed plugin:
+1. Install a plugin build that logs the full QR request body. The current prerelease package is `3.0.0-beta-0`. From the plugin directory, build, pack, and replace the installed plugin:
 
 ```bash
 npm run build
 npm pack
-openclaw plugins install ./tencent-weixin-openclaw-weixin-3.0.0-beta-1.tgz --force
+openclaw plugins install ./tencent-weixin-openclaw-weixin-3.0.0-beta-0.tgz --force
 openclaw plugins list
 ```
 
-`openclaw-weixin` in that list must show Version `3.0.0-beta-1`. If the Gateway is already running, restart it so it does not keep an older plugin in memory:
+`openclaw-weixin` in that list must show Version `3.0.0-beta-0`. If the Gateway is already running, restart it so it does not keep an older plugin in memory:
 
 ```bash
 openclaw gateway restart
@@ -212,46 +214,46 @@ A window that is too short can split a multi-image send into two turns, while a 
 - Everything that arrives while a reply is still running is merged into one follow-up turn: texts are joined, all attachments are downloaded, and quoted replies are rendered inline as text.
 - Slash commands always run as their own turn, in arrival order.
 
-附件按原消息的到达顺序、以及每条消息内部的附件顺序下载，并按相同顺序交给 Agent，不再按图片、视频等类型调整顺序。合并只影响当前回复轮次；引用缓存仍按每条原消息的 ID 保存正文及全部附件。处理中的受管附件从落盘开始受到临时保护，正常结束、失败或取消后释放，再按原有缓存策略清理。
+Attachments are downloaded in the arrival order of the original messages and in the attachment order within each message, then passed to the Agent in that same order, without regrouping them by type such as images or videos. Batching affects only the current reply turn; the quote cache still stores the body and all attachments under each original message ID. Managed attachments are temporarily protected from cleanup as soon as they are written to disk. This protection is released after completion, failure, or cancellation, after which the existing cache cleanup policy applies.
 
-合并批次按微信原始消息分别准备附件。某一条下载、解密或保存失败时，只结束这一条，其他正常消息仍按原顺序合并交给 Agent；失败消息的正文、引用及残缺附件不进入本轮输入。单条原始消息有多个附件时，其中任一附件失败则整条消息失败。已成功下载的正常附件直接复用，不重复下载。
+Attachments in a batch are prepared separately for each original Weixin message. If downloading, decrypting, or saving an attachment fails, only that message fails; the remaining messages are still batched and passed to the Agent in their original order. The failed message's body, quotes, and incomplete attachments are excluded from the turn. If an original message has multiple attachments, failure of any attachment fails the entire message. Successfully downloaded attachments from the other messages are reused without downloading them again.
 
-失败消息单独更新收件记录，正常消息仅在进入 Agent 前标记为处理中；主动取消仍保留尚未执行的正常消息供重启恢复。部分失败提示只在 `errorNotices` 显式开启时发送，并在正常消息处理后发送。合并后的 Agent 执行失败仍按整轮失败处理，不自动拆开重跑。
+Inbox records are updated separately for failed messages. The remaining messages are marked as processing only immediately before they enter the Agent; explicit cancellation still preserves messages that have not started execution so they can be recovered after a restart. Partial-failure notices are sent only when `errorNotices` is explicitly enabled, and only after the remaining messages have been processed. If the batched Agent execution fails, the entire turn is treated as failed; it is not automatically split up and retried.
 
-### 停止与重载时的消息恢复
+### Message recovery on stop and reload
 
-插件把原始入站消息和轮询游标一起原子保存到账号的 `accounts/<accountId>.sync.json`，独立于引用缓存，无需开启额外开关。配置准备、附件下载、图片合并窗口及队列中的消息保持待处理状态；停止时取消在途操作，清理合并计时器并等待处理收尾，不再强制派发队列。重启后先按原接收顺序重新入队，再接收新消息；合并仍按发送人隔离，命令保持原顺序。
+The plugin atomically saves original inbound messages together with the polling cursor in the account's `accounts/<accountId>.sync.json`. This is independent of the quote cache and requires no additional setting. Messages remain pending during configuration preparation, attachment downloads, the image batching window, and queueing. On stop, the plugin cancels in-flight operations, clears batching timers, and waits for processing to finish without forcing queued messages to dispatch. After a restart, it requeues saved messages in their original receive order before accepting new messages. Batching remains isolated by sender, and commands retain their original order.
 
-Agent 或本地命令开始执行前会先落盘“处理中”状态。正常完成或明确失败后移除原始记录；单条失败继续处理后面的消息。执行期间停止或进程退出的记录保留为“已中断”，启动时在日志中报告数量，不自动重跑，避免重复工具调用或发送消息；需要继续时请先核实执行结果，再重新发送请求。写入失败或状态文件损坏时停止该账号处理，保留已有文件供恢复，不跳过记录继续推进游标。
+Before an Agent or local command starts executing, the plugin persists the processing state. It removes the original record after successful completion or a definite failure; failure of one message does not stop later messages. Records interrupted by a stop or process exit during execution are retained as interrupted. Their count is logged on startup, and they are not automatically retried, to avoid duplicate tool calls or message sends. To continue, first verify the execution result, then resend the request. If a write fails or the state file is corrupt, processing stops for that account and existing files are preserved for recovery; the plugin does not skip records and advance the cursor.
 
-有原始消息 ID 时，按账号、发送人和消息 ID 去重；待处理及已中断记录持续参与去重，已结束消息保留最近 10000 个 ID。没有消息 ID 的输入仍可从本地恢复，但无法可靠识别服务端重复投递。本机制不能保证外部工具或消息发送恰好执行一次。如果在写入“处理中”和实际调用之间崩溃，或持久化故障导致无法回写待处理状态，也会保守地保留为已中断，需要人工核实。
+When an original message ID is available, deduplication uses the account, sender, and message ID. Pending and interrupted records continue to participate in deduplication; the most recent 10,000 completed message IDs are retained. Input without a message ID can still be recovered locally, but duplicate delivery from the server cannot be reliably detected. This mechanism does not guarantee exactly-once execution of external tools or message sends. A crash between persisting the processing state and making the actual call, or a persistence failure that prevents restoring the pending state, also conservatively leaves the record interrupted and requires manual verification.
 
-状态文件包含待处理及已中断消息原文，文件权限为 `0600`，随正常账号状态一起备份；它不受引用缓存的容量及过期清理影响。成功或明确失败后删除对应原文，已中断原文保留供核实。旧版只有游标的文件会自动迁移；升级前已经丢失的消息无法补回。请避免降级到仍会覆盖该文件的旧版插件。
+The state file contains the original content of pending and interrupted messages, has permissions `0600`, and is backed up with the normal account state. Quote-cache size limits and expiration cleanup do not affect it. Original content is deleted after success or a definite failure; interrupted content is retained for verification. Older cursor-only files are migrated automatically, but messages already lost before upgrading cannot be recovered. Avoid downgrading to an older plugin version that still overwrites this file.
 
-### 失败提示与媒体下载
+### Error notices and media downloads
 
-单条入站消息处理失败后，插件会记录错误并继续处理同批次中的其他消息。给用户发送失败提示默认关闭；只有显式设置 `channels.openclaw-weixin.errorNotices: true` 才会发送。本版本创建的提示在恢复发送前也会检查开关。正常消息回复不受该开关影响。
+If an inbound message fails, the plugin logs the error and continues processing the other messages in the batch. User-facing error notices are off by default and are sent only when `channels.openclaw-weixin.errorNotices: true` is explicitly set. Notices created by this version also check the setting before delivery resumes. Normal message replies are unaffected by this setting.
 
 ```bash
 openclaw config set 'channels["openclaw-weixin"].errorNotices' true --strict-json
 ```
 
-升级前已进入宿主队列、且没有通知标记的提示，当前宿主接口无法可靠识别，仍可能恢复发送；关闭开关会停止插件主动恢复它们，但不能保证拦截宿主自己的恢复。
+The current host interface cannot reliably identify unmarked notices that entered the host queue before the upgrade, so their delivery may still resume. Disabling the setting stops the plugin from actively resuming them, but cannot guarantee that the host's own recovery will be blocked.
 
-入站附件及出站远程媒体下载默认不限制总时长，只要持续收到数据，就可以下载超过 30 秒；等待响应或连续没有收到数据超过 30 秒时仍会中断。可在 `channels.openclaw-weixin.mediaDownload` 配置这两个独立时限，单位为毫秒：
+Downloads of inbound attachments and outbound remote media have no total duration limit by default. They may run for more than 30 seconds as long as data keeps arriving, but are still interrupted after more than 30 seconds waiting for a response or receiving no data. Configure these two independent limits, in milliseconds, under `channels.openclaw-weixin.mediaDownload`:
 
-| 配置项 | 默认值 | 含义 |
+| Setting | Default | Meaning |
 | --- | ---: | --- |
-| `timeoutMs` | `0` | 总下载时限，包含等待响应和读取正文；`0` 表示不限制总时长。 |
-| `idleTimeoutMs` | `30000` | 等待响应或连续没有收到有效数据的最长时间，必须大于 `0`；收到响应头或非空数据后重新计时。 |
+| `timeoutMs` | `0` | Total download timeout, including waiting for the response and reading the body; `0` means no total duration limit. |
+| `idleTimeoutMs` | `30000` | Maximum wait for a response or interval without valid data; must be greater than `0`. Resets when response headers or nonempty data arrive. |
 
-例如，总时长不限制，并允许连续等待数据最多 60 秒：
+For example, allow an unlimited total duration and up to 60 seconds without incoming data:
 
 ```bash
 openclaw config set 'channels["openclaw-weixin"].mediaDownload' '{"timeoutMs":0,"idleTimeoutMs":60000}' --strict-json
 ```
 
-要限制总时长为 10 分钟，把 `timeoutMs` 设为 `600000`。这些配置不改变 Bot API 的请求时限；通道停止或重载仍可主动取消进行中的入站下载。修改后重启 Gateway。
+To limit the total duration to 10 minutes, set `timeoutMs` to `600000`. These settings do not change Bot API request timeouts; stopping or reloading the channel can still cancel inbound downloads in progress. Restart the Gateway after changing them.
 
 ## Local quote cache
 
@@ -260,11 +262,15 @@ stores the required text and media metadata locally so later quotes can restore 
 context. The cache is enabled by default and failures do not interrupt normal message
 delivery.
 
-引用旧附件时优先复用本地可用缓存；没有可用缓存才尝试下载。旧附件下载失败时，会向 Agent 标记引用附件暂不可用，当前消息的正文仍正常处理，也不会因此发送整条请求失败提示。此行为同样适用于合并消息；当前消息自身的附件下载失败和主动取消仍按原有规则处理。
+For quoted attachments, the plugin reuses an available local cache entry before attempting a download. If downloading an old attachment fails, it tells the Agent that the quoted attachment is temporarily unavailable, while still processing the current message body normally and without sending a failure notice for the entire request. This also applies to batched messages. Failures when downloading the current message's own attachments, and explicit cancellation, continue to follow the existing rules.
 
 Configure it under `channels.openclaw-weixin.quoteCache` when you need different
 retention or size limits. The default limits are 30 days and 10,000 text records per
-account, plus 7 days, 256 MiB per account, and 25 MiB per media file. See the
+account, plus 7 days, 256 MiB per account, and 25 MiB per media file.
+
+By default, media stays in the existing plugin-managed directory under OpenClaw's `inbound` tree. You can also use the shared `inbound` directory directly or configure a separate directory outside `inbound`. The first two options may be affected by OpenClaw's general media cleanup, so ensure its retention period meets your quoting needs.
+
+See the
 [local quote cache guide](./docs/quote-cache_zh_CN.md) for the complete configuration,
 storage behavior, and validation details.
 
