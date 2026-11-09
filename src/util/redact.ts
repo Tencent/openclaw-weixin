@@ -35,7 +35,7 @@ export function redactBody(body: string | undefined, maxLen = DEFAULT_BODY_MAX_L
   if (!body) return "(empty)";
   // Mask values of known sensitive JSON keys: "key":"value" → "key":"<redacted>"
   const redacted = body.replace(
-    /"(context_token|bot_token|token|authorization|Authorization)"\s*:\s*"[^"]*"/g,
+    /"(context_token|bot_token|bot_spam_ticket|token|authorization|Authorization)"\s*:\s*"[^"]*"/g,
     '"$1":"<redacted>"',
   );
   if (redacted.length <= maxLen) return redacted;

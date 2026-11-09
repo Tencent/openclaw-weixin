@@ -7,14 +7,38 @@ describe("WeixinConfigSchema", () => {
     expect(result.baseUrl).toBe("https://ilinkai.weixin.qq.com");
     expect(result.cdnBaseUrl).toBe("https://novac2c.cdn.weixin.qq.com/c2c");
     expect(result.replyProgressMessages).toBe(true);
+    expect(result.errorNotices).toBe(false);
+    expect(result.mediaDownload).toEqual({ timeoutMs: 0, idleTimeoutMs: 30_000 });
+    expect(result.promptBindOwner).toBe(false);
+    expect(result.verifyPin).toBe(false);
     expect(result.quoteCache).toEqual({
       enabled: true,
+      mediaStorage: { mode: "managed" },
       retentionDays: 30,
       maxMessagesPerAccount: 10_000,
       mediaRetentionDays: 7,
       maxMediaBytesPerAccount: 256 * 1024 * 1024,
       maxSingleMediaBytes: 25 * 1024 * 1024,
     });
+  });
+
+  it("accepts an acctweb origin that includes a non-443 port", () => {
+    const result = WeixinConfigSchema.parse({
+      acctwebBaseUrl: "http://10.1.2.3:8088",
+    });
+    expect(result.acctwebBaseUrl).toBe("http://10.1.2.3:8088");
+  });
+
+  it("accepts verifyPin for forcing the phone PIN", () => {
+    const result = WeixinConfigSchema.parse({ verifyPin: true });
+    expect(result.verifyPin).toBe(true);
+  });
+
+  it("accepts an HTTP proxy for the bind-ticket endpoint", () => {
+    const result = WeixinConfigSchema.parse({
+      acctwebProxy: "http://10.1.2.3:8088",
+    });
+    expect(result.acctwebProxy).toBe("http://10.1.2.3:8088");
   });
 
   it("accepts custom baseUrl and cdnBaseUrl", () => {
@@ -35,11 +59,38 @@ describe("WeixinConfigSchema", () => {
     expect(result.enabled).toBe(false);
   });
 
+  it("asks for the bind-owner choice only when promptBindOwner is true", () => {
+    expect(WeixinConfigSchema.parse({}).promptBindOwner).toBe(false);
+    expect(WeixinConfigSchema.parse({ promptBindOwner: true }).promptBindOwner).toBe(true);
+  });
+
   it("accepts disabling reply progress messages", () => {
     const result = WeixinConfigSchema.parse({
       replyProgressMessages: false,
     });
     expect(result.replyProgressMessages).toBe(false);
+  });
+
+  it("accepts explicit error notices and configurable media deadlines", () => {
+    const result = WeixinConfigSchema.parse({
+      errorNotices: true,
+      mediaDownload: { timeoutMs: 600_000, idleTimeoutMs: 60_000 },
+    });
+    expect(result.errorNotices).toBe(true);
+    expect(result.mediaDownload).toEqual({ timeoutMs: 600_000, idleTimeoutMs: 60_000 });
+  });
+
+  it("rejects invalid media deadlines and non-boolean error notices", () => {
+    for (const mediaDownload of [
+      { timeoutMs: -1 },
+      { timeoutMs: 0.5 },
+      { timeoutMs: 2_147_483_648 },
+      { idleTimeoutMs: 0 },
+      { idleTimeoutMs: -1 },
+    ]) {
+      expect(WeixinConfigSchema.safeParse({ mediaDownload }).success).toBe(false);
+    }
+    expect(WeixinConfigSchema.safeParse({ errorNotices: "true" }).success).toBe(false);
   });
 
   it("accepts disabling quote caching for hosts without SQLite", () => {

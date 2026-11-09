@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { loadConfigBotAgent, loadConfigRouteTag } from "../auth/accounts.js";
+import { appendCradleHostname } from "../auth/route-tag.js";
 import { logger } from "../util/logger.js";
 import { redactBody, redactUrl } from "../util/redact.js";
 
@@ -25,6 +26,8 @@ export type WeixinApiOptions = {
   baseUrl: string;
   token?: string;
   timeoutMs?: number;
+  /** Cancel requests during channel stop or reload. */
+  abortSignal?: AbortSignal;
   /** Long-poll timeout for getUpdates (server may hold the request up to this). */
   longPollTimeoutMs?: number;
 };
@@ -87,6 +90,11 @@ function readPackageJson(): PackageJson {
 const pkg = readPackageJson();
 
 const CHANNEL_VERSION = pkg.version ?? "unknown";
+
+/** Plugin version sent to the real-name acctweb as `plugin_version`. */
+export function getPluginVersion(): string {
+  return CHANNEL_VERSION;
+}
 
 /** iLink-App-Id: 直接读取 package.json 顶层 ilink_appid 字段。 */
 const ILINK_APP_ID: string = pkg.ilink_appid ?? "";
@@ -317,6 +325,8 @@ export async function apiGetFetch(params: {
 }): Promise<string> {
   const base = ensureTrailingSlash(params.baseUrl);
   const url = new URL(params.endpoint, base);
+  const routeTag = loadConfigRouteTag();
+  appendCradleHostname(url, routeTag);
   const hdrs = buildCommonHeaders();
   logger.debug(`GET ${redactUrl(url.toString())}`);
 
@@ -332,7 +342,6 @@ export async function apiGetFetch(params: {
       headers: hdrs,
       ...(controller ? { signal: controller.signal } : {}),
     });
-    if (t !== undefined) clearTimeout(t);
     const rawText = await res.text();
     logger.debug(`${params.label} status=${res.status} raw=${redactBody(rawText)}`);
     if (!res.ok) {
@@ -346,6 +355,8 @@ export async function apiGetFetch(params: {
       `${params.label}: GET fetch failed url=${redactUrl(url.toString())} timeoutMs=${timeoutMs ?? "none"} type=${classified.type} description=${classified.description}${classified.code ? ` code=${classified.code}` : ""} error=${String(err)}`,
     );
     throw err;
+  } finally {
+    if (t !== undefined) clearTimeout(t);
   }
 }
 
@@ -397,6 +408,8 @@ export async function apiPostFetch(params: {
 }): Promise<string> {
   const base = ensureTrailingSlash(params.baseUrl);
   const url = new URL(params.endpoint, base);
+  const routeTag = loadConfigRouteTag();
+  appendCradleHostname(url, routeTag);
   const hdrs = buildHeaders({ token: params.token });
   logger.debug(`POST ${redactUrl(url.toString())} body=${redactBody(params.body)}`);
 
@@ -416,7 +429,6 @@ export async function apiPostFetch(params: {
       body: params.body,
       ...(signal ? { signal } : {}),
     });
-    if (t !== undefined) clearTimeout(t);
     const rawText = await res.text();
     logger.debug(`${params.label} status=${res.status} raw=${redactBody(rawText)}`);
     if (!res.ok) {
@@ -431,6 +443,7 @@ export async function apiPostFetch(params: {
     );
     throw err;
   } finally {
+    if (t !== undefined) clearTimeout(t);
     cleanup();
   }
 }
@@ -510,6 +523,7 @@ export async function getUploadUrl(
     token: params.token,
     timeoutMs: params.timeoutMs ?? DEFAULT_API_TIMEOUT_MS,
     label: "getUploadUrl",
+    abortSignal: params.abortSignal,
   });
   const resp: GetUploadUrlResp = JSON.parse(rawText);
   return resp;
@@ -587,6 +601,7 @@ export async function sendMessage(
     token: params.token,
     timeoutMs: params.timeoutMs ?? DEFAULT_API_TIMEOUT_MS,
     label: "sendMessage",
+    abortSignal: params.abortSignal,
   });
   const resp = parseWeixinApiJson<SendMessageResp>(rawText);
   if (resp.ret && resp.ret !== 0) {
@@ -610,6 +625,7 @@ export async function getConfig(
     token: params.token,
     timeoutMs: params.timeoutMs ?? DEFAULT_CONFIG_TIMEOUT_MS,
     label: "getConfig",
+    abortSignal: params.abortSignal,
   });
   const resp: GetConfigResp = JSON.parse(rawText);
   return resp;
@@ -626,6 +642,7 @@ export async function sendTyping(
     token: params.token,
     timeoutMs: params.timeoutMs ?? DEFAULT_CONFIG_TIMEOUT_MS,
     label: "sendTyping",
+    abortSignal: params.abortSignal,
   });
 }
 

@@ -7,7 +7,6 @@ import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 
 import { resolveStateDir } from "../storage/state-dir.js";
 import { deleteQuoteCacheForAccount } from "../messaging/quote-store.js";
-import { resolveFrameworkAllowFromPath } from "./pairing.js";
 import { logger } from "../util/logger.js";
 
 export const DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com";
@@ -223,7 +222,6 @@ export function saveWeixinAccount(
  *   - accounts/{accountId}.json                  (credentials)
  *   - accounts/{accountId}.sync.json             (getUpdates sync buf)
  *   - accounts/{accountId}.context-tokens.json   (context tokens on disk)
- *   - credentials/openclaw-weixin-{accountId}-allowFrom.json (authorized users)
  */
 export function clearWeixinAccount(accountId: string): void {
   deleteQuoteCacheForAccount(accountId);
@@ -239,11 +237,6 @@ export function clearWeixinAccount(accountId: string): void {
     } catch {
       // ignore if not found
     }
-  }
-  try {
-    fs.unlinkSync(resolveFrameworkAllowFromPath(accountId));
-  } catch {
-    // ignore if not found
   }
 }
 
@@ -302,10 +295,63 @@ export function loadConfigRouteTag(accountId?: string): string | undefined {
 }
 
 /**
+ * Read `acctwebBaseUrl` from openclaw.json.
+ * Per-account `accounts[accountId].acctwebBaseUrl` wins over the channel value.
+ * The value is an origin such as `http://10.x.x.x:8088`; the CGI path is fixed.
+ */
+export function loadConfigAcctwebBaseUrl(accountId?: string): string | undefined {
+  const section = loadRouteTagSection();
+  if (!section) return undefined;
+  if (accountId) {
+    const accounts = section.accounts as Record<string, Record<string, unknown>> | undefined;
+    const value = accounts?.[accountId]?.acctwebBaseUrl;
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  const value = section.acctwebBaseUrl;
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+/**
+ * Read `acctwebProxy` from openclaw.json.
+ * Per-account `accounts[accountId].acctwebProxy` wins over the channel value.
+ * The value is an HTTP proxy such as `http://10.x.x.x:8088`, not the CGI origin.
+ */
+export function loadConfigAcctwebProxy(accountId?: string): string | undefined {
+  const section = loadRouteTagSection();
+  if (!section) return undefined;
+  if (accountId) {
+    const accounts = section.accounts as Record<string, Record<string, unknown>> | undefined;
+    const value = accounts?.[accountId]?.acctwebProxy;
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  const value = section.acctwebProxy;
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+/**
  * Read `botAgent` from `channels.openclaw-weixin.botAgent` in openclaw.json.
  * Returns the raw configured string (caller is responsible for sanitization)
  * or undefined when not set. Reuses the cached channel section.
  */
+/**
+ * Read `promptBindOwner` from `channels.openclaw-weixin.promptBindOwner`.
+ * Only an explicit `true` asks the operator to choose self bind or real-name bind.
+ * Missing or any other value keeps the historical path: show the bot bind QR directly.
+ */
+export function loadConfigPromptBindOwner(): boolean {
+  const section = loadRouteTagSection();
+  return section?.promptBindOwner === true;
+}
+
+/**
+ * Read `verifyPin` from `channels.openclaw-weixin.verifyPin`.
+ * Only an explicit `true` asks security to require the phone PIN on this bind.
+ */
+export function loadConfigVerifyPin(): boolean {
+  const section = loadRouteTagSection();
+  return section?.verifyPin === true;
+}
+
 export function loadConfigBotAgent(): string | undefined {
   const section = loadRouteTagSection();
   if (!section) return undefined;
@@ -358,6 +404,10 @@ type WeixinAccountConfig = {
   cdnBaseUrl?: string;
   /** Optional SKRouteTag source; read from openclaw.json when `accountId` is passed to `loadConfigRouteTag`. */
   routeTag?: number | string;
+  /** Optional botrealnameverifycgi origin, for example `http://10.x.x.x:8088`. */
+  acctwebBaseUrl?: string;
+  /** Optional HTTP proxy used only for botrealnameverifycgi, for example `http://10.x.x.x:8088`. */
+  acctwebProxy?: string;
 };
 
 type WeixinSectionConfig = WeixinAccountConfig & {

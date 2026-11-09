@@ -76,6 +76,11 @@ describe("redactBody", () => {
     const body = '{"token":"my-secret-token"}';
     expect(redactBody(body)).toBe('{"token":"<redacted>"}');
   });
+
+  it("redacts bot_spam_ticket in json bodies", () => {
+    const raw = '{"local_token_list":[],"bot_spam_ticket":"0a1b2c3d4e5f60718293a4b5c6d7e8f9"}';
+    expect(redactBody(raw)).toBe('{"local_token_list":[],"bot_spam_ticket":"<redacted>"}');
+  });
 });
 
 describe("redactUrl", () => {

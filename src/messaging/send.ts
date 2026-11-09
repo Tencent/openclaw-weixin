@@ -122,6 +122,7 @@ export async function sendMessageWeixin(params: {
       baseUrl: opts.baseUrl,
       token: opts.token,
       timeoutMs: opts.timeoutMs,
+      abortSignal: opts.abortSignal,
       body: req,
     });
     const serverMessageId = response?.message_id;
@@ -168,6 +169,7 @@ export async function sendMessageItemWeixin(params: {
       baseUrl: opts.baseUrl,
       token: opts.token,
       timeoutMs: opts.timeoutMs,
+      abortSignal: opts.abortSignal,
       body: req,
     });
     const serverMessageId = response?.message_id;
@@ -229,6 +231,7 @@ async function sendMediaItems(params: {
         baseUrl: opts.baseUrl,
         token: opts.token,
         timeoutMs: opts.timeoutMs,
+        abortSignal: opts.abortSignal,
         body: req,
       });
       lastServerMessageId = response?.message_id;

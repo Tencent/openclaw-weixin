@@ -1,6 +1,6 @@
 {
   "name": "@tencent-weixin/openclaw-weixin",
-  "version": "2.4.10",
+  "version": "3.0.0-beta-1",
   "description": "OpenClaw Weixin channel",
   "license": "MIT",
   "author": "Tencent",
@@ -15,7 +15,9 @@
     "README.md",
     "README.zh_CN.md",
     "CHANGELOG.md",
-    "CHANGELOG.zh_CN.md"
+    "CHANGELOG.zh_CN.md",
+    "docs/release-notes-bot-realname-auth_zh_CN.md",
+    "docs/quote-cache_zh_CN.md"
   ],
   "scripts": {
     "format:check": "oxfmt --check src index.ts",
@@ -34,6 +36,7 @@
   },
   "dependencies": {
     "qrcode-terminal": "0.12.0",
+    "undici": "8.10.0",
     "zod": "^4.3.6"
   },
   "peerDependencies": {

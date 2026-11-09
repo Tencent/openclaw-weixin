@@ -6,6 +6,30 @@ This project follows the [Keep a Changelog](https://keepachangelog.com/) format.
 
 ## [Unreleased]
 
+### Added
+
+- **Inbound message batching (opt-in):** With `messages.inbound.byChannel.openclaw-weixin` (or `messages.inbound.debounceMs`) set, multi-image sends and messages that arrive while a reply is running are merged into a single turn per sender, with every attachment downloaded. Slash commands stay separate. Disabled by default (#359).
+
+### Changed
+
+- **引用附件失败不再中断新消息：** 优先复用本地引用附件；旧附件下载失败时标记不可用，继续处理当前消息，不将其计为整条请求失败。主动取消仍立即停止处理。
+- **隔离合并批次内的消息失败：** 按原始消息分别准备附件，只合并准备成功的消息；单条失败不会连带跳过其他正常消息，收件记录分别更新，失败提示沿用显式开启开关。
+- **停止与重载恢复待处理消息：** 将原始消息与轮询游标一起原子保存；取消时停止队列派发并等待收尾，重启恢复尚未执行的消息。已开始执行的任务保留中断记录、不自动重跑；落盘失败时停止账号处理，防止推进游标后丢失消息。
+- **失败提示改为显式开启：** `channels.openclaw-weixin.errorNotices` 默认关闭，只有显式开启才创建提示，本版本提示在恢复发送前再次检查开关；历史无标记队列的限制见 README。日志和同批次其他消息的处理继续保留。
+- **媒体下载时限可配置：** `channels.openclaw-weixin.mediaDownload.timeoutMs` 默认 `0`，不限制总时长；`idleTimeoutMs` 默认 `30000`，按响应头及非空数据重置停滞计时，保留主动取消能力。
+- **修复多附件顺序与缓存：** 按原始消息及附件顺序下载，分别缓存每条原消息的正文与全部附件；保护处理中的受管文件，避免缓存清理提前删除附件，结束、失败或取消后释放保护。
+
+- **Inbound access follows the scanned account owner:** Messages are admitted by comparing `from_user_id` with the `userId` saved at QR login. OpenClaw `allowFrom` files and SQLite pairing entries are not consulted. When no owner is stored, ordinary messages still pass and slash commands stay unauthorized.
+- **Bind QR can force the phone PIN:** A normal `get_bot_qrcode` omits `bot_spam_business_data`. `channels.openclaw-weixin.verifyPin: true` or `OPENCLAW_WEIXIN_VERIFY_PIN=1` sends it as the standard base64 of `{"verify_pin":1}` (`eyJ2ZXJpZnlfcGluIjoxfQ==`). Later plugin fields are added to that JSON before encoding.
+- **Bind-owner prompt is opt-in:** `channels.openclaw-weixin.promptBindOwner` defaults to off. Login then shows the bot bind QR immediately, with no prompt and no real-name credential. Set it to `true` to ask: Enter or Y binds the operator's own bot, and N completes real-name authorization before the bind QR.
+- **Self-bind skips the real-name credential:** Choosing the operator's own WeChat ClawBot no longer calls `get_auth_url`, and the bind QR request no longer includes `bot_spam_ticket`. Binding someone else's bot still waits for real-name authorization and sends the ticket.
+
+## [3.0.0-dev-001] - 2026-10-14
+
+### Added
+
+- **Real-name credential before bind:** Fetch a `bot_spam_ticket` before requesting the bind QR code. The terminal asks whether this OpenClaw connects to the operator's own WeChat ClawBot; self-bind skips the real-name QR, while binding someone else's bot waits for real-name authorization. Any QR status containing `need_verifycode` still asks for the digits shown on the phone.
+
 ## [2.4.10] - 2026-10-10
 
 ### 修复

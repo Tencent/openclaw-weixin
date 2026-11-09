@@ -108,3 +108,87 @@ describe("WeixinReplyProgressSender", () => {
     });
   });
 });
+
+it("discards queued tool progress messages after cancellation", async () => {
+  const controller = new AbortController();
+  let release!: () => void;
+  mockSendMessageItemWeixin.mockReset();
+  mockSendMessageItemWeixin.mockImplementationOnce(
+    () =>
+      new Promise<void>((r) => {
+        release = r;
+      }),
+  );
+  const sender = new WeixinReplyProgressSender({
+    runId: "run",
+    to: "user",
+    accountId: "account",
+    opts: { baseUrl: "https://invalid.test", abortSignal: controller.signal },
+  });
+  sender.replyOptions.onItemEvent({ kind: "tool", phase: "start", name: "first" });
+  sender.replyOptions.onItemEvent({ kind: "tool", phase: "end", name: "second" });
+  await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+  controller.abort();
+  release();
+  await sender.finalize();
+  expect(mockSendMessageItemWeixin).toHaveBeenCalledTimes(1);
+});
+
+describe("progress event failure isolation", () => {
+  beforeEach(() => {
+    mockSendMessageItemWeixin.mockReset();
+    mockSendMessageItemWeixin.mockResolvedValue({ messageId: "sent" });
+  });
+
+  const createSender = () =>
+    new WeixinReplyProgressSender({
+      runId: "run",
+      to: "user",
+      accountId: "account",
+      opts: { baseUrl: "https://offline.invalid" },
+    });
+
+  it("ignores events outside the tool start/end lifecycle", async () => {
+    const sender = createSender();
+    sender.replyOptions.onItemEvent({ kind: "text", phase: "start" });
+    sender.replyOptions.onItemEvent({ kind: "tool", phase: "progress" });
+    await sender.finalize();
+    expect(mockSendMessageItemWeixin).not.toHaveBeenCalled();
+  });
+
+  it.each(["blocked", "unrecognized"])("normalizes tool result status %s", async (status) => {
+    const sender = createSender();
+    sender.replyOptions.onItemEvent({ kind: "tool", phase: "end", status });
+    await sender.finalize();
+    expect(mockSendMessageItemWeixin.mock.calls[0][0].item.tool_call_result_item).toEqual({
+      tool_name: "tool",
+      tool_call_id: undefined,
+      status: status === "blocked" ? "blocked" : "unknown",
+    });
+  });
+
+  it("continues delivering queued results after a progress send fails", async () => {
+    mockSendMessageItemWeixin.mockRejectedValueOnce(new Error("progress send failed"));
+    const sender = createSender();
+    sender.replyOptions.onItemEvent({ kind: "tool", phase: "start", name: "read" });
+    sender.replyOptions.onItemEvent({
+      kind: "tool",
+      phase: "end",
+      name: "read",
+      status: "completed",
+    });
+    await expect(sender.finalize()).resolves.toBeUndefined();
+    expect(mockSendMessageItemWeixin).toHaveBeenCalledTimes(2);
+    expect(mockSendMessageItemWeixin.mock.calls[1][0].item.type).toBe(
+      MessageItemType.TOOL_CALL_RESULT,
+    );
+  });
+
+  it("finalizes idempotently and rejects late progress events", async () => {
+    const sender = createSender();
+    await sender.finalize();
+    sender.replyOptions.onItemEvent({ kind: "tool", phase: "start" });
+    await sender.finalize();
+    expect(mockSendMessageItemWeixin).not.toHaveBeenCalled();
+  });
+});

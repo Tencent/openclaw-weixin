@@ -8,7 +8,7 @@
 import type { WeixinApiOptions } from "../api/api.js";
 import { logger } from "../util/logger.js";
 
-import { toggleDebugMode, isDebugMode } from "./debug-mode.js";
+import { toggleDebugMode } from "./debug-mode.js";
 import { sendMessageWeixin } from "./send.js";
 
 export interface SlashCommandResult {
@@ -22,6 +22,9 @@ export interface SlashCommandContext {
   baseUrl: string;
   token?: string;
   accountId: string;
+  commandAuthorized: boolean;
+  beforeExecute?: () => void;
+  abortSignal?: AbortSignal;
   log: (msg: string) => void;
   errLog: (msg: string) => void;
 }
@@ -33,6 +36,7 @@ async function sendReply(ctx: SlashCommandContext, text: string): Promise<void> 
     token: ctx.token,
     contextToken: ctx.contextToken,
     accountId: ctx.accountId,
+    abortSignal: ctx.abortSignal,
   };
   await sendMessageWeixin({ to: ctx.to, text, opts });
 }
@@ -82,12 +86,19 @@ export async function handleSlashCommand(
 
   logger.info(`[weixin] Slash command: ${command}, args: ${args.slice(0, 50)}`);
 
+  // Admission failures and cancellation must propagate without sending an error reply.
+  if (ctx.commandAuthorized && (command === "/echo" || command === "/toggle-debug")) {
+    ctx.abortSignal?.throwIfAborted();
+    ctx.beforeExecute?.();
+  }
   try {
     switch (command) {
       case "/echo":
+        if (!ctx.commandAuthorized) return { handled: true };
         await handleEcho(ctx, args, receivedAt, eventTimestamp);
         return { handled: true };
       case "/toggle-debug": {
+        if (!ctx.commandAuthorized) return { handled: true };
         const enabled = toggleDebugMode(ctx.accountId);
         await sendReply(ctx, enabled ? "Debug 模式已开启" : "Debug 模式已关闭");
         return { handled: true };
@@ -96,6 +107,7 @@ export async function handleSlashCommand(
         return { handled: false };
     }
   } catch (err) {
+    if (ctx.abortSignal?.aborted) throw err;
     logger.error(`[weixin] Slash command error: ${String(err)}`);
     try {
       await sendReply(ctx, `❌ 指令执行失败: ${String(err).slice(0, 200)}`);

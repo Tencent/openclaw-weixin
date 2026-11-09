@@ -27,6 +27,7 @@ import { deactivateQuoteStoreAccount, initializeQuoteStore } from "./messaging/q
 import { logger } from "./util/logger.js";
 import {
   DEFAULT_ILINK_BOT_TYPE,
+  QR_LOGIN_WAIT_MS,
   startWeixinLoginWithQr,
   waitForWeixinLogin,
   displayQRCode,
@@ -42,6 +43,12 @@ import {
 import { sendWeixinMediaFile } from "./messaging/send-media.js";
 import { sendMessageWeixin, StreamingMarkdownFilter } from "./messaging/send.js";
 import { downloadRemoteImageToTemp } from "./cdn/upload.js";
+import { resolveMediaDownloadPolicy } from "./config/media-download.js";
+import {
+  resolveErrorNoticesEnabled,
+  WEIXIN_ERROR_NOTICE_PREFIX,
+  WEIXIN_ERROR_NOTICE_SENDER,
+} from "./config/error-notices.js";
 
 /** Returns true when mediaUrl refers to a local filesystem path (absolute or relative). */
 function isLocalFilePath(mediaUrl: string): boolean {
@@ -238,6 +245,8 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
     },
   },
   messaging: {
+    inferTargetChatType: ({ to }) =>
+      /^[^:\s@]+@im\.wechat$/.test(to.trim()) ? "direct" : undefined,
     targetResolver: {
       // Weixin user IDs always end with @im.wechat; treat as direct IDs, skip directory lookup.
       looksLikeId: (raw) => raw.endsWith("@im.wechat"),
@@ -268,6 +277,14 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
     deliveryMode: "direct",
     textChunkLimit: 4000,
     sendText: async (ctx) => {
+      // Core startup recovery can bypass the provider's own recovery loop.
+      if (
+        (ctx.identity?.name === WEIXIN_ERROR_NOTICE_SENDER ||
+          ctx.deliveryQueueId?.startsWith(WEIXIN_ERROR_NOTICE_PREFIX)) &&
+        !resolveErrorNoticesEnabled(ctx.cfg)
+      ) {
+        return { channel: "openclaw-weixin", messageId: "", outcome: "not_sent" };
+      }
       const accountId = ctx.accountId || resolveOutboundAccountId(ctx.cfg, ctx.to);
       const result = await sendWeixinOutbound({
         cfg: ctx.cfg,
@@ -312,7 +329,11 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
           aLog.debug(`sendMedia: uploading local file ${filePath}`);
         } else {
           aLog.debug(`sendMedia: downloading remote mediaUrl=${mediaUrl.slice(0, 80)}...`);
-          filePath = await downloadRemoteImageToTemp(mediaUrl, MEDIA_OUTBOUND_TEMP_DIR);
+          filePath = await downloadRemoteImageToTemp(
+            mediaUrl,
+            MEDIA_OUTBOUND_TEMP_DIR,
+            resolveMediaDownloadPolicy(ctx.cfg),
+          );
           aLog.debug(`sendMedia: remote image downloaded to ${filePath}`);
         }
         const contextToken = getContextToken(account.accountId, ctx.to);
@@ -425,10 +446,10 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
         throw new Error(startResult.message);
       }
 
-      log(`\n用手机微信扫描以下二维码，以继续连接：\n`);
+      log(`\n${startResult.message}`);
       await displayQRCode(startResult.qrcodeUrl!);
 
-      const loginTimeoutMs = 480_000;
+      const loginTimeoutMs = QR_LOGIN_WAIT_MS;
       log(`\n正在等待操作...\n`);
 
       const waitResult: WeixinQrWaitResult = await waitForWeixinLogin({
@@ -457,7 +478,7 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
               clearContextTokensForAccount,
             );
           }
-          void triggerWeixinChannelReload();
+          await triggerWeixinChannelReload();
           log(`\n已将此 OpenClaw 连接到微信。`);
         } catch (err) {
           logger.error(
@@ -512,7 +533,12 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
         throw new Error("weixin not configured: missing token");
       }
 
-      await initializeQuoteStore(ctx.cfg, account.accountId);
+      try {
+        await initializeQuoteStore(ctx.cfg, account.accountId);
+      } catch (err) {
+        ctx.setStatus?.({ accountId: account.accountId, running: false });
+        throw err;
+      }
 
       ctx.log?.info?.(`[${account.accountId}] starting weixin provider (${DEFAULT_BASE_URL})`);
 
@@ -585,6 +611,17 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
         force,
         verbose,
       });
+      if (!result.qrcodeUrl) {
+        logger.warn(
+          `loginWithQrStart: failed to get QR code accountId=${accountId ?? ""} message=${result.message}`,
+        );
+      } else {
+        logger.info(
+          `loginWithQrStart: bind qr ready accountId=${accountId ?? ""} sessionKey=${result.sessionKey} bindOwnerMode=${result.bindOwnerMode ?? ""}`,
+        );
+        process.stdout.write(`\n${result.message}`);
+        await displayQRCode(result.qrcodeUrl);
+      }
       // Return sessionKey so the client can pass it back in loginWithQrWait.
       return {
         qrDataUrl: result.qrcodeUrl,
@@ -616,7 +653,7 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
           if (result.userId) {
             clearStaleAccountsForUserId(normalizedId, result.userId, clearContextTokensForAccount);
           }
-          triggerWeixinChannelReload();
+          await triggerWeixinChannelReload();
           logger.info(`loginWithQrWait: saved account data for accountId=${normalizedId}`);
         } catch (err) {
           logger.error(`loginWithQrWait: failed to save account data err=${String(err)}`);

@@ -4,6 +4,8 @@ import path from "node:path";
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
+import * as accounts from "../auth/accounts.js";
+
 // Mock logger
 vi.mock("../util/logger.js", () => ({
   logger: {
@@ -103,6 +105,14 @@ describe("getUpdates", () => {
     await getUpdates({ baseUrl: "https://api.example.com" });
     const [url] = mockFetch.mock.calls[0];
     expect(url).toContain("https://api.example.com/ilink/bot/getupdates");
+  });
+
+  it("appends _cradle_hostname from routeTag", async () => {
+    vi.spyOn(accounts, "loadConfigRouteTag").mockReturnValue("10086");
+    mockFetch.mockResolvedValueOnce(mockResponse({ ret: 0 }));
+    await getUpdates({ baseUrl: "https://api.example.com" });
+    const [url] = mockFetch.mock.calls[0] as [string];
+    expect(new URL(url).searchParams.get("_cradle_hostname")).toBe("g10086");
   });
 
   it("forwards external abortSignal to the underlying fetch", async () => {
@@ -255,6 +265,24 @@ describe("parseWeixinApiJson", () => {
 });
 
 describe("getConfig", () => {
+  it("cancels an in-flight configuration request when the channel stops", async () => {
+    const controller = new AbortController();
+    mockFetch.mockImplementationOnce(
+      (_url, opts) =>
+        new Promise((_, reject) => {
+          opts.signal.addEventListener("abort", () => reject(opts.signal.reason), { once: true });
+        }),
+    );
+    const request = getConfig({
+      baseUrl: "https://api.example.com/",
+      ilinkUserId: "user",
+      abortSignal: controller.signal,
+    });
+    const stopped = expect(request).rejects.toThrow();
+    controller.abort();
+    await stopped;
+  });
+
   it("returns parsed response", async () => {
     const resp = { ret: 0, typing_ticket: "ticket" };
     mockFetch.mockResolvedValueOnce(mockResponse(resp));

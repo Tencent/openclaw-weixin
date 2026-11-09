@@ -1,9 +1,40 @@
 import { randomUUID } from "node:crypto";
 
-import { apiGetFetch, apiPostFetch } from "../api/api.js";
-import { listIndexedWeixinAccountIds, loadWeixinAccount } from "./accounts.js";
+import { apiGetFetch, apiPostFetch, getPluginVersion } from "../api/api.js";
+import {
+  listIndexedWeixinAccountIds,
+  loadConfigPromptBindOwner,
+  loadConfigVerifyPin,
+  loadWeixinAccount,
+} from "./accounts.js";
+import {
+  PROMPT_BIND,
+  PROMPT_REALNAME,
+  readOwnerChoice,
+  type BindOwnerMode,
+} from "./bind-owner-prompt.js";
+import {
+  BotSpamTicketError,
+  REALNAME_AUTH_WAIT_MS,
+  fetchBotSpamTicket,
+  queryBotSpamAuthResult,
+  waitForBotSpamAuth,
+  type BotSpamTicketContext,
+} from "./bot-spam-ticket.js";
 import { logger } from "../util/logger.js";
-import { redactToken } from "../util/redact.js";
+import { redactToken, redactUrl } from "../util/redact.js";
+
+export const QR_LOGIN_WAIT_MS = REALNAME_AUTH_WAIT_MS;
+const TICKET_RE = /^[0-9a-fA-F]{32}$/;
+const TICKET_REFRESH_MARGIN_SEC = 60;
+
+export type LoginIo = {
+  readLine?: () => Promise<string>;
+  write?: (chunk: string) => void;
+  sleep?: (ms: number) => Promise<void>;
+  nowMs?: () => number;
+  fetchImpl?: typeof fetch;
+};
 
 type ActiveLogin = {
   sessionKey: string;
@@ -19,6 +50,7 @@ type ActiveLogin = {
     | "expired"
     | "scaned_but_redirect"
     | "need_verifycode"
+    | "confirmed_but_need_verifycode"
     | "verify_code_blocked"
     | "binded_redirect";
   error?: string;
@@ -26,9 +58,14 @@ type ActiveLogin = {
   currentApiBaseUrl?: string;
   /** 待提交的配对码，用户输入后暂存，下次轮询时携带 */
   pendingVerifyCode?: string;
+  bindOwnerMode: BindOwnerMode;
+  /** Present only for other-owner binds. Self binds omit the spam ticket. */
+  botSpamTicket?: string;
+  ticketExpireTimeSec?: number;
+  /** 1 asks the security backend to require the phone PIN. 0 leaves the decision to security. */
+  verifyPin: 0 | 1;
 };
 
-const ACTIVE_LOGIN_TTL_MS = 5 * 60_000;
 /** Client-side timeout for the long-poll get_qrcode_status request. */
 const QR_LONG_POLL_TIMEOUT_MS = 35_000;
 
@@ -53,6 +90,7 @@ interface StatusResponse {
     | "expired"
     | "scaned_but_redirect"
     | "need_verifycode"
+    | "confirmed_but_need_verifycode"
     | "verify_code_blocked"
     | "binded_redirect";
   bot_token?: string;
@@ -62,19 +100,6 @@ interface StatusResponse {
   ilink_user_id?: string;
   /** New host to redirect polling to when status is scaned_but_redirect. */
   redirect_host?: string;
-}
-
-function isLoginFresh(login: ActiveLogin): boolean {
-  return Date.now() - login.startedAt < ACTIVE_LOGIN_TTL_MS;
-}
-
-/** Remove all expired entries from the activeLogins map to prevent memory leaks. */
-function purgeExpiredLogins(): void {
-  for (const [id, login] of activeLogins) {
-    if (!isLoginFresh(login)) {
-      activeLogins.delete(id);
-    }
-  }
 }
 
 /** 获取本地已登录账号的 bot token 列表，最多返回最新的 10 个。 */
@@ -92,22 +117,105 @@ function getLocalBotTokenList(): string[] {
   return tokens;
 }
 
-async function fetchQRCode(apiBaseUrl: string, botType: string): Promise<QRCodeResponse> {
+/**
+ * UTF-8 JSON, then standard base64. Later plugin fields are added to this
+ * object before encoding, so the wire field stays one opaque string.
+ */
+export function encodeBotSpamBusinessData(data: { verify_pin: 0 | 1 }): string {
+  return Buffer.from(JSON.stringify(data), "utf8").toString("base64");
+}
+
+/** Any status containing this marker asks the operator to type the phone PIN. */
+export function statusNeedsVerifyCode(status: string): boolean {
+  return status.includes("need_verifycode");
+}
+
+/**
+ * Dev switch for `bot_spam_business_data.verify_pin`.
+ * An explicit boolean wins. Otherwise `--verify-pin`,
+ * `OPENCLAW_WEIXIN_VERIFY_PIN=1` / `true`, or
+ * `channels.openclaw-weixin.verifyPin: true` selects 1.
+ */
+export function resolveVerifyPinFlag(input?: {
+  verifyPin?: boolean;
+  argv?: readonly string[];
+  env?: NodeJS.ProcessEnv;
+  configVerifyPin?: boolean;
+}): 0 | 1 {
+  if (input?.verifyPin !== undefined) {
+    return input.verifyPin ? 1 : 0;
+  }
+  const argv = input?.argv ?? process.argv;
+  if (argv.includes("--verify-pin")) {
+    return 1;
+  }
+  const raw = (input?.env ?? process.env).OPENCLAW_WEIXIN_VERIFY_PIN?.trim().toLowerCase();
+  if (raw === "1" || raw === "true") {
+    return 1;
+  }
+  if (input?.configVerifyPin === true) {
+    return 1;
+  }
+  return 0;
+}
+
+async function fetchQRCode(
+  apiBaseUrl: string,
+  botType: string,
+  botSpamTicket: string | undefined,
+  verifyPin: 0 | 1,
+  fetchImpl?: typeof fetch,
+): Promise<QRCodeResponse> {
   logger.info(`NewFetching QR code from: ${apiBaseUrl} bot_type=${botType}`);
   const localTokenList = getLocalBotTokenList();
   logger.info(`newfetchQRCode: local_token_list count=${localTokenList.length}`);
+  const payload: {
+    local_token_list: string[];
+    bot_spam_ticket?: string;
+    bot_spam_business_data?: string;
+  } = {
+    local_token_list: localTokenList,
+  };
+  if (verifyPin === 1) {
+    payload.bot_spam_business_data = encodeBotSpamBusinessData({ verify_pin: 1 });
+    logger.info("fetchQRCode: bot_spam_business_data.verify_pin=1");
+  } else {
+    logger.info("fetchQRCode: omit bot_spam_business_data");
+  }
+  if (botSpamTicket !== undefined) {
+    if (!TICKET_RE.test(botSpamTicket)) {
+      throw new BotSpamTicketError("无法获取绑定凭证，连接已停止。");
+    }
+    payload.bot_spam_ticket = botSpamTicket;
+    logger.info(`fetchQRCode: bot_spam_ticket=${redactToken(botSpamTicket)}`);
+  } else {
+    logger.info("fetchQRCode: omit bot_spam_ticket");
+  }
+  const body = JSON.stringify(payload);
+  logger.info(`fetchQRCode: body=${body}`);
+  if (fetchImpl) {
+    const url = `${apiBaseUrl.replace(/\/$/, "")}/ilink/bot/get_bot_qrcode?bot_type=${encodeURIComponent(botType)}`;
+    const response = await fetchImpl(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+    const rawText = await response.text();
+    if (!response.ok) {
+      throw new Error(`fetchQRCode ${response.status}: ${rawText}`);
+    }
+    return JSON.parse(rawText) as QRCodeResponse;
+  }
   const rawText = await apiPostFetch({
     baseUrl: apiBaseUrl,
     endpoint: `ilink/bot/get_bot_qrcode?bot_type=${encodeURIComponent(botType)}`,
-    body: JSON.stringify({ local_token_list: localTokenList }),
+    body,
     label: "fetchQRCode",
   });
   return JSON.parse(rawText) as QRCodeResponse;
 }
 
-/** 从 stdin 读取一行用户输入，输出提示语后等待回车确认，返回 trim 后的字符串。 */
-async function readVerifyCodeFromStdin(prompt: string): Promise<string> {
-  process.stdout.write(prompt);
+function readStdinLine(): Promise<string> {
   return new Promise((resolve) => {
     let input = "";
     const onData = (chunk: Buffer | string) => {
@@ -123,6 +231,12 @@ async function readVerifyCodeFromStdin(prompt: string): Promise<string> {
     process.stdin.setEncoding("utf-8");
     process.stdin.on("data", onData);
   });
+}
+
+/** 从 stdin 读取一行用户输入，输出提示语后等待回车确认，返回 trim 后的字符串。 */
+async function readVerifyCodeFromStdin(prompt: string): Promise<string> {
+  process.stdout.write(prompt);
+  return readStdinLine();
 }
 
 async function pollQRStatus(
@@ -177,6 +291,7 @@ export type WeixinQrStartResult = {
   qrcodeUrl?: string;
   message: string;
   sessionKey: string;
+  bindOwnerMode?: BindOwnerMode;
 };
 
 export type WeixinQrWaitResult = {
@@ -191,7 +306,7 @@ export type WeixinQrWaitResult = {
   botToken?: string;
   accountId?: string;
   baseUrl?: string;
-  /** The user ID of the person who scanned the QR code; add to allowFrom. */
+  /** The user ID of the person who scanned the QR code; used as the account owner. */
   userId?: string;
   message: string;
 };
@@ -202,25 +317,59 @@ export async function startWeixinLoginWithQr(opts: {
   accountId?: string;
   apiBaseUrl: string;
   botType?: string;
+  /** When set, overrides argv and `OPENCLAW_WEIXIN_VERIFY_PIN`. */
+  verifyPin?: boolean;
+  io?: LoginIo;
 }): Promise<WeixinQrStartResult> {
   const sessionKey = opts.accountId || randomUUID();
+  void opts.force;
+  const io = opts.io ?? {};
+  const write = io.write ?? ((chunk: string) => process.stdout.write(chunk));
+  const readLine = io.readLine ?? readStdinLine;
+  const nowMs = io.nowMs ?? (() => Date.now());
+  const sleep = io.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
 
-  purgeExpiredLogins();
-
-  const existing = activeLogins.get(sessionKey);
-  if (!opts.force && existing && isLoginFresh(existing) && existing.qrcodeUrl) {
-    return {
-      qrcodeUrl: existing.qrcodeUrl,
-      message: "二维码已显示，请用手机微信扫描。",
-      sessionKey,
-    };
-  }
+  logger.info(`startWeixinLoginWithQr: discard previous session sessionKey=${sessionKey}`);
+  activeLogins.delete(sessionKey);
 
   try {
     const botType = opts.botType || DEFAULT_ILINK_BOT_TYPE;
-    logger.info(`Starting Weixin login with bot_type=${botType}`);
-
-    const qrResponse = await fetchQRCode(FIXED_BASE_URL, botType);
+    const verifyPin = resolveVerifyPinFlag({
+      verifyPin: opts.verifyPin,
+      configVerifyPin: loadConfigVerifyPin(),
+    });
+    const promptBindOwner = loadConfigPromptBindOwner();
+    const bindOwnerMode = promptBindOwner ? await readOwnerChoice({ readLine, write }) : "self";
+    logger.info(
+      `Starting Weixin login with bot_type=${botType} bindOwnerMode=${bindOwnerMode} promptBindOwner=${promptBindOwner} verify_pin=${verifyPin}`,
+    );
+    let ticket: BotSpamTicketContext | undefined;
+    if (bindOwnerMode === "other") {
+      const nowSec = Math.floor(nowMs() / 1000);
+      ticket = await fetchBotSpamTicket({
+        pluginVersion: getPluginVersion(),
+        fetchImpl: io.fetchImpl,
+        nowSec,
+        accountId: opts.accountId,
+      });
+      ticket = await authorizeOtherOwner({
+        ticket,
+        write,
+        nowMs,
+        sleep,
+        fetchImpl: io.fetchImpl,
+        accountId: opts.accountId,
+      });
+    } else {
+      logger.info("bindOwnerMode=self, skip get_auth_url and bot_spam_ticket");
+    }
+    const qrResponse = await fetchQRCode(
+      FIXED_BASE_URL,
+      botType,
+      ticket?.botSpamTicket,
+      verifyPin,
+      io.fetchImpl,
+    );
     logger.info(
       `QR code received, qrcode=${redactToken(qrResponse.qrcode)} imgContentLen=${qrResponse.qrcode_img_content?.length ?? 0}`,
     );
@@ -231,23 +380,69 @@ export async function startWeixinLoginWithQr(opts: {
       id: randomUUID(),
       qrcode: qrResponse.qrcode,
       qrcodeUrl: qrResponse.qrcode_img_content,
-      startedAt: Date.now(),
+      startedAt: nowMs(),
+      bindOwnerMode,
+      botSpamTicket: ticket?.botSpamTicket,
+      ticketExpireTimeSec: ticket?.expireTimeSec,
+      verifyPin,
     };
-
     activeLogins.set(sessionKey, login);
 
     return {
       qrcodeUrl: qrResponse.qrcode_img_content,
-      message: "用手机微信扫描以下二维码，以继续连接：",
+      message: PROMPT_BIND,
       sessionKey,
+      bindOwnerMode,
     };
   } catch (err) {
+    if (err instanceof BotSpamTicketError) {
+      logger.warn(`startWeixinLoginWithQr stopped: ${err.message}`);
+      return { message: err.message, sessionKey };
+    }
     logger.error(`Failed to start Weixin login: ${String(err)}`);
     return {
       message: `Failed to start login: ${String(err)}`,
       sessionKey,
     };
   }
+}
+
+async function authorizeOtherOwner(opts: {
+  ticket: BotSpamTicketContext;
+  write: (chunk: string) => void;
+  nowMs: () => number;
+  sleep: (ms: number) => Promise<void>;
+  fetchImpl?: typeof fetch;
+  accountId?: string;
+}): Promise<BotSpamTicketContext> {
+  const showRealnameQr = async (ticket: BotSpamTicketContext) => {
+    logger.info(
+      `showing realname qr ticket=${redactToken(ticket.botSpamTicket)} auth_url=${redactUrl(ticket.authUrl)} expire_time=${ticket.expireTimeSec}`,
+    );
+    opts.write(PROMPT_REALNAME);
+    await displayQRCode(ticket.authUrl);
+  };
+  await showRealnameQr(opts.ticket);
+  return waitForBotSpamAuth({
+    ticket: opts.ticket,
+    nowMs: opts.nowMs,
+    sleep: opts.sleep,
+    deadlineMs: Math.min(opts.nowMs() + QR_LOGIN_WAIT_MS, opts.ticket.expireTimeSec * 1000),
+    query: (botSpamTicket) =>
+      queryBotSpamAuthResult({
+        botSpamTicket,
+        fetchImpl: opts.fetchImpl,
+        accountId: opts.accountId,
+      }),
+    refreshTicket: () =>
+      fetchBotSpamTicket({
+        pluginVersion: getPluginVersion(),
+        fetchImpl: opts.fetchImpl,
+        nowSec: Math.floor(opts.nowMs() / 1000),
+        accountId: opts.accountId,
+      }),
+    onTicketReplaced: showRealnameQr,
+  });
 }
 
 const MAX_QR_REFRESH_COUNT = 3;
@@ -264,8 +459,23 @@ async function refreshQRCode(
 ): Promise<{ success: true } | { success: false; message: string }> {
   process.stdout.write(`\n⏳ 正在刷新二维码...(${qrRefreshCount}/${MAX_QR_REFRESH_COUNT})\n`);
   logger.info(`waitForWeixinLogin: refreshing QR code (${qrRefreshCount}/${MAX_QR_REFRESH_COUNT})`);
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (
+    activeLogin.botSpamTicket !== undefined &&
+    (activeLogin.ticketExpireTimeSec ?? 0) - nowSec <= TICKET_REFRESH_MARGIN_SEC
+  ) {
+    logger.warn(
+      `refreshQRCode stopped: ticket expires within ${TICKET_REFRESH_MARGIN_SEC}s expire_time=${activeLogin.ticketExpireTimeSec} nowSec=${nowSec}`,
+    );
+    return { success: false, message: "绑定凭证即将过期，请重新开始连接。" };
+  }
   try {
-    const qrResponse = await fetchQRCode(FIXED_BASE_URL, botType);
+    const qrResponse = await fetchQRCode(
+      FIXED_BASE_URL,
+      botType,
+      activeLogin.botSpamTicket,
+      activeLogin.verifyPin,
+    );
     activeLogin.qrcode = qrResponse.qrcode;
     activeLogin.qrcodeUrl = qrResponse.qrcode_img_content;
     activeLogin.startedAt = Date.now();
@@ -299,16 +509,7 @@ export async function waitForWeixinLogin(opts: {
     };
   }
 
-  if (!isLoginFresh(activeLogin)) {
-    logger.warn(`waitForWeixinLogin: login QR expired sessionKey=${opts.sessionKey}`);
-    activeLogins.delete(opts.sessionKey);
-    return {
-      connected: false,
-      message: "二维码已过期，请重新生成。",
-    };
-  }
-
-  const timeoutMs = Math.max(opts.timeoutMs ?? 480_000, 1000);
+  const timeoutMs = Math.max(opts.timeoutMs ?? QR_LOGIN_WAIT_MS, 1000);
   const deadline = Date.now() + timeoutMs;
   let scannedPrinted = false;
   let qrRefreshCount = 1;
@@ -317,6 +518,7 @@ export async function waitForWeixinLogin(opts: {
   activeLogin.currentApiBaseUrl = FIXED_BASE_URL;
 
   logger.info("Starting to poll QR code status...");
+  let lastQrStatus = "";
 
   while (Date.now() < deadline) {
     try {
@@ -329,7 +531,26 @@ export async function waitForWeixinLogin(opts: {
       logger.debug(
         `pollQRStatus: status=${statusResponse.status} hasBotToken=${Boolean(statusResponse.bot_token)} hasBotId=${Boolean(statusResponse.ilink_bot_id)}`,
       );
+      if (statusResponse.status !== lastQrStatus) {
+        logger.info(
+          `pollQRStatus: status=${statusResponse.status} hasBotToken=${Boolean(statusResponse.bot_token)} hasBotId=${Boolean(statusResponse.ilink_bot_id)} redirect_host=${statusResponse.redirect_host ?? ""}`,
+        );
+        lastQrStatus = statusResponse.status;
+      }
       activeLogin.status = statusResponse.status;
+
+      if (statusNeedsVerifyCode(statusResponse.status)) {
+        logger.info(
+          `qr status requires verify code status=${statusResponse.status} retry=${Boolean(activeLogin.pendingVerifyCode)}`,
+        );
+        const verifyPrompt = activeLogin.pendingVerifyCode
+          ? "❌ 你输入的数字不匹配，请重新输入："
+          : "输入手机微信显示的数字，以继续连接：";
+        const code = await readVerifyCodeFromStdin(verifyPrompt);
+        logger.info(`verify code submitted len=${code.length}`);
+        activeLogin.pendingVerifyCode = code;
+        continue;
+      }
 
       switch (statusResponse.status) {
         case "wait":
@@ -348,16 +569,6 @@ export async function waitForWeixinLogin(opts: {
             scannedPrinted = true;
           }
           break;
-        case "need_verifycode": {
-          // 首次进入提示输入，再次进入（已有 pendingVerifyCode）说明上次输入错误
-          const verifyPrompt = activeLogin.pendingVerifyCode
-            ? "❌ 你输入的数字不匹配，请重新输入："
-            : "输入手机微信显示的数字，以继续连接：";
-          const code = await readVerifyCodeFromStdin(verifyPrompt);
-          activeLogin.pendingVerifyCode = code;
-          // 立即进入下一次轮询，不等待 1s
-          continue;
-        }
         case "expired": {
           qrRefreshCount++;
           if (qrRefreshCount > MAX_QR_REFRESH_COUNT) {

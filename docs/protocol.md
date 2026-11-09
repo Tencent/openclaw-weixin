@@ -16,7 +16,7 @@ Client types and behavior do not establish the complete server contract. In part
 
 Unless otherwise stated, JSON examples illustrate selected fields and are not verified minimal requests or exhaustive responses. Replace placeholders with actual values. `channel_version` is populated from package metadata; `2.4.8` is an example value.
 
-Source references: [`src/api/api.ts`](../src/api/api.ts), [`src/api/types.ts`](../src/api/types.ts), and [`src/auth/login-qr.ts`](../src/auth/login-qr.ts). Server requirements beyond what these sources show need separate verification.
+Source references: [`src/api/api.ts`](../src/api/api.ts), [`src/api/types.ts`](../src/api/types.ts), [`src/auth/login-qr.ts`](../src/auth/login-qr.ts), and [`src/auth/bot-spam-ticket.ts`](../src/auth/bot-spam-ticket.ts). Server requirements beyond what these sources show need separate verification.
 
 ## Scope and transport
 
@@ -43,7 +43,7 @@ The following headers are added by the plugin where applicable:
 | `X-WECHAT-UIN` | Base64-encoded decimal representation of a random uint32 |
 | `iLink-App-Id` | The plugin application ID, currently `bot` |
 | `iLink-App-ClientVersion` | Plugin version encoded as `0x00MMNNPP` and sent as a decimal string |
-| `SKRouteTag` | Optional route tag configured by the deployment |
+| `SKRouteTag` | Optional route tag configured by the deployment. Every Weixin API URL also receives `_cradle_hostname=g<routeTag>` |
 
 Client behavior: QR-code status polling sends the application headers (`iLink-App-Id`, `iLink-App-ClientVersion`, and optional `SKRouteTag`). It does not add `AuthorizationType`, `Authorization`, or `X-WECHAT-UIN`. The QR-code POST request uses the JSON POST headers, including `AuthorizationType` and `X-WECHAT-UIN`, but omits `Authorization` and `base_info`.
 
@@ -60,9 +60,27 @@ Authenticated bot POST requests include a `base_info` object:
 }
 ```
 
-`channel_version` is the plugin version. `bot_agent` is an optional, sanitized observability identifier configured through `channels.openclaw-weixin.botAgent`; it is not used for authentication or routing.
+`channel_version` is the plugin version. Its format is defined in the next section. `bot_agent` is an optional, sanitized observability identifier configured through `channels.openclaw-weixin.botAgent`; it is not used for authentication or routing.
 
 Client behavior: `buildBaseInfo()` always supplies both fields. `bot_agent` defaults to `OpenClaw`. Custom values use ASCII `Name/Version` tokens with optional comments, with a maximum of 256 bytes after sanitization. Invalid tokens are dropped; an empty result falls back to `OpenClaw`. This declaration is shared across accounts in the plugin instance.
+
+### Plugin version
+
+`channel_version` and the real-name `plugin_version` carry the same plugin version string. The bot backend identifies the plugin from `base_info.channel_version`.
+
+The value must start with three decimal integers, `major.minor.patch`. One leading `v` or `V` is allowed. Anything after the third number is a suffix and is not compared. The server stops after the third number, so `-rc.1`, `+build`, a space, or `/` is only a suffix.
+
+| String | Recognized version |
+| --- | --- |
+| `3.0.1` | `3.0.1` |
+| `v3.0.1`, `V3.0.1-rc.1` | `3.0.1` |
+| `3.0.1/hermes-1.2.0` | `3.0.1` |
+| `3.0.1 forge-weixin-bridge` | `3.0.1` |
+| `3.0`, `3..1`, `hermes-1.2.0`, `1.2.0/hermes`, `unknown` | not recognized |
+
+An empty string, a value that cannot be recognized, or a value above the configured maximum is stored as `0.0.0`. A value below the configured minimum keeps its three numbers and is treated as unsupported. The original string is stored separately and is preferred for display.
+
+Another host that has its own version must put the openclaw-weixin version in the first three numbers and its own version in the suffix. This plugin generation is `3.x.x`. Hermes should send `3.0.1/hermes-xxxx`. `hermes-xxxx` or `1.2.0/hermes` is either unrecognized, or causes the server to treat the Hermes version as the plugin version.
 
 ### Return values and errors
 
@@ -85,13 +103,152 @@ Integration guidance: handle HTTP status separately from business return codes, 
 
 ## QR-code login
 
-### Get a QR code
+Binding has two paths. Both end by polling the same bot-bind QR code. When the phone asks for digits, the PIN is added to that ilink poll. It is not sent to the real-name CGI.
+
+`channels.openclaw-weixin.promptBindOwner` defaults to `false`.
+
+| Condition | Client behavior |
+| --- | --- |
+| The option is off, or it is on and the operator presses Enter or types `Y` / `y` | Self bind. The client does not call the real-name CGI and omits `bot_spam_ticket` |
+| The option is on and the operator types `n` / `N` | Other-owner bind. Complete real-name authorization, then send the ticket with the bind request |
+| The option is on and the input is anything else | Ask again. No request is sent during that prompt |
+
+```mermaid
+flowchart TD
+  start["Start login"] --> gate{"promptBindOwner"}
+  gate -->|"off, or Enter / Y"| self["Self bind<br/>no real-name CGI"]
+  gate -->|"on and N"| ticket["GET get_auth_url"]
+  gate -->|"any other input"| retry["Ask again<br/>no request"]
+  retry --> gate
+  ticket -->|"failure"| stopFetch["Stop: cannot get a bind ticket"]
+  ticket -->|"success"| showAuth["Show auth_url"]
+  showAuth --> query["GET query_auth_result"]
+  query -->|"0, or this query failed"| query
+  query -->|"2"| stopDeny["Stop: real-name not approved"]
+  query -->|"any other value"| stopFetch
+  query -->|"480s or expire_time, whichever is sooner"| stopTime["Stop: real-name timed out"]
+  query -->|"3, first time"| ticket
+  query -->|"3 again, or refresh failed"| stopBad["Stop: bind ticket invalid"]
+  query -->|"1"| qrcode["POST get_bot_qrcode<br/>bot_type=3"]
+  self -->|"body is only local_token_list"| qrcode
+  qrcode --> showQr["Show qrcode_img_content"]
+  showQr --> poll["GET get_qrcode_status<br/>using qrcode"]
+```
+
+### Self bind
+
+1. `POST https://ilinkai.weixin.qq.com/ilink/bot/get_bot_qrcode?bot_type=3` with only `local_token_list`.
+2. Display `qrcode_img_content` from the response.
+3. Poll `get_qrcode_status` with `qrcode` from the response. If a status requires a PIN, follow "Poll bind status and the PIN".
+
+### Other-owner bind
+
+This path runs only when `promptBindOwner` is `true` and the operator chooses N.
+
+1. `GET get_auth_url` and read `bot_spam_ticket`, `auth_url`, and `expire_time`. On failure, stop. Do not request a bind QR code.
+2. Render `auth_url` as the real-name QR code for the operator's own WeChat. The scanning account must already have WeChat Pay real-name verification enabled.
+3. Poll `query_auth_result` until `auth_status` is `1`. Status `2`, an unrecoverable `3`, or a timeout stops the flow. Do not request a bind QR code.
+4. `POST get_bot_qrcode` with both `local_token_list` and that `bot_spam_ticket`.
+5. Display the bind QR code and poll `get_qrcode_status`. A PIN can still be required here.
+
+### Real-name bind
+
+The WeChat account that scans the real-name QR code must already have WeChat Pay real-name verification enabled. An account without it cannot complete this authorization.
+
+The real-name CGI is not the ilink host. The default origin is `https://weixin110.qq.com` and the path is fixed at `/security/acct/botrealnameverifycgi`. The method is `GET`. The only header is `Accept: application/json`. These requests do not carry a bot `Authorization` header or `base_info`. Each request times out after 10 seconds. A non-2xx HTTP status or a non-JSON body stops the connection.
+
+`channels.openclaw-weixin.acctwebBaseUrl` replaces only the origin (scheme, host, and port). The CGI path stays the same. `channels.openclaw-weixin.acctwebProxy` proxies only `get_auth_url` and `query_auth_result`. A configured `routeTag` adds `_cradle_hostname=g<routeTag>`; a value that already starts with `g` is kept as-is. The same fields under `accounts.<accountId>` override the channel values.
+
+The documented real-name response fields are `bot_spam_ticket`, `auth_url`, and `expire_time` for `get_auth_url`, and `auth_status` for `query_auth_result`. Neither endpoint defines a `ret` or `errcode` response field. Authorization is determined by `auth_status`. The business-error response for `get_auth_url` is unspecified; do not assume the error-code format of other Bot APIs applies.
+
+The client accepts business fields at the top level or inside a `data` object, and accepts `expire_time` and `auth_status` as numbers or decimal digit strings. These compatibility checks do not add fields to the endpoint contract.
+
+#### Fetch a ticket
+
+```http
+GET /security/acct/botrealnameverifycgi?step=get_auth_url&plugin_version=<plugin version>
+```
+
+`plugin_version` uses the same version string as `base_info.channel_version`. See "Plugin version". Examples are `3.0.1` and `3.0.1/hermes-1.2.0`.
+
+Success response:
+
+```json
+{
+  "bot_spam_ticket": "0123456789abcdef0123456789abcdef",
+  "auth_url": "liteapp://wxalite.../pages/realname-verify/entry?bot_spam_ticket=0123456789abcdef0123456789abcdef",
+  "expire_time": 1800000000
+}
+```
+
+The client also accepts this `data` wrapper:
+
+```json
+{
+  "data": {
+    "bot_spam_ticket": "0123456789abcdef0123456789abcdef",
+    "auth_url": "liteapp://wxalite.../pages/realname-verify/entry?bot_spam_ticket=0123456789abcdef0123456789abcdef",
+    "expire_time": "1800000000"
+  }
+}
+```
+
+| Field | Client requirement |
+| --- | --- |
+| `bot_spam_ticket` | 32 hexadecimal characters, either case |
+| `auth_url` | Non-empty string. The client renders it as the real-name QR code |
+| `expire_time` | Unix seconds, and it must be later than the current time |
+
+If any field fails that check, the client stops. The operator sees "无法获取绑定凭证，连接已停止。" The client does not call `get_bot_qrcode` after that.
+
+#### Query the authorization result
+
+After showing the real-name QR code, the client polls:
+
+```http
+GET /security/acct/botrealnameverifycgi?step=query_auth_result&bot_spam_ticket=0123456789abcdef0123456789abcdef
+```
+
+Success response:
+
+```json
+{
+  "auth_status": 1
+}
+```
+
+The client also accepts `data.auth_status`.
+
+| `auth_status` | Client behavior |
+| --- | --- |
+| `0` | Still pending. Query again after about 1 second |
+| `1` | Authorized. Request the bind QR code with the current ticket |
+| `2` | Authorization failed. Stop without requesting a bind QR code. The message is "实名授权未通过，无法连接。" |
+| `3` | The ticket is invalid. Call `get_auth_url` once more, show the new `auth_url`, and continue. A second `3`, or a failed refresh, stops with "绑定凭证无效，请重新开始连接。" |
+| any other value | Stop, using the same failure path as a bad `get_auth_url` response |
+
+If this query itself fails (for example, an HTTP error or non-JSON body), the client treats that round as `0` and keeps waiting.
+
+The wait ends at the earlier of 480 seconds and `expire_time`. A timeout says "实名授权超时，请重新开始连接。"
+
+### Get the bind QR code
+
+An other-owner bind sends this request only after `auth_status` is `1`. A self bind sends it immediately. The host is fixed at `https://ilinkai.weixin.qq.com`.
 
 ```http
 POST /ilink/bot/get_bot_qrcode?bot_type=3
 ```
 
-Request body:
+Other-owner request body:
+
+```json
+{
+  "local_token_list": [],
+  "bot_spam_ticket": "0123456789abcdef0123456789abcdef"
+}
+```
+
+Self-bind request body, without `bot_spam_ticket`:
 
 ```json
 {
@@ -99,7 +256,16 @@ Request body:
 }
 ```
 
-`local_token_list` may be empty. The client sends at most the most recent ten locally stored bot tokens.
+A normal login omits `bot_spam_business_data`. The field is present when `channels.openclaw-weixin.verifyPin` is `true`, or `OPENCLAW_WEIXIN_VERIFY_PIN=1`. It is then one string: the plugin builds a JSON object, encodes that UTF-8 text as standard base64, and sends the result. The current plaintext is `{"verify_pin":1}`, encoded as `eyJ2ZXJpZnlfcGluIjoxfQ==`, which asks security to require the PIN for this bind. Later plugin fields are added to that JSON before encoding, so the wire field stays a single string. The business backend forwards the string as-is; security base64-decodes it and then parses the JSON. A refreshed bind QR keeps the field when this login included it, and keeps omitting it otherwise. `openclaw channels login` does not accept `--verify-pin`, so that option never reaches the plugin. To test a PIN bind, set `routeTag` to `10086` so the QR request uses `_cradle_hostname=g10086`, then turn on `verifyPin`. The check passes when that day's log line `fetchQRCode: body=` contains `"bot_spam_business_data":"eyJ2ZXJpZnlfcGluIjoxfQ=="`. The full steps are in [README](../README.md) under "Test a PIN bind".
+
+```json
+{
+  "local_token_list": [],
+  "bot_spam_business_data": "eyJ2ZXJpZnlfcGluIjoxfQ=="
+}
+```
+
+`local_token_list` holds at most the ten most recent local bot tokens and may be an empty array. When `bot_spam_ticket` is present, it must be 32 hexadecimal characters.
 
 Response body:
 
@@ -110,17 +276,51 @@ Response body:
 }
 ```
 
-### Poll QR-code status
+The client displays `qrcode_img_content`. Later status polls use `qrcode`, not `qrcode_img_content`.
+
+### Poll bind status and the PIN
 
 ```http
-GET /ilink/bot/get_qrcode_status?qrcode=<encoded_qrcode>
+GET /ilink/bot/get_qrcode_status?qrcode=<encoded qrcode>
 ```
 
-When the server requests verification, the client adds:
+This is a long poll. The client waits 35 seconds per request. A timeout, cancellation, or network error is treated as `status` `wait`, and polling continues.
+
+The PIN exists only on this poll. The real-name CGI does not accept `verify_code`. Both self bind and other-owner bind can reach this step.
+
+```mermaid
+flowchart TD
+  poll["GET get_qrcode_status?qrcode="] --> status{"status"}
+  status -->|"wait, or timeout / network error"| poll
+  status -->|"contains need_verifycode"| readPin["Read and store the digits<br/>this request has no verify_code"]
+  readPin --> nextPoll["Next poll sends verify_code"]
+  nextPoll --> still{"Next response"}
+  still -->|"still contains need_verifycode"| readPin
+  still -->|"scaned"| accepted["Drop the stored digits<br/>later polls omit verify_code"]
+  status -->|"scaned"| scanned["QR code scanned"]
+  status -->|"confirmed"| saved["Save bot_token, ilink_bot_id, baseurl, ilink_user_id"]
+  status -->|"expired or verify_code_blocked"| refresh{"Count greater than 3, or ticket expires within 60s"}
+  refresh -->|yes| stopRefresh["Stop and ask to start over"]
+  refresh -->|no| newQr["Clear stored digits<br/>POST get_bot_qrcode"]
+  newQr --> poll
+  status -->|"scaned_but_redirect"| redirect["Later polls use redirect_host"]
+  status -->|"binded_redirect"| bound["Already bound; no new credentials"]
+```
+
+1. Before any digits are entered, the query string contains only `qrcode`.
+2. When `status` contains `need_verifycode` (including `need_verifycode` and `confirmed_but_need_verifycode`), the client reads the digits and stores them. The request that returned this status did not include `verify_code`.
+3. The next poll adds `verify_code`:
 
 ```http
-GET /ilink/bot/get_qrcode_status?qrcode=<encoded_qrcode>&verify_code=<encoded_code>
+GET /ilink/bot/get_qrcode_status?qrcode=<encoded qrcode>&verify_code=<encoded digits>
 ```
+
+4. If the next response still contains `need_verifycode`, the previous digits did not match. The client reads a new value and sends it on the following poll.
+5. `scaned` means the digits were accepted. The client drops the stored digits, and later polls omit `verify_code`.
+6. `verify_code_blocked` means too many failures. The client clears the stored digits and `POST`s `get_bot_qrcode` again for a new bind QR code. An other-owner bind still sends the original `bot_spam_ticket`. If that ticket expires within 60 seconds, the client does not refresh the QR code and asks the operator to start over.
+7. `expired` refreshes the bind QR code with the same rule.
+
+The refresh counter starts at 1 and increases by 1 on each expiry or block. When it becomes greater than 3, the client stops and asks the operator to retry later.
 
 Response body:
 
@@ -129,23 +329,22 @@ Response body:
   "status": "confirmed",
   "bot_token": "<bot token>",
   "ilink_bot_id": "<bot account id>",
-  "baseurl": "https://<api-host>",
-  "ilink_user_id": "<scanning user id>"
+  "baseurl": "https://<api host>",
+  "ilink_user_id": "<scanning user id>",
+  "redirect_host": "<present for scaned_but_redirect>"
 }
 ```
 
-The client handles these statuses:
-
 | Status | Meaning |
 | --- | --- |
-| `wait` | Waiting for a scan or state change |
-| `scaned` | QR code was scanned; verification continues |
-| `confirmed` | Login succeeded and credentials can be stored |
-| `expired` | QR code expired and may be refreshed |
-| `need_verifycode` | The user must provide the displayed verification code |
-| `verify_code_blocked` | Too many verification failures; refresh or stop |
-| `scaned_but_redirect` | Continue polling at `redirect_host` when present |
-| `binded_redirect` | The bot is already bound to this OpenClaw instance |
+| `wait` | Waiting for a scan or another state change. A failed request is also treated as this status |
+| `scaned` | The QR code was scanned. If this request included `verify_code`, the digits were accepted |
+| `confirmed` | Login succeeded. Store `bot_token`, `ilink_bot_id`, `baseurl`, and `ilink_user_id` |
+| `expired` | The bind QR code expired. Fetch a new one with the rule above |
+| any status containing `need_verifycode` | Read the digits shown on the phone and send them as `verify_code` on the next poll |
+| `verify_code_blocked` | Too many wrong digits. Clear the stored digits and refresh the bind QR code, or stop after the refresh limit |
+| `scaned_but_redirect` | When `redirect_host` is present, later polls use `https://<redirect_host>` |
+| `binded_redirect` | This bot is already bound to the current OpenClaw instance, so no new credentials are issued |
 
 ## Bot API
 
@@ -480,6 +679,7 @@ Success requires HTTP `200` and a nonempty `x-encrypted-param` response header. 
 - [API request implementation](../src/api/api.ts)
 - [Protocol types](../src/api/types.ts)
 - [QR-code login flow](../src/auth/login-qr.ts)
+- [Real-name authorization CGI](../src/auth/bot-spam-ticket.ts)
 - [CDN upload implementation](../src/cdn/upload.ts)
 - [CDN encryption utilities](../src/cdn/aes-ecb.ts)
 - [Message builders](../src/messaging/send.ts)

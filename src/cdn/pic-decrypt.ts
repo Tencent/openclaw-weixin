@@ -1,30 +1,49 @@
 import { decryptAesEcb } from "./aes-ecb.js";
 import { buildCdnDownloadUrl, ENABLE_CDN_URL_FALLBACK } from "./cdn-url.js";
 import { logger } from "../util/logger.js";
+import { readDownloadBody, withDownloadTimeout } from "./download-timeout.js";
+import type { DownloadOptions } from "./download-timeout.js";
 
-/**
- * Download raw bytes from the CDN (no decryption).
- */
-async function fetchCdnBytes(url: string, label: string): Promise<Buffer> {
-  let res: Response;
-  try {
-    res = await fetch(url);
-  } catch (err) {
-    const cause =
-      (err as NodeJS.ErrnoException).cause ?? (err as NodeJS.ErrnoException).code ?? "(no cause)";
-    logger.error(
-      `${label}: fetch network error url=${url} err=${String(err)} cause=${String(cause)}`,
-    );
-    throw err;
-  }
-  logger.debug(`${label}: response status=${res.status} ok=${res.ok}`);
-  if (!res.ok) {
-    const body = await res.text().catch(() => "(unreadable)");
-    const msg = `${label}: CDN download ${res.status} ${res.statusText} body=${body}`;
-    logger.error(msg);
-    throw new Error(msg);
-  }
-  return Buffer.from(await res.arrayBuffer());
+export type CdnDownloadOptions = DownloadOptions;
+
+/** Download bytes with progress-aware inactivity and an optional total deadline. */
+async function fetchCdnBytes(
+  url: string,
+  label: string,
+  options: CdnDownloadOptions = {},
+): Promise<Buffer> {
+  return withDownloadTimeout(
+    async (signal, onProgress) => {
+      try {
+        const res = await fetch(url, { signal });
+        signal.throwIfAborted();
+        onProgress();
+        logger.debug(`${label}: response status=${res.status} ok=${res.ok}`);
+        if (!res.ok) {
+          const body = await readDownloadBody(res, signal, onProgress)
+            .then((bytes) => bytes.toString("utf8"))
+            .catch(() => {
+              signal.throwIfAborted();
+              return "(unreadable)";
+            });
+          signal.throwIfAborted();
+          throw new Error(`${label}: CDN download ${res.status} ${res.statusText} body=${body}`);
+        }
+        const bytes = await readDownloadBody(res, signal, onProgress);
+        signal.throwIfAborted();
+        return bytes;
+      } catch (err) {
+        const cause =
+          (err as NodeJS.ErrnoException)?.cause ??
+          (err as NodeJS.ErrnoException)?.code ??
+          "(no cause)";
+        logger.error(`${label}: CDN download failed err=${String(err)} cause=${String(cause)}`);
+        throw err;
+      }
+    },
+    options,
+    label,
+  );
 }
 
 /**
@@ -61,6 +80,7 @@ export async function downloadAndDecryptBuffer(
   cdnBaseUrl: string,
   label: string,
   fullUrl?: string,
+  options: CdnDownloadOptions = {},
 ): Promise<Buffer> {
   const key = parseAesKey(aesKeyBase64, label);
   let url: string;
@@ -72,7 +92,7 @@ export async function downloadAndDecryptBuffer(
     throw new Error(`${label}: fullUrl is required (CDN URL fallback is disabled)`);
   }
   logger.debug(`${label}: fetching url=${url}`);
-  const encrypted = await fetchCdnBytes(url, label);
+  const encrypted = await fetchCdnBytes(url, label, options);
   logger.debug(`${label}: downloaded ${encrypted.byteLength} bytes, decrypting`);
   const decrypted = decryptAesEcb(encrypted, key);
   logger.debug(`${label}: decrypted ${decrypted.length} bytes`);
@@ -87,6 +107,7 @@ export async function downloadPlainCdnBuffer(
   cdnBaseUrl: string,
   label: string,
   fullUrl?: string,
+  options: CdnDownloadOptions = {},
 ): Promise<Buffer> {
   let url: string;
   if (fullUrl) {
@@ -97,5 +118,5 @@ export async function downloadPlainCdnBuffer(
     throw new Error(`${label}: fullUrl is required (CDN URL fallback is disabled)`);
   }
   logger.debug(`${label}: fetching url=${url}`);
-  return fetchCdnBytes(url, label);
+  return fetchCdnBytes(url, label, options);
 }
