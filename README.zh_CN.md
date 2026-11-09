@@ -9,7 +9,7 @@
 
 OpenClaw 的微信渠道插件。通过扫码登录将 OpenClaw Gateway 连接到微信，并通过微信后端收发消息。
 
-本次绑定流程与消息处理升级的产品变化、合入内容及升级注意事项，见[微信插件绑定与消息处理升级说明（待发布）](./docs/release-notes-bot-realname-auth_zh_CN.md)。
+本次绑定流程与消息处理升级的产品变化、合入内容及升级注意事项，见[微信插件绑定与消息处理升级说明（3.0.0-beta-0 预发布）](./docs/release-notes-bot-realname-auth_zh_CN.md)。
 
 ## 主要能力
 
@@ -112,18 +112,18 @@ openclaw config set 'channels["openclaw-weixin"].promptBindOwner' true --strict-
 
 #### 测试 Pin 码绑定
 
-要在测试环境确认插件把强制 Pin 带进了取码请求，按下面做。这个测试包不要发到正式 npm。
+以下步骤用于在测试环境确认插件在取码请求中主动要求 PIN 校验。
 
-1. 安装会把完整取码请求体写进日志的插件。当前开发包是 `3.0.0-beta-1`。在插件目录编译打包，再覆盖本机已安装的插件：
+1. 安装会把完整取码请求体写进日志的插件。当前预发布包是 `3.0.0-beta-0`。在插件目录编译打包，再覆盖本机已安装的插件：
 
 ```bash
 npm run build
 npm pack
-openclaw plugins install ./tencent-weixin-openclaw-weixin-3.0.0-beta-1.tgz --force
+openclaw plugins install ./tencent-weixin-openclaw-weixin-3.0.0-beta-0.tgz --force
 openclaw plugins list
 ```
 
-列表里 `openclaw-weixin` 的 Version 需要是 `3.0.0-beta-1`。Gateway 已经在跑时先重启，避免内存里还是旧插件：
+列表里 `openclaw-weixin` 的 Version 需要是 `3.0.0-beta-0`。Gateway 已经在跑时先重启，避免内存里还是旧插件：
 
 ```bash
 openclaw gateway restart

@@ -110,18 +110,18 @@ openclaw config set 'channels["openclaw-weixin"].promptBindOwner' true --strict-
 
 #### Test a PIN bind
 
-Use these steps to confirm, on the test route, that the plugin sends the forced PIN on the bind QR request. Do not publish this test package to the production npm registry.
+Use these steps in a test environment to confirm that the plugin requests PIN verification when acquiring the bind QR code.
 
-1. Install a plugin build that logs the full QR request body. The current development package is `3.0.0-beta-1`. From the plugin directory, build, pack, and replace the installed plugin:
+1. Install a plugin build that logs the full QR request body. The current prerelease package is `3.0.0-beta-0`. From the plugin directory, build, pack, and replace the installed plugin:
 
 ```bash
 npm run build
 npm pack
-openclaw plugins install ./tencent-weixin-openclaw-weixin-3.0.0-beta-1.tgz --force
+openclaw plugins install ./tencent-weixin-openclaw-weixin-3.0.0-beta-0.tgz --force
 openclaw plugins list
 ```
 
-`openclaw-weixin` in that list must show Version `3.0.0-beta-1`. If the Gateway is already running, restart it so it does not keep an older plugin in memory:
+`openclaw-weixin` in that list must show Version `3.0.0-beta-0`. If the Gateway is already running, restart it so it does not keep an older plugin in memory:
 
 ```bash
 openclaw gateway restart

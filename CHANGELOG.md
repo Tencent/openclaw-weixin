@@ -6,6 +6,8 @@ This project follows the [Keep a Changelog](https://keepachangelog.com/) format.
 
 ## [Unreleased]
 
+## [3.0.0-beta-0] - 2026-11-09
+
 ### Added
 
 - **Inbound message batching (opt-in):** With `messages.inbound.byChannel.openclaw-weixin` (or `messages.inbound.debounceMs`) set, multi-image sends and messages that arrive while a reply is running are merged into a single turn per sender, with every attachment downloaded. Slash commands stay separate. Disabled by default (#359).
