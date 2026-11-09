@@ -9,7 +9,7 @@
 
 OpenClaw's Weixin channel plugin. Connect an OpenClaw Gateway to Weixin with QR-code login and receive and send messages through the Weixin backend.
 
-For the product changes, merged work, and upgrade considerations in the binding and message-processing update, see the [Weixin plugin binding and message-processing release notes (pending release, Simplified Chinese)](./docs/release-notes-bot-realname-auth_zh_CN.md).
+For the product changes, merged work, and upgrade considerations in the binding and message-processing update, see the [Weixin plugin binding and message-processing release notes (3.0.0-beta-0 prerelease, Simplified Chinese)](./docs/release-notes-bot-realname-auth_zh_CN.md).
 
 ## Highlights
 
