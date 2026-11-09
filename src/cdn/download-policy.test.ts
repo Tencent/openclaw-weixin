@@ -40,6 +40,36 @@ afterEach(async () => {
 });
 
 describe("media download policy", () => {
+  it.each([-1, 0.5, Number.NaN, 2_147_483_648])(
+    "rejects an invalid total timeout before fetching: %s",
+    async (timeoutMs) => {
+      const fetchImpl = vi.fn();
+      vi.stubGlobal("fetch", fetchImpl);
+      await expect(download({ timeoutMs })).rejects.toBeInstanceOf(RangeError);
+      expect(fetchImpl).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([0, -1, 0.5, 2_147_483_648])(
+    "rejects an invalid inactivity timeout before fetching: %s",
+    async (idleTimeoutMs) => {
+      const fetchImpl = vi.fn();
+      vi.stubGlobal("fetch", fetchImpl);
+      await expect(download({ idleTimeoutMs })).rejects.toBeInstanceOf(RangeError);
+      expect(fetchImpl).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not treat empty body chunks as download progress", async () => {
+    const { body, cancelled } = controlledResponse();
+    const pending = download({ idleTimeoutMs: 1000 }).catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(800);
+    body.enqueue(new Uint8Array());
+    await vi.advanceTimersByTimeAsync(201);
+    expect(await pending).toMatchObject({ name: "TimeoutError" });
+    expect(cancelled).toHaveBeenCalledOnce();
+  });
+
   it.each(["inbound", "outbound"])(
     "allows a progressing %s download to take longer than 30 seconds by default",
     async (direction) => {

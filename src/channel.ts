@@ -478,7 +478,7 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
               clearContextTokensForAccount,
             );
           }
-          void triggerWeixinChannelReload();
+          await triggerWeixinChannelReload();
           log(`\n已将此 OpenClaw 连接到微信。`);
         } catch (err) {
           logger.error(
@@ -653,7 +653,7 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
           if (result.userId) {
             clearStaleAccountsForUserId(normalizedId, result.userId, clearContextTokensForAccount);
           }
-          triggerWeixinChannelReload();
+          await triggerWeixinChannelReload();
           logger.info(`loginWithQrWait: saved account data for accountId=${normalizedId}`);
         } catch (err) {
           logger.error(`loginWithQrWait: failed to save account data err=${String(err)}`);

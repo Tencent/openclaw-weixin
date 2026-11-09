@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MessageItemType } from "../api/types.js";
-import type { WeixinMessage } from "../api/types.js";
+import type { MessageItem, WeixinMessage } from "../api/types.js";
 import {
   createInboundBatcher,
   mergeInboundMessages,
@@ -60,6 +60,32 @@ describe("resolveInboundBatchWindowMs", () => {
 });
 
 describe("mergeInboundMessages", () => {
+  it.each([
+    [{ type: MessageItemType.VOICE, voice_item: { text: "spoken context" } }, "spoken context"],
+    [{ type: MessageItemType.FILE, file_item: { file_name: "report.pdf" } }, "[文件 report.pdf]"],
+  ] as const)("keeps quoted attachment context in a merged question: %j", (item, summary) => {
+    const question = text("new question", {
+      item_list: [
+        {
+          type: MessageItemType.TEXT,
+          text_item: { text: "new question" },
+          ref_msg: { message_item: item as MessageItem },
+        },
+      ],
+    });
+    const merged = mergeInboundMessages([question, text("follow-up")]);
+    expect(merged.item_list?.[0].text_item?.text).toBe(
+      `（引用：${summary}）new question\nfollow-up`,
+    );
+  });
+
+  it("keeps valid input when another source has no items", () => {
+    const merged = mergeInboundMessages([{ from_user_id: "u1" }, text("valid question")]);
+    expect(merged.item_list).toEqual([
+      { type: MessageItemType.TEXT, text_item: { text: "valid question" } },
+    ]);
+  });
+
   it("returns a single message unchanged, keeping native quote handling", () => {
     const quoted = text("this", {
       item_list: [

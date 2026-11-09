@@ -1,6 +1,10 @@
 import { ProxyAgent, fetch as undiciFetch } from "undici";
 
-import { loadConfigAcctwebBaseUrl, loadConfigAcctwebProxy, loadConfigRouteTag } from "./accounts.js";
+import {
+  loadConfigAcctwebBaseUrl,
+  loadConfigAcctwebProxy,
+  loadConfigRouteTag,
+} from "./accounts.js";
 import { appendCradleHostname, cradleHostname } from "./route-tag.js";
 import { logger } from "../util/logger.js";
 import { redactBody, redactToken, redactUrl } from "../util/redact.js";
@@ -169,7 +173,10 @@ export function resolveAcctwebProxy(raw: string | undefined): string | undefined
   return parsed.origin;
 }
 
-function requestAcctwebProxy(opts: { acctwebProxy?: string; accountId?: string }): string | undefined {
+function requestAcctwebProxy(opts: {
+  acctwebProxy?: string;
+  accountId?: string;
+}): string | undefined {
   if (opts.acctwebProxy !== undefined) return resolveAcctwebProxy(opts.acctwebProxy);
   return resolveAcctwebProxy(loadConfigAcctwebProxy(opts.accountId));
 }
@@ -198,7 +205,9 @@ async function acctwebGet(opts: {
   timeoutMs?: number;
 }): Promise<unknown> {
   const step = acctwebStep(opts.url);
-  logger.info(`acctweb ${step} GET ${redactUrl(opts.url)}${opts.proxy ? ` proxy=${opts.proxy}` : ""}`);
+  logger.info(
+    `acctweb ${step} GET ${redactUrl(opts.url)}${opts.proxy ? ` proxy=${opts.proxy}` : ""}`,
+  );
   const dispatcher = opts.proxy ? new ProxyAgent(opts.proxy) : undefined;
   const signal = AbortSignal.timeout(opts.timeoutMs ?? ACCTWEB_TIMEOUT_MS);
   const headers = { Accept: "application/json" };

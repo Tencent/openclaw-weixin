@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { loadConfigRouteTag } = vi.hoisted(() => ({
   loadConfigRouteTag: vi.fn((): string | undefined => undefined),
@@ -16,6 +16,8 @@ import {
   BotSpamTicketError,
   cradleHostname,
   fetchBotSpamTicket,
+  parseBotSpamAuthStatus,
+  parseBotSpamTicketContext,
   queryBotSpamAuthResult,
   resolveAcctwebOrigin,
   resolveAcctwebProxy,
@@ -302,5 +304,162 @@ describe("queryBotSpamAuthResult", () => {
   it("reads auth_status from a data envelope", async () => {
     const fetchImpl = vi.fn(async () => jsonResponse({ ret: 0, data: { auth_status: 1 } }));
     await expect(queryBotSpamAuthResult({ botSpamTicket: TICKET, fetchImpl })).resolves.toBe(1);
+  });
+});
+
+describe("real-name response validation and recovery", () => {
+  const validTicket = {
+    bot_spam_ticket: TICKET,
+    auth_url: AUTH_URL,
+    expire_time: 1_800_000_000,
+  };
+  const ticket = { botSpamTicket: TICKET, authUrl: AUTH_URL, expireTimeSec: 1_800_000_000 };
+
+  beforeEach(() => {
+    vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it.each([
+    null,
+    {},
+    { ...validTicket, bot_spam_ticket: "invalid" },
+    { ...validTicket, auth_url: "" },
+    { ...validTicket, expire_time: undefined },
+    { ...validTicket, expire_time: "tomorrow" },
+    { ...validTicket, expire_time: "9".repeat(400) },
+    { ...validTicket, errcode: 1 },
+  ])("rejects unusable binding credentials: %j", (raw) => {
+    expect(() => parseBotSpamTicketContext(raw, 1_700_000_000)).toThrow(BotSpamTicketError);
+  });
+
+  it.each([null, {}, { ret: 1, auth_status: 1 }, { auth_status: 4 }, { auth_status: "invalid" }])(
+    "rejects an invalid authorization response instead of accepting it: %j",
+    (raw) => {
+      expect(() => parseBotSpamAuthStatus(raw)).toThrow(BotSpamTicketError);
+    },
+  );
+
+  it.each([0, 1, 2, 3] as const)("accepts documented authorization status %s", (status) => {
+    expect(parseBotSpamAuthStatus({ auth_status: status })).toBe(status);
+    expect(parseBotSpamAuthStatus({ data: { auth_status: String(status) } })).toBe(status);
+  });
+
+  it.each([resolveAcctwebOrigin, resolveAcctwebProxy])(
+    "rejects malformed endpoint configuration before requesting a ticket",
+    (resolve) => {
+      expect(() => resolve("not a URL")).toThrow(BotSpamTicketError);
+    },
+  );
+
+  it.each(["http", "json", "network", "body"])(
+    "turns %s failure into a binding error without leaking the response",
+    async (kind) => {
+      const fetchImpl = vi.fn(async () => {
+        if (kind === "network") throw new Error("private transport detail");
+        if (kind === "http") return jsonResponse({ detail: "private response" }, 503);
+        return {
+          ok: true,
+          text: async () => {
+            if (kind === "body") throw new Error("private body read failure");
+            return "not JSON";
+          },
+        } as Response;
+      });
+      await expect(fetchBotSpamTicket({ pluginVersion: "test", fetchImpl })).rejects.toThrow(
+        "无法获取绑定凭证，连接已停止。",
+      );
+    },
+  );
+
+  it("uses the default direct transport without a custom fetch implementation", async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(validTicket));
+    vi.stubGlobal("fetch", fetchImpl);
+    await expect(fetchBotSpamTicket({ pluginVersion: "test" })).resolves.toEqual(ticket);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(fetchImpl.mock.calls[0][1]).not.toHaveProperty("dispatcher");
+  });
+
+  it("preserves a successful response if proxy cleanup fails", async () => {
+    const close = vi
+      .spyOn(ProxyAgent.prototype, "close")
+      .mockRejectedValueOnce(new Error("closed"));
+    await expect(
+      fetchBotSpamTicket({
+        pluginVersion: "test",
+        acctwebProxy: "http://127.0.0.1:8088",
+        fetchImpl: async () => jsonResponse(validTicket),
+      }),
+    ).resolves.toEqual(ticket);
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("bounds pending authorization using the default clock, wait and deadline", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_700_000_000_000);
+    const pending = expect(waitForBotSpamAuth({ ticket })).rejects.toThrow(
+      "实名授权超时，请重新开始连接。",
+    );
+    await vi.advanceTimersByTimeAsync(480_001);
+    await pending;
+  });
+
+  it("stops before querying when the ticket has expired", async () => {
+    const query = vi.fn();
+    await expect(
+      waitForBotSpamAuth({ ticket, nowMs: () => ticket.expireTimeSec * 1000, query }),
+    ).rejects.toThrow("实名授权超时，请重新开始连接。");
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it("recovers from transient query failures while keeping the authorization deadline", async () => {
+    let now = 1_700_000_000_000;
+    const query = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("temporary network error"))
+      .mockRejectedValueOnce(new Error("temporary network error"))
+      .mockRejectedValueOnce(new Error("temporary network error"))
+      .mockResolvedValueOnce(0)
+      .mockResolvedValueOnce(1);
+    await expect(
+      waitForBotSpamAuth({
+        ticket,
+        query,
+        nowMs: () => now,
+        sleep: async () => {
+          now += 16_000;
+        },
+      }),
+    ).resolves.toEqual(ticket);
+    expect(query).toHaveBeenCalledTimes(5);
+  });
+
+  it("rejects invalid tickets immediately when refresh is unavailable", async () => {
+    await expect(
+      waitForBotSpamAuth({ ticket, nowMs: () => 1_700_000_000_000, query: async () => 3 }),
+    ).rejects.toThrow("绑定凭证无效，请重新开始连接。");
+  });
+
+  it.each([
+    new Error("private refresh error"),
+    new BotSpamTicketError("绑定凭证无效，请重新开始连接。"),
+  ])("stops after a failed ticket refresh without polling again", async (error) => {
+    const query = vi.fn(async () => 3 as const);
+    await expect(
+      waitForBotSpamAuth({
+        ticket,
+        nowMs: () => 1_700_000_000_000,
+        query,
+        refreshTicket: async () => {
+          throw error;
+        },
+      }),
+    ).rejects.toThrow("绑定凭证无效，请重新开始连接。");
+    expect(query).toHaveBeenCalledOnce();
   });
 });
