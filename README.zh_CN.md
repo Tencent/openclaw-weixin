@@ -3,7 +3,7 @@
 [![CI](https://github.com/Tencent/openclaw-weixin/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Tencent/openclaw-weixin/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@tencent-weixin/openclaw-weixin)](https://www.npmjs.com/package/@tencent-weixin/openclaw-weixin)
 [![Node.js](https://img.shields.io/node/v/@tencent-weixin/openclaw-weixin)](https://nodejs.org/)
-[![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
+[![许可证](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
 [English](./README.md)
 
@@ -25,9 +25,9 @@ OpenClaw 的微信渠道插件。通过扫码登录将 OpenClaw Gateway 连接�
 | --- | --- |
 | Node.js | `>=22.13.0` |
 | OpenClaw 运行时检查 | `>=2026.3.22` |
-| npm peer dependency | `>=2026.5.12` |
+| npm 同级依赖 | `>=2026.5.12` |
 
-建议尽量使用 `OpenClaw >=2026.5.12`。当前运行时兼容检查接受 `>=2026.3.22`；如果 npm 使用严格的 peer dependency 校验，则需要满足 peer dependency 要求的版本。
+建议尽量使用 `OpenClaw >=2026.5.12`。当前运行时兼容检查接受 `>=2026.3.22`；如果 npm 使用严格的同级依赖校验，则需要满足同级依赖要求的版本。
 
 必须先安装 OpenClaw，并确保 `openclaw` 命令可用。请参阅 [OpenClaw 安装指南](https://docs.openclaw.ai/install)。
 
@@ -123,7 +123,7 @@ openclaw plugins install ./tencent-weixin-openclaw-weixin-3.0.0-beta-0.tgz --for
 openclaw plugins list
 ```
 
-列表里 `openclaw-weixin` 的 Version 需要是 `3.0.0-beta-0`。Gateway 已经在跑时先重启，避免内存里还是旧插件：
+列表里 `openclaw-weixin` 的 `Version` 需要是 `3.0.0-beta-0`。Gateway 已经在跑时先重启，避免内存里还是旧插件：
 
 ```bash
 openclaw gateway restart
@@ -283,7 +283,7 @@ openclaw --version
 
 将 OpenClaw 升级到受支持的版本，然后重启 Gateway。
 
-### Channel 显示 `OK` 但没有连接
+### 渠道显示 `OK` 但没有连接
 
 确认插件已启用，然后重启 Gateway：
 
@@ -301,7 +301,7 @@ openclaw gateway restart
 | 后端对接 | [微信后端 API 协议](./docs/protocol_zh_CN.md) |
 | CI 和本地质量检查 | [CI 指南](./docs/ci_zh_CN.md) |
 | 开发与本地验证 | [开发者指南](./docs/development_zh_CN.md) |
-| OpenClaw 渠道配置 | [OpenClaw Channels](https://docs.openclaw.ai/channels) |
+| OpenClaw 渠道配置 | [OpenClaw 渠道文档](https://docs.openclaw.ai/channels) |
 | 发布历史 | [CHANGELOG.zh_CN.md](./CHANGELOG.zh_CN.md) |
 
 后端协议文档面向实现或对接兼容后端的开发者，普通用户安装插件时不需要阅读。
@@ -321,18 +321,18 @@ npm run ci
 npm run test:coverage
 ```
 
-Pull Request 会在 GitHub Actions 中执行质量检查、单元测试、覆盖率、构建和 npm 包冒烟测试。详细说明见 [CI 指南](./docs/ci_zh_CN.md)。
+拉取请求会在 GitHub Actions 中执行质量检查、单元测试、覆盖率、构建和 npm 包冒烟测试。详细说明见 [CI 指南](./docs/ci_zh_CN.md)。
 
-从 worktree 创建、依赖安装到本地打包和插件安装的完整流程见[开发者指南](./docs/development_zh_CN.md)。
+从 Git 工作区创建、依赖安装到本地打包和插件安装的完整流程见[开发者指南](./docs/development_zh_CN.md)。
 
 ## 参与贡献
 
-欢迎提交问题、改进文档、补充测试和贡献代码。请保持 Pull Request 聚焦，并附上验证结果。修改后端集成时，请同步更新[协议文档](./docs/protocol_zh_CN.md)。
+欢迎提交问题、改进文档、补充测试和贡献代码。请保持拉取请求聚焦，并附上验证结果。修改后端集成时，请同步更新[协议文档](./docs/protocol_zh_CN.md)。
 
 ## 维护者
 
 如果你遇到问题或有任何疑问，欢迎通过 [GitHub 主页](https://github.com/zengyi1001) 联系我。主页上提供了邮箱、微信等联系方式。
 
-## License
+## 许可证
 
 [MIT](./LICENSE)
