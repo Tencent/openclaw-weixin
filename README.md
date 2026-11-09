@@ -96,8 +96,6 @@ To send those requests through an HTTP proxy, set `channels.openclaw-weixin.acct
 openclaw config set 'channels["openclaw-weixin"].acctwebProxy' '"http://proxy.example:8088"' --strict-json
 ```
 
-When `channels.openclaw-weixin.routeTag` is set, every Weixin API request adds `_cradle_hostname=g<routeTag>`. A route tag of `10086` sends `_cradle_hostname=g10086`.
-
 `channels.openclaw-weixin.promptBindOwner` is off by default. Login then shows the bot bind QR immediately. Set it to `true` to ask whether this OpenClaw connects to the operator's own WeChat ClawBot: Enter or Y shows the bind QR, and N completes real-name authorization first.
 
 ```bash
@@ -110,57 +108,56 @@ openclaw config set 'channels["openclaw-weixin"].promptBindOwner' true --strict-
 
 `openclaw channels login` does not accept `--verify-pin`. That option never reaches the Weixin plugin.
 
-#### Test a PIN bind
+#### Test PIN verification and binding in production
 
-Use these steps in a test environment to confirm that the plugin requests PIN verification when acquiring the bind QR code.
+Use the normal Weixin service and the feature switches below to test the binding flows.
 
-1. Install a plugin build that logs the full QR request body. The current prerelease package is `3.0.0-beta-0`. From the plugin directory, build, pack, and replace the installed plugin:
+1. Install a plugin version that supports `verifyPin` and `promptBindOwner`. For example, install the `3.0.0-beta-0` prerelease from npm, check the installed version, and restart the Gateway to load it:
 
 ```bash
-npm run build
-npm pack
-openclaw plugins install ./tencent-weixin-openclaw-weixin-3.0.0-beta-0.tgz --force
+openclaw plugins install "@tencent-weixin/openclaw-weixin@3.0.0-beta-0" --force
 openclaw plugins list
-```
-
-`openclaw-weixin` in that list must show Version `3.0.0-beta-0`. If the Gateway is already running, restart it so it does not keep an older plugin in memory:
-
-```bash
 openclaw gateway restart
 ```
 
-2. Turn on the test route and the forced PIN. With `routeTag` set to `10086`, the QR request goes to `https://ilinkai.weixin.qq.com/ilink/bot/get_bot_qrcode?bot_type=3&_cradle_hostname=g10086` and is handled by `GetBotQrcodeCgi` in `ilinkbotlogicsvr`. The body includes `bot_spam_business_data` only when `verifyPin` is `true`. For a self bind, leave `promptBindOwner` off so login skips real-name authorization and omits `bot_spam_ticket`. `acctwebProxy` proxies only the real-name CGI and does not change the QR host.
+2. To test PIN verification when binding your own WeChat ClawBot, enable `verifyPin` and leave `promptBindOwner` off, then log in:
 
 ```bash
-openclaw config set 'channels["openclaw-weixin"].routeTag' 10086 --strict-json
 openclaw config set 'channels["openclaw-weixin"].verifyPin' true --strict-json
 openclaw config set 'channels["openclaw-weixin"].promptBindOwner' false --strict-json
+openclaw channels login --channel openclaw-weixin
 ```
 
-To force the PIN for one login without changing `verifyPin`, set `routeTag` first, then:
+Scan the binding QR code with Weixin. If the phone displays a PIN and the terminal asks for it, enter that PIN to continue. The backend determines whether PIN verification is required through the QR status response; enabling the switch requests verification but does not by itself prove that the phone displayed a PIN. Do not pass `--verify-pin` to the login command.
+
+For a single login instead of a persistent setting, leave `verifyPin` unset or `false` and run:
 
 ```bash
 OPENCLAW_WEIXIN_VERIFY_PIN=1 openclaw channels login --channel openclaw-weixin
 ```
 
-3. Log in. Do not pass `--verify-pin`:
+3. To test the binding-owner choice, enable `promptBindOwner` and log in again:
 
 ```bash
+openclaw config set 'channels["openclaw-weixin"].promptBindOwner' true --strict-json
 openclaw channels login --channel openclaw-weixin
 ```
 
-4. Read that day's log, `/tmp/openclaw/openclaw-YYYY-MM-DD.log`:
+Press Enter or Y to bind your own WeChat ClawBot directly. To test binding someone else's ClawBot, run login again, choose N, and follow the real-name authorization instructions before scanning the binding QR code. `verifyPin` controls the PIN request independently in either flow. `acctwebProxy`, if configured, applies only to real-name authorization requests and does not change the binding QR endpoint.
+
+4. If you need to confirm that the plugin requested PIN verification, check that day's log for the concise request marker:
 
 ```bash
-grep 'fetchQRCode: body=' /tmp/openclaw/openclaw-YYYY-MM-DD.log
+grep 'fetchQRCode: bot_spam_business_data.verify_pin=1' /tmp/openclaw/openclaw-YYYY-MM-DD.log
 ```
 
-The check passes when that body contains `"bot_spam_business_data":"eyJ2ZXJpZnlfcGluIjoxfQ=="`, the standard base64 of `{"verify_pin":1}`. The same stretch of log also has `fetchQRCode: bot_spam_business_data.verify_pin=1`, then `QR code received`. The older `POST ... body=` line keeps only the first 200 characters, so the field is past the cut. Do not use that line. A normal login logs `fetchQRCode: omit bot_spam_business_data`.
+This marker confirms the request flag, not the phone's verification result. With `verifyPin` off and no one-login override, the plugin logs `fetchQRCode: omit bot_spam_business_data`.
 
-5. Turn the forced PIN off after the test:
+5. After testing, restore both switches to their defaults, or to the values you used before the test:
 
 ```bash
 openclaw config set 'channels["openclaw-weixin"].verifyPin' false --strict-json
+openclaw config set 'channels["openclaw-weixin"].promptBindOwner' false --strict-json
 ```
 
 ### Custom BotAgent
