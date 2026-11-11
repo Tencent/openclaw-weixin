@@ -37,6 +37,7 @@ import {
 } from "./send.js";
 import { MessageItemType } from "../api/types.js";
 import type { UploadedFileInfo } from "../cdn/upload.js";
+import { logger } from "../util/logger.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -77,6 +78,35 @@ describe("sendMessageWeixin", () => {
     });
     const callArgs = mockSendMessageApi.mock.calls[0][0];
     expect(callArgs.body.msg.run_id).toBe("run-1");
+  });
+
+  it("logs a success line at INFO level on successful send", async () => {
+    mockSendMessageApi.mockResolvedValueOnce({ message_id: "srv-123" });
+    await sendMessageWeixin({
+      to: "user1",
+      text: "hello",
+      opts: { baseUrl: "https://api.com", contextToken: "ctx" },
+    });
+    const infoCalls = (logger.info as ReturnType<typeof vi.fn>).mock.calls
+      .map((c) => String(c[0]))
+      .filter((line) => line.includes("sendMessageWeixin: success"));
+    expect(infoCalls.length).toBe(1);
+    expect(infoCalls[0]).toContain("to=user1");
+    expect(infoCalls[0]).toContain("serverMessageId=srv-123");
+  });
+
+  it("logs success with (none) when server omits message_id", async () => {
+    mockSendMessageApi.mockResolvedValueOnce(undefined);
+    await sendMessageWeixin({
+      to: "user1",
+      text: "hello",
+      opts: { baseUrl: "https://api.com", contextToken: "ctx" },
+    });
+    const infoCalls = (logger.info as ReturnType<typeof vi.fn>).mock.calls
+      .map((c) => String(c[0]))
+      .filter((line) => line.includes("sendMessageWeixin: success"));
+    expect(infoCalls.length).toBe(1);
+    expect(infoCalls[0]).toContain("serverMessageId=(none)");
   });
 
   it("sends message with empty text (no item_list)", async () => {
@@ -136,6 +166,20 @@ describe("sendMessageWeixin", () => {
 });
 
 describe("sendMessageItemWeixin", () => {
+  it("logs a success line at INFO level on successful send", async () => {
+    mockSendMessageApi.mockResolvedValueOnce({ message_id: "srv-456" });
+    await sendMessageItemWeixin({
+      to: "user1",
+      item: { type: MessageItemType.TEXT, text_item: { text: "hi" } },
+      opts: { baseUrl: "https://api.com", contextToken: "ctx" },
+    });
+    const infoCalls = (logger.info as ReturnType<typeof vi.fn>).mock.calls
+      .map((c) => String(c[0]))
+      .filter((line) => line.includes("success to=user1"));
+    expect(infoCalls.length).toBe(1);
+    expect(infoCalls[0]).toContain("serverMessageId=srv-456");
+  });
+
   it("sends structured message item with run_id", async () => {
     mockSendMessageApi.mockResolvedValueOnce(undefined);
     await sendMessageItemWeixin({
