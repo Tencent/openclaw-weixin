@@ -106,8 +106,35 @@ export function setContextToken(accountId: string, userId: string, token: string
 }
 
 /** Retrieve the cached context token for a given account+user pair. */
+/**
+ * On an in-memory miss, reload the account's persisted tokens from disk.
+ *
+ * Only the gateway calls restoreContextTokens (in startAccount). Other processes
+ * that load the plugin — `openclaw message send`, cron delivery, scripts — start
+ * with an empty map and would send without a contextToken even though a valid
+ * one is on disk, which the server rejects with `ret=-2 prepare failed`.
+ * Existing in-memory entries are never overwritten.
+ */
+function reloadContextTokensOnMiss(accountId: string, userId: string): void {
+  if (contextTokenStore.has(contextTokenKey(accountId, userId))) return;
+  const filePath = resolveContextTokenFilePath(accountId);
+  try {
+    if (!fs.existsSync(filePath)) return;
+    const tokens = JSON.parse(fs.readFileSync(filePath, "utf-8")) as Record<string, unknown>;
+    for (const [uid, token] of Object.entries(tokens)) {
+      const key = contextTokenKey(accountId, uid);
+      if (typeof token === "string" && token && !contextTokenStore.has(key)) {
+        contextTokenStore.set(key, token);
+      }
+    }
+  } catch (err) {
+    logger.warn(`reloadContextTokensOnMiss: failed to read ${filePath}: ${String(err)}`);
+  }
+}
+
 export function getContextToken(accountId: string, userId: string): string | undefined {
   const k = contextTokenKey(accountId, userId);
+  reloadContextTokensOnMiss(accountId, userId);
   const val = contextTokenStore.get(k);
   logger.debug(
     `getContextToken: key=${k} found=${val !== undefined} storeSize=${contextTokenStore.size}`,
@@ -124,7 +151,10 @@ export function getContextToken(accountId: string, userId: string): string | und
  * detect ambiguity when multiple accounts have sessions with the same user.
  */
 export function findAccountIdsByContextToken(accountIds: string[], userId: string): string[] {
-  return accountIds.filter((id) => contextTokenStore.has(contextTokenKey(id, userId)));
+  return accountIds.filter((id) => {
+    reloadContextTokensOnMiss(id, userId);
+    return contextTokenStore.has(contextTokenKey(id, userId));
+  });
 }
 
 // ---------------------------------------------------------------------------
