@@ -1,3 +1,5 @@
+import { setImmediate as nextTurn } from "node:timers/promises";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { mockSendMessageItemWeixin } = vi.hoisted(() => ({
@@ -182,6 +184,41 @@ describe("progress event failure isolation", () => {
     expect(mockSendMessageItemWeixin.mock.calls[1][0].item.type).toBe(
       MessageItemType.TOOL_CALL_RESULT,
     );
+  });
+
+  it("stops queueing tool progress after repeated consecutive failures", async () => {
+    mockSendMessageItemWeixin.mockReset();
+    mockSendMessageItemWeixin.mockRejectedValue(new Error("empty response body"));
+    const sender = createSender();
+    for (const name of ["a", "b", "c"]) {
+      sender.replyOptions.onItemEvent({ kind: "tool", phase: "start", name });
+    }
+    await nextTurn();
+    expect(mockSendMessageItemWeixin).toHaveBeenCalledTimes(3);
+
+    // once tripped, later tool events must not enqueue any further sends
+    for (const name of ["d", "e"]) {
+      sender.replyOptions.onItemEvent({ kind: "tool", phase: "start", name });
+    }
+    await sender.finalize();
+    expect(mockSendMessageItemWeixin).toHaveBeenCalledTimes(3);
+  });
+
+  it("resets the failure streak after a successful tool send", async () => {
+    mockSendMessageItemWeixin.mockReset();
+    mockSendMessageItemWeixin
+      .mockResolvedValue({ messageId: "ok" })
+      .mockRejectedValueOnce(new Error("boom-1"))
+      .mockRejectedValueOnce(new Error("boom-2"))
+      .mockResolvedValueOnce({ messageId: "ok" })
+      .mockRejectedValueOnce(new Error("boom-3"))
+      .mockRejectedValueOnce(new Error("boom-4"));
+    const sender = createSender();
+    for (const name of ["a", "b", "c", "d", "e", "f"]) {
+      sender.replyOptions.onItemEvent({ kind: "tool", phase: "start", name });
+    }
+    await sender.finalize();
+    expect(mockSendMessageItemWeixin).toHaveBeenCalledTimes(6);
   });
 
   it("finalizes idempotently and rejects late progress events", async () => {

@@ -112,10 +112,10 @@ openclaw config set 'channels["openclaw-weixin"].promptBindOwner' true --strict-
 
 Use the normal Weixin service and the feature switches below to test the binding flows.
 
-1. Install a plugin version that supports `verifyPin` and `promptBindOwner`. For example, install the `3.0.0-beta-0` prerelease from npm, check the installed version, and restart the Gateway to load it:
+1. Install a plugin version that supports `verifyPin` and `promptBindOwner`. For example, install the `3.0.0-beta-1` prerelease from npm, check the installed version, and restart the Gateway to load it:
 
 ```bash
-openclaw plugins install "@tencent-weixin/openclaw-weixin@3.0.0-beta-0" --force
+openclaw plugins install "@tencent-weixin/openclaw-weixin@3.0.0-beta-1" --force
 openclaw plugins list
 openclaw gateway restart
 ```
