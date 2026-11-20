@@ -10,7 +10,7 @@
         "type": "object",
         "additionalProperties": true
       },
-      "label": "openclaw-weixin",
+      "label": "WeChat",
       "description": "Weixin channel configuration."
     }
   },
