@@ -112,10 +112,10 @@ openclaw config set 'channels["openclaw-weixin"].promptBindOwner' true --strict-
 
 使用正常的微信服务，通过以下功能开关测试对应绑定流程。
 
-1. 安装支持 `verifyPin` 和 `promptBindOwner` 的插件版本。例如，从 npm 安装 `3.0.0-beta-0` 预发布包，检查已安装版本，并重启 Gateway 以加载插件：
+1. 安装支持 `verifyPin` 和 `promptBindOwner` 的插件版本。例如，从 npm 安装 `3.0.0-beta-1` 预发布包，检查已安装版本，并重启 Gateway 以加载插件：
 
 ```bash
-openclaw plugins install "@tencent-weixin/openclaw-weixin@3.0.0-beta-0" --force
+openclaw plugins install "@tencent-weixin/openclaw-weixin@3.0.0-beta-1" --force
 openclaw plugins list
 openclaw gateway restart
 ```
