@@ -32,6 +32,8 @@ function normalizeToolStatus(status?: string): string {
   return "unknown";
 }
 
+const MAX_CONSECUTIVE_TOOL_SEND_FAILURES = 3;
+
 export class WeixinReplyProgressSender {
   readonly runId: string;
 
@@ -40,6 +42,8 @@ export class WeixinReplyProgressSender {
   private readonly opts: WeixinReplyProgressSenderDeps["opts"];
   private finalized = false;
   private sendChain: Promise<void> = Promise.resolve();
+  private consecutiveToolSendFailures = 0;
+  private toolProgressDisabled = false;
 
   constructor(deps: WeixinReplyProgressSenderDeps) {
     this.runId = deps.runId;
@@ -66,8 +70,19 @@ export class WeixinReplyProgressSender {
           opts: this.opts,
           label,
         });
+        this.consecutiveToolSendFailures = 0;
       })
       .catch((err) => {
+        this.consecutiveToolSendFailures += 1;
+        if (
+          !this.toolProgressDisabled &&
+          this.consecutiveToolSendFailures >= MAX_CONSECUTIVE_TOOL_SEND_FAILURES
+        ) {
+          this.toolProgressDisabled = true;
+          logger.warn(
+            `tool progress disabled for runId=${this.runId} accountId=${this.accountId} after ${this.consecutiveToolSendFailures} consecutive send failures; lastErr=${String(err)}`,
+          );
+        }
         logger.warn(
           `${label}: failed to=${this.to} accountId=${this.accountId} runId=${this.runId} err=${String(err)}`,
         );
@@ -76,6 +91,7 @@ export class WeixinReplyProgressSender {
 
   private handleToolItemEvent(payload: ToolItemEventPayload): void {
     if (this.finalized || this.opts.abortSignal?.aborted) return;
+    if (this.toolProgressDisabled) return;
     if (payload.kind !== "tool") return;
     if (payload.phase !== "start" && payload.phase !== "end") return;
 

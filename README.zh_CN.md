@@ -96,8 +96,6 @@ openclaw config set session.dmScope per-account-channel-peer
 openclaw config set 'channels["openclaw-weixin"].acctwebProxy' '"http://proxy.example:8088"' --strict-json
 ```
 
-配置了 `channels.openclaw-weixin.routeTag` 时，所有微信接口请求都会带上 `_cradle_hostname=g<routeTag>`。例如 `routeTag` 为 `10086` 时，参数是 `_cradle_hostname=g10086`。
-
 `channels.openclaw-weixin.promptBindOwner` 默认关闭。关闭时登录直接弹出 bot 绑定二维码。设为 `true` 后，终端会询问是否连到本人的微信 ClawBot：回车或 Y 直接出绑定码，N 先完成实名授权再出绑定码。
 
 ```bash
@@ -110,57 +108,56 @@ openclaw config set 'channels["openclaw-weixin"].promptBindOwner' true --strict-
 
 `openclaw channels login` 不接受 `--verify-pin`。这个参数到不了微信插件。
 
-#### 测试 Pin 码绑定
+#### 在现网测试 PIN 校验与绑定
 
-以下步骤用于在测试环境确认插件在取码请求中主动要求 PIN 校验。
+使用正常的微信服务，通过以下功能开关测试对应绑定流程。
 
-1. 安装会把完整取码请求体写进日志的插件。当前预发布包是 `3.0.0-beta-0`。在插件目录编译打包，再覆盖本机已安装的插件：
+1. 安装支持 `verifyPin` 和 `promptBindOwner` 的插件版本。例如，从 npm 安装 `3.0.0-beta-0` 预发布包，检查已安装版本，并重启 Gateway 以加载插件：
 
 ```bash
-npm run build
-npm pack
-openclaw plugins install ./tencent-weixin-openclaw-weixin-3.0.0-beta-0.tgz --force
+openclaw plugins install "@tencent-weixin/openclaw-weixin@3.0.0-beta-0" --force
 openclaw plugins list
-```
-
-列表里 `openclaw-weixin` 的 `Version` 需要是 `3.0.0-beta-0`。Gateway 已经在跑时先重启，避免内存里还是旧插件：
-
-```bash
 openclaw gateway restart
 ```
 
-2. 打开测试路由和强制 Pin。`routeTag` 为 `10086` 时，取码打到 `https://ilinkai.weixin.qq.com/ilink/bot/get_bot_qrcode?bot_type=3&_cradle_hostname=g10086`，由 `ilinkbotlogicsvr` 的 `GetBotQrcodeCgi` 处理。`verifyPin` 为 `true` 时请求体才带 `bot_spam_business_data`。测本人绑定时保持 `promptBindOwner` 关闭，这样不走实名，请求体也不带 `bot_spam_ticket`。`acctwebProxy` 只代理实名接口，不改变取码地址。
+2. 测试绑定本人的微信 ClawBot 时的 PIN 校验，打开 `verifyPin`，保持 `promptBindOwner` 关闭，然后登录：
 
 ```bash
-openclaw config set 'channels["openclaw-weixin"].routeTag' 10086 --strict-json
 openclaw config set 'channels["openclaw-weixin"].verifyPin' true --strict-json
 openclaw config set 'channels["openclaw-weixin"].promptBindOwner' false --strict-json
+openclaw channels login --channel openclaw-weixin
 ```
 
-只想对这一次登录强制出 Pin、又不改 `verifyPin` 时，仍然要先配好 `routeTag`，再这样登录：
+使用微信扫描绑定二维码。如果手机显示 PIN，且终端提示输入，请输入该 PIN 继续。是否需要 PIN 校验由后端通过二维码状态响应决定；打开开关表示主动请求校验，并不代表手机一定已经显示 PIN。登录命令不要加 `--verify-pin`。
+
+如果只对一次登录开启校验，无需持久修改配置，可保持 `verifyPin` 未设置或为 `false`，再执行：
 
 ```bash
 OPENCLAW_WEIXIN_VERIFY_PIN=1 openclaw channels login --channel openclaw-weixin
 ```
 
-3. 登录。不要加 `--verify-pin`：
+3. 测试绑定对象选择时，打开 `promptBindOwner`，再执行登录：
 
 ```bash
+openclaw config set 'channels["openclaw-weixin"].promptBindOwner' true --strict-json
 openclaw channels login --channel openclaw-weixin
 ```
 
-4. 看当天日志 `/tmp/openclaw/openclaw-YYYY-MM-DD.log`：
+回车或选择 Y，直接绑定本人的微信 ClawBot。测试绑定他人的 ClawBot 时，再次执行登录，选择 N，按照提示完成实名授权后，再扫描绑定二维码。两种流程中的 PIN 请求都由 `verifyPin` 独立控制。若配置了 `acctwebProxy`，它只代理实名授权请求，不改变绑定二维码接口地址。
+
+4. 如需确认插件已请求 PIN 校验，可在当天日志中检查简短的请求标记：
 
 ```bash
-grep 'fetchQRCode: body=' /tmp/openclaw/openclaw-YYYY-MM-DD.log
+grep 'fetchQRCode: bot_spam_business_data.verify_pin=1' /tmp/openclaw/openclaw-YYYY-MM-DD.log
 ```
 
-通过的标志是这行 body 里有 `"bot_spam_business_data":"eyJ2ZXJpZnlfcGluIjoxfQ=="`。它是 `{"verify_pin":1}` 的标准 base64。同一段日志还有 `fetchQRCode: bot_spam_business_data.verify_pin=1`，随后出现 `QR code received`。旧的 `POST ... body=` 只保留前 200 个字符，字段在截断之后，不要用那一行判断。普通登录对应的日志是 `fetchQRCode: omit bot_spam_business_data`。
+该标记只确认请求开关，不代表手机端的校验结果。`verifyPin` 关闭且没有单次登录覆盖时，插件会记录 `fetchQRCode: omit bot_spam_business_data`。
 
-5. 测完关掉强制 Pin：
+5. 测试后将两个开关恢复为默认值，或恢复到测试前的配置：
 
 ```bash
 openclaw config set 'channels["openclaw-weixin"].verifyPin' false --strict-json
+openclaw config set 'channels["openclaw-weixin"].promptBindOwner' false --strict-json
 ```
 
 ### 自定义 BotAgent

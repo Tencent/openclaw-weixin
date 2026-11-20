@@ -184,6 +184,38 @@ describe("progress event failure isolation", () => {
     );
   });
 
+  it("stops queueing tool progress after repeated consecutive failures", async () => {
+    mockSendMessageItemWeixin.mockReset();
+    mockSendMessageItemWeixin.mockRejectedValue(new Error("empty response body"));
+    const sender = createSender();
+    for (const name of ["a", "b", "c"]) {
+      sender.replyOptions.onItemEvent({ kind: "tool", phase: "start", name });
+    }
+    await sender.finalize();
+    expect(mockSendMessageItemWeixin).toHaveBeenCalledTimes(3);
+
+    // once tripped, later tool events must not enqueue any further sends
+    for (const name of ["d", "e"]) {
+      sender.replyOptions.onItemEvent({ kind: "tool", phase: "start", name });
+    }
+    await sender.finalize();
+    expect(mockSendMessageItemWeixin).toHaveBeenCalledTimes(3);
+  });
+
+  it("recovers tool progress once a send succeeds again", async () => {
+    mockSendMessageItemWeixin.mockReset();
+    mockSendMessageItemWeixin
+      .mockRejectedValueOnce(new Error("boom-1"))
+      .mockRejectedValueOnce(new Error("boom-2"))
+      .mockResolvedValueOnce({ messageId: "ok" });
+    const sender = createSender();
+    for (const name of ["a", "b", "c", "d"]) {
+      sender.replyOptions.onItemEvent({ kind: "tool", phase: "start", name });
+    }
+    await sender.finalize();
+    expect(mockSendMessageItemWeixin).toHaveBeenCalledTimes(4);
+  });
+
   it("finalizes idempotently and rejects late progress events", async () => {
     const sender = createSender();
     await sender.finalize();

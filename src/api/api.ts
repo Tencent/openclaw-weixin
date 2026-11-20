@@ -536,6 +536,14 @@ const LOSSLESS_ID_FIELDS = new Set(["message_id", "msg_id", "svr_id"]);
  * only rewrites actual object properties, never matching text inside JSON strings.
  */
 export function parseWeixinApiJson<T>(rawText: string): T {
+  if (!rawText.trim()) {
+    // ilink/bot/sendmessage can return HTTP 200 with an empty body (observed for
+    // TOOL_CALL item types; see issue #392). Surface a descriptive error instead
+    // of the opaque "Unexpected end of JSON input" thrown by JSON.parse below.
+    throw new Error(
+      "Weixin API returned an empty response body (HTTP-level success); the endpoint or message item type may not be supported by the server",
+    );
+  }
   let output = "";
   let index = 0;
   while (index < rawText.length) {

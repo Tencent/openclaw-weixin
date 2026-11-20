@@ -208,6 +208,17 @@ describe("sendMessage", () => {
     ).resolves.toMatchObject({ message_id: "18446744073709551615" });
   });
 
+  it("throws a descriptive error when a 200 response has an empty body", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve(""),
+    } as Response);
+    await expect(
+      sendMessage({ baseUrl: "https://api.example.com/", body: { msg: { to_user_id: "u" } } }),
+    ).rejects.toThrow(/empty response body/i);
+  });
+
   it("throws on non-ok response", async () => {
     mockFetch.mockResolvedValueOnce(mockResponse("error", 403, false));
     await expect(
@@ -224,6 +235,11 @@ describe("sendMessage", () => {
 });
 
 describe("parseWeixinApiJson", () => {
+  it("throws a descriptive error on empty input", () => {
+    expect(() => parseWeixinApiJson<unknown>("")).toThrow(/empty response body/i);
+    expect(() => parseWeixinApiJson<unknown>("   \n")).toThrow(/empty response body/i);
+  });
+
   it("preserves all known uint64 message ID fields as strings", () => {
     const parsed = parseWeixinApiJson<{
       message_id: string;
