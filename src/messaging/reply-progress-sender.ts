@@ -63,7 +63,7 @@ export class WeixinReplyProgressSender {
     if (this.finalized || this.opts.abortSignal?.aborted) return;
     this.sendChain = this.sendChain
       .then(async () => {
-        if (this.opts.abortSignal?.aborted) return;
+        if (this.toolProgressDisabled || this.opts.abortSignal?.aborted) return;
         await sendMessageItemWeixin({
           to: this.to,
           item,
