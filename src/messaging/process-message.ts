@@ -41,6 +41,7 @@ import {
 } from "./prepare-inbound.js";
 import type { PreparedInboundMessage } from "./prepare-inbound.js";
 import { handleSlashCommand } from "./slash-commands.js";
+import { buildWeixinInboundContext } from "./owner-ingress.js";
 
 const MEDIA_OUTBOUND_TEMP_DIR = path.join(
   resolvePreferredOpenClawTmpDir(),
@@ -288,12 +289,17 @@ export async function processOneMessage(
     const storePath = deps.channelRuntime.session.resolveStorePath(deps.config.session?.store, {
       agentId: route.agentId,
     });
-    const finalized = deps.channelRuntime.reply.finalizeInboundContext(
-      ctx as Parameters<typeof deps.channelRuntime.reply.finalizeInboundContext>[0],
+    const finalized = await buildWeixinInboundContext(
+      deps.channelRuntime,
+      route,
+      ctx,
+      prepared,
+      ownerId,
     );
+    if (!finalized) return;
 
     logger.info(
-      `inbound: from=${finalized.From} to=${finalized.To} bodyLen=${(finalized.Body ?? "").length} hasMedia=${Boolean(finalized.MediaPath ?? finalized.MediaUrl)}`,
+      `inbound: from=${finalized.From} to=${finalized.To} bodyLen=${(finalized.Body ?? "").length} hasMedia=${Boolean(finalized.media?.length)}`,
     );
     logger.debug(`inbound context: ${redactBody(JSON.stringify(finalized))}`);
 
